@@ -21,8 +21,10 @@ Set settings (ambient.default for every story set, ambient.sets.<name> over it f
     vanilla_off  vanilla model IDs taken out of the set
     extra        vanilla model IDs from other sets added in (like ports, at the share)
 
-With no settings (a fresh install) every story set gets DEFAULT_SET: filled to its budget,
-"mean" weights; `traffic ambient --off` stores {"off": true} for no changes at all.
+With no settings (a fresh install) the sets stay as the game has them, until the vehicle slot
+raise is safe again (#586). Any set setting (`traffic ambient`, with or without fields) stores
+{"on": true}; then every story set gets DEFAULT_SET (filled to its budget, "mean" weights) under
+the settings made. `traffic ambient --off` stores {"off": true} for no changes at all.
 
 Rules (research/traffic.md 1b, the owner's):
 - The per-road structure stays: a road whose range has no weight still has none, and only the
@@ -59,9 +61,10 @@ TRAFFIC_LUA = Path("Common") / "UserLuaScripts" / "dsfcars" / "traffic.lua"
 STORY_SETS = ["Exposition"] + [f"Chapter {i}" for i in range(1, 8)] + ["Epilogue"]
 VANILLA_SLOTS = 35  # SSLP +0x18 of the vanilla vehicle archive (research/traffic.md 4)
 # dsfcars.asi's [archive] vehicle_slots: at most the 64 slot handlers less the other kinds' 2 + 2 slots
-# (mod_archive.cpp kSlotHandlers), 50 by default (kDefaultVehicleSlots; research/traffic.md 4 and 5)
+# (mod_archive.cpp kSlotHandlers), 35 (no raise) by default (kDefaultVehicleSlots; #586;
+# research/traffic.md 4 and 5)
 MAX_SLOTS = 60
-DEFAULT_SLOTS = 50
+DEFAULT_SLOTS = 35
 POT_CAP = 18  # spoolingsystem.lua: local numberOfVehicleAllowed = 18
 ALL_CHAPTERS = "All chapters"
 WEIGHT_MODES = ("vanilla", "equal", "custom")
@@ -429,6 +432,7 @@ class TrafficControl:
         back to the default's."""
         amb = self.t["ambient"]
         amb.pop("off", None)
+        amb["on"] = True
         if set_name is None:
             target = amb.setdefault("default", {})
         else:
@@ -484,8 +488,14 @@ class TrafficControl:
         return ai, reports
 
     def ambient_changes(self) -> bool:
-        """Whether the sets are changed: unless switched off, the default (DEFAULT_SET) does."""
-        return not self.t["ambient"].get("off")
+        """Whether the sets are changed: only once a set setting was made (set_ambient), and not
+        while switched off. A fresh install leaves them as the game has them: the port-filled sets
+        wait on the vehicle slot raise (#586)."""
+        amb = self.t["ambient"]
+        if amb.get("off"):
+            return False
+        # "default" present, even empty: `traffic ambient` without fields before "on" was stored
+        return bool(amb.get("on") or "default" in amb or amb.get("sets"))
 
     def write(self) -> list[SetReport]:
         """The AI copy and its redirect line (neither when no set changes), and traffic.lua."""
@@ -581,7 +591,7 @@ class TrafficControl:
             note = "vanilla" if vanilla else "NOT vanilla (another mod changed it; our copy is made from it)"
             out.append(f"{ai_path}: {note}")
         if not self.ambient_changes():
-            out.append("ambient traffic: as the game has it (no settings)")
+            out.append("ambient traffic: as the game has it (`traffic ambient` puts ports in the sets)")
             return out
         ai, reports = self.plan()
         slots, _ = self.facts()

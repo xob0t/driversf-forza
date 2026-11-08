@@ -108,20 +108,24 @@ car_manager gui` does the same from a checkout. Its tabs:
   and vanilla models from other chapters added in. The list shows each model's
   share now and with your settings, and how many models the chapter can hold.
   A set holds at most what the game can load beside the chapter's mission
-  cars (with `[archive] vehicle_slots=50` in `dsfcars.ini`, a story chapter
-  holds 29 to 36 models, counting the mission sets that share its roads); past
+  cars (with the default `[archive] vehicle_slots=35` in `dsfcars.ini`, few of
+  your cars fit beside the game's); past
   that the chapter would never finish loading, so
   the car manager leaves the extra cars out and says so.
 - **Interesting vehicles**: the few special cars the game adds near you. Your
   cars can come as those too, and a car can be pinned to regions of the map.
 
-**By default** (until you change it) every story chapter's traffic is filled
-with your cars up to what it can hold: with 24 cars in traffic, 17 in the
-Exposition, 11 in Chapter 1, 13 in Chapters 2 to 5, 16 in Chapter 6, 18 in
-Chapter 7 and 21 in the Epilogue (with `vehicle_slots=50`). Each of your cars is
-as likely as an average car of the game's on every road, so about two fifths
-(Chapter 1) to three fifths (Epilogue) of the traffic is your cars. The game's own cars keep their mix.
-`cars.cmd traffic ambient --off` puts the traffic back as the game has it.
+**By default** the traffic sets are as the game has them: your cars come
+only as interesting vehicles. Filling the sets with your cars needs more
+vehicle slots than the game has, and the slot raise is switched off in this
+version (`vehicle_slots=35`) because it can crash the game in free roam
+([#586](https://github.com/xob0t/driversf-forza/issues/586)). At 35 slots a
+set has little or no room for your cars. `cars.cmd traffic ambient` (or changing a
+setting in the Traffic sets tab) still fills every story chapter's set with
+your cars up to what it can hold. Each of your cars
+is as likely as an average car of the game's on every road, and the game's own
+cars keep their mix. `cars.cmd traffic ambient --off` puts the traffic back as
+the game has it.
 
 The settings are kept in `dsfcars\cars\manager.json` (they survive a
 reinstall) and take effect at the next game start. The same from the command

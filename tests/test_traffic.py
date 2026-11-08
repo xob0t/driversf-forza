@@ -268,6 +268,28 @@ class TrafficControlTest(unittest.TestCase):
         self.assertFalse((self.game / traffic.AI_SLOTS).exists())
         self.assertFalse((self.game / car_gui.GENERATED / car_gui.REDIRECT).exists())
 
+    def test_sets_unchanged_until_a_setting(self):
+        # a fresh install leaves the traffic sets as the game has them (#586); `traffic ambient`
+        # with no fields turns the default (DEFAULT_SET) on
+        m = self.manager()
+        m.install(self.package("CAR_A_10"))
+        tc = self.control(m)
+        self.assertFalse(tc.ambient_changes())
+        tc.write()
+        self.assertFalse((self.game / traffic.AI_COPY).exists())
+        self.assertTrue((self.game / traffic.TRAFFIC_LUA).exists())  # interesting vehicles still
+        tc.set_ambient(None)
+        self.assertTrue(tc.ambient_changes())
+        tc.write()
+        self.assertTrue((self.game / traffic.AI_COPY).exists())
+        tc.ambient_off()
+        self.assertFalse(tc.ambient_changes())
+        # settings made before the default changed still count as on
+        tc.t["ambient"] = {"default": {"ports": 2}}
+        self.assertTrue(tc.ambient_changes())
+        tc.t["ambient"] = {"default": {}}  # `traffic ambient` with no fields
+        self.assertTrue(tc.ambient_changes())
+
     def test_settings_survive_reinstall(self):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))

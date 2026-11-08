@@ -679,7 +679,10 @@ def add_traffic_parser(sub, common) -> None:
     pin.add_argument("selectors", nargs="+")
     pin.add_argument("--regions", required=True, type=_ints)
     ts.add_parser("unpin", help="these cars back to automatic regions").add_argument("selectors", nargs="+")
-    a = ts.add_parser("ambient", help="the traffic sets: ports, share, weights, the pool")
+    a = ts.add_parser(
+        "ambient",
+        help="the traffic sets: ports, share, weights, the pool (off by default; this turns them on)",
+    )
     a.add_argument("--set", dest="set_name", help="one set (e.g. 'Chapter 7'); default: every story set's default")
     a.add_argument("--ports", help="fill (up to the slot budget), how many, or keys separated by commas")
     a.add_argument("--share", help="mean (each as likely as an average vanilla car) or the added models' share (0..1)")
