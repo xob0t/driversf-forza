@@ -52,6 +52,9 @@ from dsfforza.game import traffic_ai
 
 AI_FILE = Path("media") / "san_franciscoAI.fchunk"
 AI_COPY = Path("dsfcars") / "traffic" / "san_franciscoAI.fchunk"
+# The slot count the copy's sets were planned for: dsfcars.asi serves the copy only while the game
+# will have that many (mod_archive.cpp, "file redirection"; #583), else the game reads its own file.
+AI_SLOTS = AI_COPY.with_name(AI_COPY.name + ".slots")
 TRAFFIC_LUA = Path("Common") / "UserLuaScripts" / "dsfcars" / "traffic.lua"
 STORY_SETS = ["Exposition"] + [f"Chapter {i}" for i in range(1, 8)] + ["Epilogue"]
 VANILLA_SLOTS = 35  # SSLP +0x18 of the vanilla vehicle archive (research/traffic.md 4)
@@ -474,6 +477,7 @@ class TrafficControl:
         ai = traffic_ai.AiTraffic.read(self.game_ai(), traffic_ai.known_names())
         ids = self.in_traffic()
         slots, pots = self.facts()
+        self.planned_slots = slots
         key_ids = {k: c["id"] for k, c in self.cars().items()}
         seed = int(self.t["ambient"].get("seed", 0))
         reports = plan(ai, self.t["ambient"], [i for i, _ in ids], key_ids, slots=slots, pots=pots, seed=seed)
@@ -503,9 +507,11 @@ class TrafficControl:
             temp = copy.with_name(copy.name + ".tmp")
             temp.write_bytes(ai.to_bytes())
             temp.replace(copy)
+            (game / AI_SLOTS).write_text(f"{self.planned_slots}\n", encoding="utf-8", newline="\n")
             changed = True
         if not changed:
             copy.unlink(missing_ok=True)
+            (game / AI_SLOTS).unlink(missing_ok=True)
             if copy.parent.exists() and not any(copy.parent.iterdir()):
                 copy.parent.rmdir()
         car_gui.set_redirect(game, AI_FILE, AI_COPY if changed else None)
@@ -551,6 +557,7 @@ class TrafficControl:
         from dsfforza.build import car_gui
 
         (self.m.game / AI_COPY).unlink(missing_ok=True)
+        (self.m.game / AI_SLOTS).unlink(missing_ok=True)
         car_gui.set_redirect(self.m.game, AI_FILE, None)
         (self.m.game / TRAFFIC_LUA).unlink(missing_ok=True)
 

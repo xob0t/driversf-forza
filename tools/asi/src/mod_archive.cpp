@@ -790,6 +790,8 @@ const uint32_t kPoolBytes = 0x4000;         // per relocated ID pool: 1024 nodes
 const uint32_t kIdPools[] = {0x5B44, 0x5F5C, 0x6374, 0x668C, 0x69A4, 0x6CBC, 0x6FD4};
 uint32_t g_vehicle_slots = 0;               // [archive] vehicle_slots; 0 = vanilla, no patch
 bool g_slots_done = false;
+uint32_t g_slots_applied = 0;             // the kind-0 count apply_vehicle_slots set (0: not yet, or refused)
+bool g_ai_copy_served = false;            // the traffic sets' AI copy was opened for the game ("file redirection")
 bool g_sslp_hooked = false;               // the slot raise hooked 0x005A0B50 itself (no packages)
 
 // Graphics pool 9's rows: {name, slots} at 0x00FD2618; {flag, SYS KiB, SYS nodes,
@@ -1485,6 +1487,16 @@ void* __fastcall h_trace_make_slot(void* self, void*, void* out, uint32_t type, 
 
 const uint8_t kMakeSlotCallExpect[] = {0xE8, 0x2A, 0xE5, 0xFF, 0xFF};  // 0x005A1491: call 0x0059F9C0
 
+// The AI copy is opened before the SSLP is loaded (run vm1-20261108-025033: 'media\san_franciscoai.fchunk' opened 0.6 s before the SSLP load), so the redirect decides from
+// slots_expected(); a refusal at the SSLP after the copy was served is logged as the error it is.
+void slots_refused_late()
+{
+    if (g_ai_copy_served)
+        dsf_log("slots: ERROR: the traffic sets' AI copy was already served for %u slots; a chapter whose set "
+                "needs more than 35 may not finish loading (at the next start the copy is not used)",
+                g_vehicle_slots);
+}
+
 // The vehicle spool object's SSLP header has just been set: raise its kind-0 slot
 // byte and move its ID pools out of the object. obj = the spool object (the SSLP
 // load's `self` - 4); its package type is at +0x7300 (vehicles: 0, FUN_005A1520).
@@ -1499,12 +1511,14 @@ void apply_vehicle_slots(uint8_t* obj)
     if (header[0x18] != kVanillaVehicleSlots) {
         dsf_log("slots: the vehicle SSLP has %u kind-0 slots, not 35 (another mod's archive); left as it is",
                 header[0x18]);
+        slots_refused_late();
         return;
     }
     for (uint32_t off : kIdPools) {
         uint32_t* pool = (uint32_t*)(obj + off);
         if (pool[0] != (uint32_t)(uintptr_t)(obj + off + 0x0C) || pool[1] || pool[2]) {
             dsf_log("slots: spool ID pool +%#x is already in use; vehicle slots stay 35", off);
+            slots_refused_late();
             return;
         }
     }
@@ -1517,6 +1531,7 @@ void apply_vehicle_slots(uint8_t* obj)
         *(uint32_t*)(obj + off) = (uint32_t)(uintptr_t)buffer;
     }
     header[0x18] = (uint8_t)slots;
+    g_slots_applied = slots;
     dsf_log("slots: vehicle spool object %p: %u kind-0 slots (vanilla 35; %u of %u handlers), ID pools of %u nodes",
             obj, slots, slots + others, kSlotHandlers, kPoolBytes / 16);
 }
@@ -2546,6 +2561,72 @@ void patch_frame_log()
                 target);
 }
 
+// ---- the slot count the game will have -----------------------------------------
+// What apply_vehicle_slots will give, known before the game reads anything: 35 unless
+// every patch of the slot raise landed at init (g_vehicle_slots) and the vehicle
+// archive's SSLP header (Install\dngvehicles.sp: root -> SSIC -> NONR -> SSLP, as
+// dsfforza.game.vehicle_limits reads it) has the vanilla 35 kind-0 slots. Once the SSLP
+// is loaded, what was applied. apply_vehicle_slots' other check (the ID pools unused)
+// can't fail before a vehicle has loaded.
+int g_archive_kind0 = -1;  // the archive's kind-0 byte; -1 not read yet, 0 unreadable
+
+static bool file_read_at(HANDLE f, uint32_t off, void* buf, DWORD n)
+{
+    LARGE_INTEGER at;
+    at.QuadPart = off;
+    DWORD got = 0;
+    return SetFilePointerEx(f, at, nullptr, FILE_BEGIN) && ReadFile(f, buf, n, &got, nullptr) && got == n;
+}
+
+// The file offset of child `tag` of the CHNK at file offset `base` (0: none).
+static uint32_t file_chnk_child(HANDLE f, uint32_t base, uint32_t tag)
+{
+    uint32_t hdr[4];
+    if (!file_read_at(f, base, hdr, sizeof hdr) || hdr[0] != kCHNK || hdr[2] > 65536) return 0;
+    uint32_t n = hdr[2];
+    Entry* e = (Entry*)HeapAlloc(GetProcessHeap(), 0, n * sizeof(Entry) + 1);
+    uint32_t found = 0;
+    if (e && file_read_at(f, base + 16, e, n * sizeof(Entry)))
+        for (uint32_t i = 0; i < n && !found; i++)
+            if (e[i].tag == tag) found = base + e[i].offset;
+    if (e) HeapFree(GetProcessHeap(), 0, e);
+    return found;
+}
+
+// The kind-0 slot byte of an archive's SSLP header (0: no such file or chunk).
+int archive_kind0_slots(const char* archive)
+{
+    HANDLE f = CreateFileA(archive, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    uint8_t header[0x1C];
+    uint32_t ssic = file_chnk_child(f, 0, tag4('S', 'S', 'I', 'C'));
+    uint32_t nonr = ssic ? file_chnk_child(f, ssic, tag4('N', 'O', 'N', 'R')) : 0;
+    uint32_t sslp = nonr ? file_chnk_child(f, nonr, tag4('S', 'S', 'L', 'P')) : 0;
+    int kind0 = sslp && file_read_at(f, sslp, header, sizeof header) ? header[0x18] : 0;
+    CloseHandle(f);
+    return kind0;
+}
+
+uint32_t slots_expected()
+{
+    if (g_slots_done) return g_slots_applied ? g_slots_applied : kVanillaVehicleSlots;
+    if (!g_vehicle_slots) return kVanillaVehicleSlots;
+    if (g_archive_kind0 < 0) {
+        char path[MAX_PATH];
+        DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
+        char* slash = n && n < MAX_PATH ? strrchr(path, '\\') : nullptr;
+        g_archive_kind0 = 0;
+        if (slash) {
+            strcpy_s(slash + 1, MAX_PATH - (size_t)(slash + 1 - path), "Install\\dngvehicles.sp");
+            g_archive_kind0 = archive_kind0_slots(path);
+        }
+        if (g_archive_kind0 != (int)kVanillaVehicleSlots)
+            dsf_log("slots: the vehicle archive's SSLP has %d kind-0 slots (0: unreadable), not 35; the raise "
+                    "won't apply", g_archive_kind0);
+    }
+    return g_archive_kind0 == (int)kVanillaVehicleSlots ? g_vehicle_slots : kVanillaVehicleSlots;
+}
+
 // ---- file redirection ([archive] packages: the manager's generated files) --
 // The car manager writes copies of gui.sp, Fonts.fchunk and each language's
 // global.fchunk with the enabled packages' pictures, glyphs and names, and a
@@ -2568,9 +2649,19 @@ void patch_frame_log()
 // either load order. "archive.redirect_chain" in DSF_CAPABILITIES says so.
 typedef HANDLE(WINAPI* CreateFileAFn)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 static CreateFileAFn* const kCreateFileImport = (CreateFileAFn*)0x00DC9260;
+// The car manager writes the traffic sets' AI copy (media\san_franciscoAI.fchunk ->
+// dsfcars\traffic\san_franciscoAI.fchunk) for a slot count and records the count beside it
+// (<replacement>.slots, src/dsfforza/build/traffic.py). Sets past what the game holds
+// leave a mission pot no room and the chapter load never ends (research/traffic.md, "The
+// spool slot limit"). So a replacement with a .slots record is used only while
+// slots_expected() reaches it, and the AI copy without one only while the slots are raised
+// at all; otherwise the game reads its own file (logged once).
+const char kAiFile[] = "media\\san_franciscoai.fchunk";
 struct Redirect {
     char from[MAX_PATH];  // normalised game-relative path
     char to[MAX_PATH];    // full path of the replacement
+    uint32_t min_slots;   // vehicle slots it needs (0: any)
+    bool refused_logged;
 };
 static Redirect* g_redirects = nullptr;
 static uint32_t g_redirect_count = 0;
@@ -2622,7 +2713,21 @@ static uint32_t pkg_load_redirects(const char* base, const char* list)
             dsf_log("redirect: %s -> %s: no such file; left out", line, r->to);
             continue;
         }
-        dsf_log("redirect: %s -> %s", line, bar + 1);
+        r->min_slots = 0;
+        r->refused_logged = false;
+        char rec[MAX_PATH + 8];
+        _snprintf_s(rec, sizeof rec, _TRUNCATE, "%s.slots", r->to);
+        FILE* sf = nullptr;
+        if (!fopen_s(&sf, rec, "r") && sf) {
+            unsigned v = 0;
+            if (fscanf_s(sf, "%u", &v) == 1) r->min_slots = v;
+            fclose(sf);
+        }
+        if (!r->min_slots && strcmp(r->from, kAiFile) == 0) r->min_slots = kVanillaVehicleSlots + 1;
+        if (r->min_slots)
+            dsf_log("redirect: %s -> %s (for %u vehicle slots)", line, bar + 1, r->min_slots);
+        else
+            dsf_log("redirect: %s -> %s", line, bar + 1);
         g_redirect_count++;
     }
     fclose(f);
@@ -2635,8 +2740,23 @@ static const char* redirect_of(const char* name)
     if (!name || !g_redirect_count) return nullptr;
     char key[MAX_PATH];
     redirect_key(name, key, sizeof key);
-    for (uint32_t i = 0; i < g_redirect_count; i++)
-        if (strcmp(key, g_redirects[i].from) == 0) return g_redirects[i].to;
+    for (uint32_t i = 0; i < g_redirect_count; i++) {
+        Redirect* r = &g_redirects[i];
+        if (strcmp(key, r->from) != 0) continue;
+        if (r->min_slots) {
+            uint32_t have = slots_expected();
+            if (have < r->min_slots) {
+                if (!r->refused_logged) {
+                    r->refused_logged = true;
+                    dsf_log("redirect: %s not used: written for %u vehicle slots, the game has %u; '%s' as it is",
+                            r->to, r->min_slots, have, name);
+                }
+                return nullptr;
+            }
+            if (strcmp(r->from, kAiFile) == 0) g_ai_copy_served = true;
+        }
+        return r->to;
+    }
     return nullptr;
 }
 
@@ -2717,6 +2837,10 @@ void mod_archive_init()
         dsf_log("slots: 00869D50 is not the vanilla object pool allocator; no overflow log");
     if (g_slots_trace && patch_call(0x005A1491, (void*)h_trace_make_slot, kMakeSlotCallExpect))
         dsf_log("slots_trace: 005A1491 traced");
+    if (slots > (int)kVanillaVehicleSlots && cfg_bool("archive", "slots_fail", false)) {
+        dsf_log("slots: slots_fail=1 (a test: as if a patch site weren't the vanilla code); vehicle slots stay 35");
+        slots = (int)kVanillaVehicleSlots;
+    }
     if (slots > (int)kVanillaVehicleSlots) {
         if (slots > (int)kSlotHandlers - 4) slots = (int)kSlotHandlers - 4;  // the other kinds' 2 + 2 slots
         bool hooked = g_pkg_sites;  // the packages' SSLP hook calls apply_vehicle_slots too
@@ -3310,6 +3434,89 @@ int mod_archive_pkg_selftest(const char* dir)
     _snprintf_s(full, sizeof full, _TRUNCATE, "%sInstall\\gui.sp", d);
     ST_CHECK(redirect_of(full) == to);
     ST_CHECK(!redirect_of("Install\\gui.sp2") && !redirect_of("Media\\fonts.fchunk") && !redirect_of(nullptr));
+
+    // The traffic sets' AI copy: used only while the game will have the slots it was
+    // written for (its .slots record), and without a record only while they are raised.
+    {
+        // A vehicle archive: root CHNK -> SSIC (CHNK) -> NONR (CHNK) -> SSLP (0x1C bytes).
+        uint8_t arc[3 * 32 + 0x1C] = {};
+        auto chnk = [&](uint32_t at, uint32_t tag, uint32_t child_at, uint32_t child_size) {
+            uint32_t* h = (uint32_t*)(arc + at);
+            h[0] = kCHNK;
+            h[2] = 1;
+            Entry* e = (Entry*)(arc + at + 16);
+            e->tag = tag;
+            e->offset = child_at - at;
+            e->size = child_size;
+        };
+        chnk(0, tag4('S', 'S', 'I', 'C'), 32, sizeof arc - 32);
+        chnk(32, tag4('N', 'O', 'N', 'R'), 64, sizeof arc - 64);
+        chnk(64, tag4('S', 'S', 'L', 'P'), 96, 0x1C);
+        arc[96 + 0x18] = 35;
+        char apath[MAX_PATH];
+        _snprintf_s(apath, sizeof apath, _TRUNCATE, "%sdngvehicles.sp", d);
+        FILE* af = nullptr;
+        fopen_s(&af, apath, "wb");
+        if (af) {
+            fwrite(arc, 1, sizeof arc, af);
+            fclose(af);
+        }
+        ST_CHECK(archive_kind0_slots(apath) == 35);
+        arc[96 + 0x18] = 40;
+        fopen_s(&af, apath, "wb");
+        if (af) {
+            fwrite(arc, 1, sizeof arc, af);
+            fclose(af);
+        }
+        ST_CHECK(archive_kind0_slots(apath) == 40);
+        _snprintf_s(path, sizeof path, _TRUNCATE, "%snone.sp", d);
+        ST_CHECK(archive_kind0_slots(path) == 0);
+
+        char ai[MAX_PATH], rec[MAX_PATH];
+        _snprintf_s(ai, sizeof ai, _TRUNCATE, "%sgen\\san_franciscoAI.fchunk", d);
+        _snprintf_s(rec, sizeof rec, _TRUNCATE, "%s.slots", ai);
+        st_write_list(ai, "AIEX");
+        st_write_list(list, "media\\san_franciscoAI.fchunk|gen\\san_franciscoAI.fchunk\n");
+        const uint32_t saved_slots = g_vehicle_slots;
+        const int saved_kind0 = g_archive_kind0;
+        const bool saved_done = g_slots_done;
+        g_slots_done = false;
+        auto ai_used = [&](uint32_t raised, int kind0, const char* record) {
+            if (record)
+                st_write_list(rec, record);
+            else
+                DeleteFileA(rec);
+            ST_CHECK(pkg_load_redirects(d, list) == 1);
+            g_vehicle_slots = raised;
+            g_archive_kind0 = kind0;
+            return redirect_of("media\\san_franciscoai.fchunk") != nullptr;
+        };
+        ST_CHECK(ai_used(50, 35, "50\n"));           // written for 50, the game has 50
+        ST_CHECK(ai_used(60, 35, "50\n"));           // more is fine
+        ST_CHECK(!ai_used(41, 35, "50\n"));          // the ini lowered past what it was written for
+        ST_CHECK(!ai_used(0, 35, "50\n"));           // the raise failed at init (any "stay 35")
+        ST_CHECK(!ai_used(50, 40, "50\n"));          // another mod's archive: the raise won't apply
+        ST_CHECK(!ai_used(50, 0, "50\n"));           // the archive can't be read
+        ST_CHECK(ai_used(50, 35, nullptr));          // no record (an older manager): needs a raise
+        ST_CHECK(!ai_used(0, 35, nullptr));
+        // Once the SSLP is loaded: what was applied.
+        ai_used(50, 35, "50\n");
+        g_slots_done = true;
+        g_slots_applied = 0;  // refused at the SSLP
+        ST_CHECK(!redirect_of("media\\san_franciscoai.fchunk"));
+        g_slots_applied = 50;
+        ST_CHECK(redirect_of("media\\san_franciscoai.fchunk") != nullptr);
+        g_slots_applied = 0;
+        g_slots_done = saved_done;
+        g_vehicle_slots = saved_slots;
+        g_archive_kind0 = saved_kind0;
+        g_ai_copy_served = false;
+        DeleteFileA(rec);
+        DeleteFileA(ai);
+        DeleteFileA(apath);
+        st_write_list(list, "Install\\GUI.sp|gen\\gui.sp\n");
+        ST_CHECK(pkg_load_redirects(d, list) == 1);
+    }
     // offline.exe maps Driver.exe without binding its imports: bind the one the
     // names not listed go through, as the loader does.
     const CreateFileAFn bound = *kCreateFileImport;
