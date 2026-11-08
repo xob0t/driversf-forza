@@ -785,7 +785,8 @@ void pkg_inject(Reader* r)
 // 40 + 17 + 1 pending + 1 < 60, no refusal.
 const uint32_t kSlotHandlers = 64;          // +0x5630: slot handlers for all kinds
 const uint32_t kVanillaVehicleSlots = 35;   // SSLP +0x18 in the vanilla archive
-const uint32_t kDefaultVehicleSlots = 50;   // [archive] vehicle_slots default (see init)
+const uint32_t kDefaultVehicleSlots = 35;   // [archive] vehicle_slots default: no raise until #586 (at 50,
+                                            // a provider's 45-node ID map probably overflows)
 const uint32_t kPoolBytes = 0x4000;         // per relocated ID pool: 1024 nodes of 16 bytes
 const uint32_t kIdPools[] = {0x5B44, 0x5F5C, 0x6374, 0x668C, 0x69A4, 0x6CBC, 0x6FD4};
 uint32_t g_vehicle_slots = 0;               // [archive] vehicle_slots; 0 = vanilla, no patch
@@ -2828,9 +2829,9 @@ void mod_archive_init()
     if (g_read_log) patch_frame_log();
 
     // Vehicle spool slots (see "vehicle spool slots"): 35 = vanilla, no patch; at most 60, what the slot
-    // handler arrays hold (64 - the other kinds' 2 + 2). 50 (Chapter 7's set 36 models) is the most that
-    // passed Chapter 7 and a mission start every time (runs vm1-20261108-022429, -022818); with 60 the
-    // slots load, but a 40-model set crashed in 2 of 4 runs in the 2D zone pass at 0x00AB607F (#566).
+    // handler arrays hold (64 - the other kinds' 2 + 2). 50 (Chapter 7's set 36 models) passed Chapter 7 and a
+    // mission start every time (runs vm1-20261108-022429, -022818), but crashed a free-roam session (#586), so
+    // the default is 35 again; with 60 a 40-model set crashed in 2 of 4 runs at 0x00AB607F (#566).
     g_slots_trace = cfg_bool("archive", "slots_trace", false);
     int slots = cfg_int("archive", "vehicle_slots", (int)kDefaultVehicleSlots);
     if (slots > (int)kVanillaVehicleSlots && !patch_obj_alloc())
