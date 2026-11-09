@@ -1,6 +1,6 @@
 # Traffic: what decides which cars the player meets
 
-Updated: 2026-11-09
+Updated: 2026-11-10
 
 What spawns on the street in free roam, which of it a mod can change, and
 how the ported cars get in. This is the ground for the car manager's
@@ -776,9 +776,57 @@ the same address, 40 independent owners, neighboring-object guards,
 audio profile replacement/removal and the common/default pointer. It
 also checks allocation refusal without a write, an unrelated provider's
 original 45-entry gate, and preflight rejection without partial patches.
-Run artifacts: `out/traffic-audit/build-final.log` in the
-`fix/vehicle-provider-capacity` worktree. Runtime results follow once the
-VM runs finish.
+Run artifacts: `out/traffic-audit/build-review.log` in the
+`fix/vehicle-provider-capacity` worktree. The reset assertion also checks
+the page-chain length and the actual address of node 46, so keeping a
+stale page-list head while allocating new pages would fail.
+
+**Runtime load check, 2026-11-09.** Run `vm1-20261109-223737` used the
+24-package overlay, Chapter 7's 36-model ambient set and 50 slots. The
+additional native mission requests reached **49 nodes in each of ED, EF
+and model audio** (log entries at 22:40:38.948..949). The player drove IDs
+1, 4, 15, 21, 266 and 130; the first four are ports, the last two vanilla.
+The run finished without a recorded crash or map-storage refusal, and
+the world and cars rendered after DLSS/DLAA were disabled in the run
+copy. This checks the predicted load boundary, not the full lifecycle.
+
+The research script then failed because Driver's sandbox has no `os`
+library. Its requested resources stayed resident, so this run **does not
+validate the scripted release/reload**. The pre-fix control
+`vm2-20261109-223724` also has that script error and did not complete the
+whole car sequence. It is not a deterministic reproduction of #586.
+
+**Further lifecycle test, 2026-11-10, inconclusive.** The script was
+corrected to use update counters. In paired runs
+`vm1-20261110-012619` (fixed) and `vm2-20261110-012758` (pre-fix), progress
+stopped in the Shift overview before the stress requests began. Read-only
+snapshots found **43 nodes, 43 traversed nodes and consistent backlinks**
+in each of the three maps on both builds, below the changed boundary.
+The snapshots' counts were unchanged during each traversal. The fixed
+run's window-message pump still recorded about 600 frames per 10 s while
+the Lua log stopped advancing and Enhanced's simulation FPS read 0.
+Foreground PID checks matched Driver, so the observed stall was not an
+unfocused window. These observations do not identify the pause/loading
+cause and do not establish a regression in the map fix. Follow-up belongs
+with the VM investigation (#589).
+
+Shared run folders are under `%LOCALAPPDATA%/Temp/dsfforza-wsb/runs/`.
+`map-snapshot.json` in each Nov 10 run records the native map headers,
+keys, link traversal and process identity. The audit worktree keeps the
+research scripts, native-build logs and Python test log in
+`out/traffic-audit/`. All 761 Python tests, lint and the native fixture
+passed. CodeRabbit's page-reuse test finding was fixed; its peak-log note
+was answered with the supported slot bound and the need for exact peaks.
+
+Each map that passes 45 commits one OS page of extra node storage. At
+the observed 49-node peaks that is three 4 KiB pages plus allocator and
+owner metadata. Pages persist for the process and are reused after reset.
+No converter inputs, car geometry, materials, handling or packages changed.
+
+The original garage-swap case from #586, a clean live release/reload,
+menu/Story/replay transitions, the Epilogue (#584), and broader 60-slot
+coverage (#566) remain unverified. The VM audio is muted; registration
+and lookup checks are not an audible test of every car.
 
 The 40-model ambient-roster bound is retained. Traffic Extension's separate
 50-entry notification, parked-cache and replay-snapshot findings concern
