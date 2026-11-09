@@ -278,10 +278,22 @@ int vehicle_maps_selftest()
     for (int key = 0; key < 600; key++) ((RemoveKey)0x00556FB0)(pool, &key);
     MAP_CHECK(pool[2] == 0 && pool[1] == 600);
     Map* state = find_map(pool);
-    uintptr_t first_page = (uintptr_t)state->pages;
+    Page* first_page = state->pages;
+    auto page_count = [&]() {
+        int count = 0;
+        for (Page* page = state->pages; page; page = page->next) count++;
+        return count;
+    };
+    int pages_before = page_count();
     reset(0xED);
-    for (int key = 0; key < 64; key++) *index(pool, &key) = key;
-    MAP_CHECK((uintptr_t)state->pages == first_page && pool[2] == 64 && guard());
+    for (int key = 0; key < 64; key++) {
+        int* value = index(pool, &key);
+        // The first external node must reuse the original page, not just retain
+        // its list head while silently allocating another page.
+        if (key == (int)kInlineNodes) MAP_CHECK(value == (int*)(first_page->begin + 12));
+        *value = key;
+    }
+    MAP_CHECK(state->pages == first_page && page_count() == pages_before && pool[2] == 64 && guard());
 
     // More distinct owners than the old fixed-size provider bookkeeping. Every
     // owner must get storage without exhausting a plugin registry after reloads.
