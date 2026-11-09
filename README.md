@@ -54,6 +54,9 @@ screenshot and the car's name ([what is in it](INSTALL.md#reporting-a-bug)).
 
 - [DriverNGToolkit](https://github.com/ReHamster/DriverNGToolkit)
   (SoapyMan, ReHamster): DriverNGHook, which runs the registration Lua.
+- [Driver-SF-Traffic-Extension](https://github.com/F3nd3rB3nd3r/Driver-SF-Traffic-Extension)
+  (F3nd3rB3nd3r): research into vehicle-provider maps, the model-audio registry
+  and traffic streaming limits, used to correct the optional vehicle-slot raise.
 - [driver-tools](https://github.com/Fireboyd78/driver-tools) (Fireboyd78):
   Driver chunk, model and hierarchy formats.
 - [carbin-garage](https://github.com/ItsNotPaths/carbin-garage) (ItsNotPaths):

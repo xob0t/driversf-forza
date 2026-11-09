@@ -35,6 +35,9 @@
 #include "patch.h"
 #include "shared.h"
 
+bool vehicle_maps_install();
+int vehicle_maps_selftest();
+
 namespace {
 
 const uint32_t kInline = 1100;  // entries the reader holds inline
@@ -1018,11 +1021,10 @@ SRWLOCK g_pool_lock = SRWLOCK_INIT;
 
 // Moves a full node pool's bump pointer to a chunk of this module's. pool = {next,
 // free count, used}; storage..head is its inline storage (head = the list head);
-// what = the log name; node = the node size (12 here, 16 for the ID maps below). Before
-// the bump that would reach `end`. False when the pool is full and no chunk could be
-// had: the caller must not append (the node would land on the list head, or past the
-// chunk).
-bool pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what, uint32_t node = kNode45)
+// what = the log name. Before the bump that would reach `end`. False when the pool is
+// full and no chunk could be had: the caller must not append (the node would land on
+// the list head, or past the chunk).
+bool pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what)
 {
     if (pool[1] != 0) return true;  // next is the free list's head: no bump
     uint8_t* cur = (uint8_t*)(uintptr_t)pool[0];
@@ -1032,8 +1034,8 @@ bool pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what, uin
     for (PoolChunk& x : g_pool_chunks)
         if (x.pool == pool) c = &x;
     uint8_t* end = inline_storage ? head : (c ? c->end : nullptr);
-    if (end && cur + node > end) {
-        uint8_t* chunk = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kChunkNodes * node);
+    if (end && cur + kNode45 > end) {
+        uint8_t* chunk = (uint8_t*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, kChunkNodes * kNode45);
         if (!c)
             for (PoolChunk& x : g_pool_chunks)
                 if (!x.pool) {
@@ -1043,10 +1045,10 @@ bool pool_room(int* pool, uint8_t* storage, uint8_t* head, const char* what, uin
                 }
         if (chunk && c) {
             pool[0] = (int)(uintptr_t)chunk;
-            c->end = chunk + kChunkNodes * node;
+            c->end = chunk + kChunkNodes * kNode45;
             if (inline_storage)
                 dsf_log("slots: %s %p passes its %u inline nodes; it goes on in the plugin's chunks", what, pool,
-                        (uint32_t)((head - storage) / node));
+                        (uint32_t)((head - storage) / kNode45));
         } else {
             dsf_log("slots: %s %p: no chunk for node %d; the node is not added", what, pool, pool[2] + 1);
             ReleaseSRWLockExclusive(&g_pool_lock);
@@ -1412,124 +1414,6 @@ bool patch_bank_list()
     }
     if (!patch_jmp(0x00849870, (void*)h_bank_append, 7, kBankAppendExpect)) return false;
     dsf_log("slots: 00849870 sound bank list (50 nodes) goes on in the plugin's chunks when full");
-    return true;
-}
-
-// ---- the vehicles' ID maps (45 nodes) -----------------------------------------
-// research/traffic.md, "The vehicles' ID maps" (#586). Providers 3 and 4 of the vehicles'
-// seven (class 0x00E3966C, 0x524 bytes: creators 0x0086C4A0, class ID 0xED, and 0x0086B7D0,
-// class 0xEF; constructors 0x0086C340, 0x0086B4A0) hold, besides their wrapper pool at +0x04
-// (0x0086B6B0 above), a sorted map at +0x23C: {next, free count, used}, then 45 nodes of 16
-// bytes {prev, next, key, value} from +0x248 and the list head at +0x518 (map + 0x2DC). The
-// map's template has its node insert in 0x007D7270 (no end check) and its lookups in
-// 0x00556F10, 0x00556F60, 0x00556FB0. Each loaded wrapper of the two classes registers in
-// the provider at Engine+0x77C (class 0xED: 0x0086C430 -> 0x0086C3A0, key the item's first
-// dword) or Engine+0x784 (class 0xEF: 0x0086B640 -> 0x0086B500, key the vehicle ID of the
-// item's SPID chunk, "Shader Param Vehicle Id"), and leaves when it unloads (0x0086C260,
-// 0x0086B2F0), so the maps hold one node per vehicle model loaded at once. 45 holds the
-// vanilla 35 + 2 + 2 slots; the game's one bounded user of the template, 0x00556E30, refuses
-// an insert at `used >= 0x2D`. With more slots the 46th node lands on the list head and the
-// 47th on the next heap block: the user's crash of 2026-11-08 at 50 slots (#586,
-// Driver_20261108_064015.dmp): the Engine+0x784 map's nodes ran 5 past its 45, over its
-// head and two heap blocks to provider 0's wrapper at GraphicsManager+0x210 entry 25, whose
-// vtable became a node's prev pointer, and the frame's call of its +0x2C jumped into
-// vehicle 536's SPID chunk. The three calls of 0x007D7270 that insert into such a map
-// (0x0086B5C9 and 0x0086B3DE on the Engine+0x784 map, 0x00556F9B in the template's
-// operator[], which the Engine+0x77C map inserts through) go to the same insert, with the
-// bump pointer moved to a chunk of this module's before it would reach the list head
-// (pool_room). Freed nodes go back on the free list wherever they live, as before.
-const uint32_t kMapNode = 16;
-const uint32_t kMapNodes = 0x2D;                       // 0x00556E30: cmp [ecx+0xc], 0x2d
-const uint32_t kMapHead = 0x0C + kMapNodes * kMapNode;  // +0x2DC, the list head (0x00556F10)
-const uint32_t kIdMapOwnerOff = 0x23C;                  // the map in the provider (0x0086B57A)
-const uint32_t kIdMapVtable = 0x00E3966C;
-struct MapPeak {
-    int* pool;
-    uint32_t peak;
-};
-MapPeak g_map_peaks[8];
-bool readable(const void* p, size_t n);
-
-// The map's owner for the log: a provider of class 0x00E3966C (its class ID at +0x234), or
-// some other user of the template.
-void map_name(int* pool, char* out, size_t n)
-{
-    uint8_t* owner = (uint8_t*)pool - kIdMapOwnerOff;
-    if (readable(owner, 0x238) && *(uint32_t*)owner == kIdMapVtable)
-        _snprintf_s(out, n, _TRUNCATE, "ID map of provider %p (class %#x)", owner, *(uint32_t*)(owner + 0x234));
-    else
-        _snprintf_s(out, n, _TRUNCATE, "ID map %p", pool);
-}
-
-// 0x007D7270 (thiscall pool; out, pos, {key, value}; ret 0xC): a node from the free list or
-// the bump pointer, the pair in it, linked in before pos; returns out.
-int** __fastcall h_map45_insert(int* pool, void*, int** out, int* pos, const int* kv)
-{
-    char name[64];
-    map_name(pool, name, sizeof name);
-    uint8_t* storage = (uint8_t*)(pool + 3);
-    if (!pool_room(pool, storage, (uint8_t*)pool + kMapHead, name, kMapNode))
-        dsf_log("slots: %s: the node goes past its end as in vanilla", name);
-    int* node = (int*)(uintptr_t)pool[0];
-    if (pool[1] == 0) {
-        pool[0] += kMapNode;
-    } else {
-        pool[1]--;
-        pool[0] = node[0];
-    }
-    node[2] = kv[0];
-    node[3] = kv[1];
-    pool[2]++;
-    int* prev = (int*)(uintptr_t)pos[0];
-    node[0] = (int)(uintptr_t)prev;
-    node[1] = (int)(uintptr_t)pos;
-    pos[0] = (int)(uintptr_t)node;
-    prev[1] = (int)(uintptr_t)node;
-    *out = node;
-    // the most each map has held, from 40 on (a vehicle model loaded at once per node)
-    uint32_t used = (uint32_t)pool[2];
-    if (used >= 40) {
-        AcquireSRWLockExclusive(&g_pool_lock);
-        MapPeak* p = nullptr;
-        for (MapPeak& x : g_map_peaks)
-            if (x.pool == pool || (!p && !x.pool)) p = &x;
-        bool more = p && used > p->peak;
-        if (more) {
-            p->pool = pool;
-            p->peak = used;
-        }
-        ReleaseSRWLockExclusive(&g_pool_lock);
-        if (more) dsf_log("slots: %s holds %u nodes (peak; %u inline)", name, used, kMapNodes);
-    }
-    return out;
-}
-
-const uint32_t kMapInsertSites[] = {0x0086B5C9, 0x0086B3DE, 0x00556F9B};
-const uint8_t kMapInsertExpect[][5] = {
-    {0xE8, 0xA2, 0xBC, 0xF6, 0xFF}, {0xE8, 0x8D, 0xBE, 0xF6, 0xFF}, {0xE8, 0xD0, 0x02, 0x28, 0x00}};  // call 0x007D7270
-const uint8_t kMapCtorExpect[] = {0x8D, 0x88, 0x18, 0x05, 0x00, 0x00};  // lea ecx, [eax+0x518]: the list head
-bool g_maps_patched = false;
-
-bool patch_id_maps()
-{
-    if (g_maps_patched) return true;
-    for (int i = 0; i < 3; i++)
-        if (!check_bytes(kMapInsertSites[i], kMapInsertExpect[i], 5)) {
-            dsf_log("slots: %08X is not the vanilla ID map insert; vehicle slots stay 35", kMapInsertSites[i]);
-            return false;
-        }
-    if (!check_bytes(0x0086B4E4, kMapCtorExpect, 6) || !check_bytes(0x0086C384, kMapCtorExpect, 6)) {
-        dsf_log("slots: the ID maps' providers are not the vanilla constructors; vehicle slots stay 35");
-        return false;
-    }
-    for (int i = 0; i < 3; i++)
-        if (!patch_call(kMapInsertSites[i], (void*)h_map45_insert, kMapInsertExpect[i])) {
-            for (int k = 0; k < i; k++) patch_bytes(kMapInsertSites[k], kMapInsertExpect[k], 5);
-            return false;
-        }
-    g_maps_patched = true;
-    dsf_log("slots: the vehicles' ID maps (45 nodes; 0086B5C9, 0086B3DE, 00556F9B) go on in the plugin's chunks "
-            "when full");
     return true;
 }
 
@@ -2969,7 +2853,7 @@ void mod_archive_init()
         if (!hooked)
             dsf_log("slots: 005A0B50 is not the vanilla SSLP load; vehicle slots stay 35");
         else if (!(patch_wrap_lists() && patch_pool45() && patch_acquire_7a() && patch_modl_records() && patch_bank_list() &&
-                   patch_id_maps())) {  // they only act past their inline room
+                   vehicle_maps_install())) {  // they only act past their inline room
             if (g_sslp_hooked) {
                 patch_bytes(0x005A0B50, kSslpExpect, 5);
                 g_sslp_hooked = false;
@@ -2982,8 +2866,8 @@ void mod_archive_init()
             g_sslp_hooked = false;
         }
     }
-    // slots_trace at the vanilla 35: the ID maps' insert alone, for their peaks (it acts only past 45)
-    if (g_slots_trace && !g_vehicle_slots && patch_id_maps()) dsf_log("slots_trace: the ID maps' peaks are logged");
+    // slots_trace at 35: include the provider maps so their occupancy is logged.
+    if (g_slots_trace && !g_vehicle_slots && vehicle_maps_install()) dsf_log("slots_trace: the ID maps' peaks are logged");
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
@@ -3461,49 +3345,6 @@ static int slots_selftest()
     for (PoolChunk& c : g_pool_chunks)
         if (c.pool == pool) c = PoolChunk{};
     free(mgr);
-
-    // An ID map of a class-0x00E3966C provider: 60 inserts into its 45 nodes keep the list
-    // head and what follows the object, and link all 60 in key order; a node freed as
-    // 0x00556FB0 frees it is taken again before the bump pointer moves.
-    uint8_t* prov = (uint8_t*)calloc(1, 0x524 + 0x10);
-    *(uint32_t*)prov = kIdMapVtable;
-    *(uint32_t*)(prov + 0x234) = 0xEF;
-    memset(prov + 0x524, 0xAB, 0x10);  // the next heap block
-    int* map = (int*)(prov + kIdMapOwnerOff);
-    int* mhead = (int*)((uint8_t*)map + kMapHead);
-    map[0] = (int)(uintptr_t)(map + 3);
-    mhead[0] = mhead[1] = (int)(uintptr_t)mhead;
-    int* got = nullptr;
-    for (int i = 0; i < 60; i++) {
-        int kv[2] = {100 + i, 0x5000 + i};
-        h_map45_insert(map, nullptr, &got, mhead, kv);  // at the end: keys ascending
-    }
-    int n = 0, last = -1;
-    bool sorted = true;
-    for (int* x = (int*)(uintptr_t)mhead[1]; x != mhead && n < 100; x = (int*)(uintptr_t)x[1]) {
-        sorted &= x[2] > last;
-        last = x[2];
-        n++;
-    }
-    bool tail = true;
-    for (int i = 0; i < 0x10; i++) tail &= prov[0x524 + i] == 0xAB;
-    SL_CHECK(map[2] == 60 && n == 60 && sorted && got[2] == 159 && tail);
-    SL_CHECK((uint8_t*)got < prov || (uint8_t*)got >= prov + 0x524 + 0x10);  // the 60th node is in a chunk
-    int* victim = (int*)(uintptr_t)((int*)(uintptr_t)mhead[1])[1];  // the second node, inline
-    ((int*)(uintptr_t)victim[0])[1] = victim[1];
-    ((int*)(uintptr_t)victim[1])[0] = victim[0];
-    victim[0] = map[0];
-    map[0] = (int)(uintptr_t)victim;
-    map[1]++;
-    map[2]--;
-    int kv[2] = {500, 0x6000};
-    h_map45_insert(map, nullptr, &got, mhead, kv);
-    SL_CHECK(got == victim && map[1] == 0 && map[2] == 60);
-    for (PoolChunk& c : g_pool_chunks)
-        if (c.pool == map) c = PoolChunk{};
-    for (MapPeak& p : g_map_peaks)
-        if (p.pool == map) p = MapPeak{};
-    free(prov);
 #undef SL_CHECK
     free(obj);
     g_vehicle_slots = saved;
@@ -3520,7 +3361,7 @@ int mod_archive_pkg_selftest(const char* dir)
         patch_bytes(0x005A0B50, kSslpExpect, 5);
         g_sslp_hooked = false;
     }
-    int slot_failures = slots_selftest();
+    int slot_failures = slots_selftest() + vehicle_maps_selftest();
     g_st_fail = 0;
     char d[MAX_PATH], path[MAX_PATH], list[MAX_PATH];
     _snprintf_s(d, sizeof d, _TRUNCATE, "%s\\pkgtest\\", dir);

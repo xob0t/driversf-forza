@@ -1,6 +1,6 @@
 # Traffic: what decides which cars the player meets
 
-Updated: 2026-11-05
+Updated: 2026-11-09
 
 What spawns on the street in free roam, which of it a mod can change, and
 how the ported cars get in. This is the ground for the car manager's
@@ -8,6 +8,11 @@ traffic settings (design at the end). Evidence tags as elsewhere:
 `confirmed-static` (read in data or code), `confirmed-runtime`,
 `hypothesis`. Background: `game-lua.md` ("Traffic"), `draw-distance.md`
 (spawn distances, traffic counts).
+
+Current defaults remain the vanilla 35 vehicle slots and unchanged ambient
+sets (#587). The 41/50/60-slot runs below are historical experiments. The
+provider-map fix and the separate model-audio registry are documented under
+"Vehicle provider maps and model audio"; a larger default needs validation.
 
 ## Summary
 
@@ -695,6 +700,90 @@ instance 7). The census went on to 108 s with ports among the cars; no crash.
 
 **+10 at 41** (`vm1-20261105-230205`): loaded and drove, one model past the
 budget formula (above).
+
+### Vehicle provider maps and model audio
+
+**Confirmed-static, 2026-11-09; #586.** The resource-provider wrapper pools
+above are distinct from the providers' keyed ID maps. Raising the former
+does not grow the latter.
+
+F3nd3rB3nd3r's
+[Driver-SF-Traffic-Extension](https://github.com/F3nd3rB3nd3r/Driver-SF-Traffic-Extension)
+documents both the ED/EF maps and the separate model-audio registry. This
+project used that research to check and extend the paused #586 work. The
+reference revision is `b2cf704b1adbce4f0c9fe31e6f42e005cf61441f`:
+
+- [ED/EF layout and native-node reuse](https://github.com/F3nd3rB3nd3r/Driver-SF-Traffic-Extension/blob/b2cf704b1adbce4f0c9fe31e6f42e005cf61441f/reference/V29N_COMBINED_150_EF.md).
+- [Model-audio native instruction evidence](https://github.com/F3nd3rB3nd3r/Driver-SF-Traffic-Extension/blob/b2cf704b1adbce4f0c9fe31e6f42e005cf61441f/scripts/verify_vehicle_audio_registry_static.py).
+
+These facts were checked against this PC's `Driver.exe` 1.04, SHA256
+`847224a7df8536e653a6d39c65d9a242e7a42f4e9d87f14a3d02dcabcf5dc34b`, the
+header-only large-address-aware copy described in `exe-vehicles.md`. No
+source was copied from that repository.
+
+**ED/EF.** Constructors 0x0086C340 and 0x0086B4A0 set the provider's class
+tag at `+0x234` to ED or EF, its vtable to 0x00E3966C, and its map header
+at `+0x23C`. Nodes start at `+0x248`; the sentinel starts at `+0x518`.
+Thus the storage has `(0x518 - 0x248) / 16 = 45` nodes. The native insert
+0x007D7270 takes recycled nodes first, otherwise advances the bump cursor
+by 16 without an end check. The 46th fresh node overlaps the sentinel;
+its value at `+0x524` is already outside the 0x524-byte provider.
+
+The EF registrations at 0x0086B5C9 and 0x0086B3DE call that insert directly.
+The ED map uses the template's operator[] at 0x00556F60, whose insertion
+call is 0x00556F9B. The EF key is the SPID vehicle ID (0x0086B500). Unload
+uses native map removal and returns nodes to the map's free list. The
+user's #586 dump has map-node-shaped data over the graphics wrapper it
+calls. The overflowing map is a supported cause, but a passing isolated
+fixture alone does not prove it explains every #584/#586 gameplay failure.
+
+**Model audio.** Engine+0x280's provider has vtable 0x00DE3824 and size
+0x2F0, made by 0x00557000 / initialized by 0x00556EE0. Its map header is
+`+4`, nodes `+0x10`, sentinel `+0x2E0`, common/default data pointer
+`+0x2EC`. It has the same 45-node map layout, but registration
+0x00556E30 checks `active >= 45` and silently skips the store. Lookup
+0x00556E90 returns the keyed profile or null; 0x00556E50 removes it.
+Audio setup 0x00553860 obtains this profile by the vehicle model key at
+`+0x5AC`, and a missing profile selects fallback key 1. More Wwise memory
+does not change this count gate. The gate and fallback are confirmed
+statically; a specific audible failure needs runtime evidence.
+
+**Implementation.** `tools/asi/src/vehicle_maps.cpp` intercepts only the
+three insert call sites and model-audio registration. ED/EF are recognized
+by the provider vtable and class tag, model audio by its own vtable. Other
+users of the generic insert stay native. Native insertion, signed key
+ordering, lookup, removal, sentinel and common/default pointers remain.
+The audio register follows the original operator[]/profile-store sequence,
+with the count gate removed only for its verified provider.
+
+When the fresh cursor reaches the end, storage grows by one OS page. This
+is allocation granularity, not a fitted model limit. There is no fixed
+owner-count registry. Nodes remain valid until process exit, free-list
+recycling precedes bump allocation, and a constructor reset at the same
+owner address reuses that owner's pages. A failed allocation or invalid
+fresh cursor stops before writing; native callers cannot accept a null
+node. All patch sites and the relevant layouts are checked before any
+write. A failed patch installation restores earlier sites and prevents
+the slot raise.
+
+**Offline verification.** `tools/asi/build.ps1 -Test` maps the native
+executable in the existing fixture. The new self-test first reproduces
+the original 46th-node overwrite within spare guarded storage. It then
+executes native operator[], insertion, removal, constructors and audio
+lookup against the patch. It checks descending insertion order, duplicate
+keys, inline/external free-list reuse, 600 entries across pages, reset at
+the same address, 40 independent owners, neighboring-object guards,
+audio profile replacement/removal and the common/default pointer. It
+also checks allocation refusal without a write, an unrelated provider's
+original 45-entry gate, and preflight rejection without partial patches.
+Run artifacts: `out/traffic-audit/build-final.log` in the
+`fix/vehicle-provider-capacity` worktree. Runtime results follow once the
+VM runs finish.
+
+The 40-model ambient-roster bound is retained. Traffic Extension's separate
+50-entry notification, parked-cache and replay-snapshot findings concern
+larger rosters; expanding them is outside this fix. The 35-slot default
+and ambient settings are unchanged.
 
 ## 6. The car manager's traffic settings (as built)
 
