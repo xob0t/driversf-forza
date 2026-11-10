@@ -287,6 +287,7 @@ class App:
         from dsfforza.build.traffic_pool_gui import PoolDialog
 
         if self.busy:
+            messagebox.showinfo("Busy", "The last change is still being written.")
             return
         dialog = PoolDialog(self.root, self.tc.cars(), self.pending.get("pool", "all"))
         self.root.wait_window(dialog.window)

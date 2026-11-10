@@ -67,7 +67,8 @@ class PoolSettingsTest(unittest.TestCase):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
         tc = self.control(m)
-        tc.set_ambient(None, pool="all")
+        args = car_manager.build_parser().parse_args(["traffic", "ambient", "--pool", "ALL"])
+        tc.set_ambient(None, **car_manager.ambient_fields(tc, args))
         b = m.install(self.package("CAR_B_10"))
         self.assertEqual(tc.pool_keys(), [a, b])
         tc.set_ambient(tt.CH7, pool=[b], ports="fill")
@@ -83,7 +84,14 @@ class PoolSettingsTest(unittest.TestCase):
         m = self.manager()
         a = m.install(self.package("CAR_A_10"))
         tc = self.control(m)
-        for arg, expected in (("game:FH1", [a]), ("all", "all"), ("none", [])):
+        for arg, expected in (
+            ("game:FH1", [a]),
+            ("all", "all"),
+            ("ALL", "all"),
+            ("All", "all"),
+            ("none", []),
+            ("NONE", []),
+        ):
             args = car_manager.build_parser().parse_args(["traffic", "ambient", "--pool", arg])
             self.assertEqual(car_manager.ambient_fields(tc, args)["pool"], expected)
         tc.set_ambient(None, pool=[a])

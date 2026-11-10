@@ -740,7 +740,8 @@ def run_traffic(m: Manager, args) -> None:
 def ambient_fields(tc, args) -> dict:
     fields = {}
     if args.pool is not None:
-        fields["pool"] = "all" if args.pool == "all" else [] if args.pool == "none" else tc.select(args.pool.split(","))
+        pool = args.pool.casefold()
+        fields["pool"] = "all" if pool == "all" else [] if pool == "none" else tc.select(args.pool.split(","))
     if args.ports is not None:
         if args.ports == "fill" or args.ports.isdigit():
             fields["ports"] = "fill" if args.ports == "fill" else int(args.ports)
