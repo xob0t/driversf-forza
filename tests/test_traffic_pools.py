@@ -69,7 +69,15 @@ class PoolSettingsTest(unittest.TestCase):
         tc = self.control(m)
         args = car_manager.build_parser().parse_args(["traffic", "ambient", "--pool", "ALL"])
         tc.set_ambient(None, **car_manager.ambient_fields(tc, args))
-        b = m.install(self.package("CAR_B_10"))
+        # Upgrade the plugin before live settings are regenerated during install.
+        from unittest import mock
+
+        from dsfforza.build import runtime_traffic
+
+        with (self.game / car_manager.PLUGIN).open("ab") as stream:
+            stream.write(runtime_traffic.MARKER)
+        with mock.patch.object(traffic.TrafficControl, "facts", return_value=(41, tt.POTS)):
+            b = m.install(self.package("CAR_B_10"))
         self.assertEqual(tc.pool_keys(), [a, b])
         tc.set_ambient(tt.CH7, pool=[b], ports="fill")
         m.save_state()

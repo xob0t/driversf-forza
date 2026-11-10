@@ -735,21 +735,25 @@ key):
 | `vanilla_off` | vanilla models out of the set: weight 0, and out of its spool list |
 | `extra` | vanilla models from other sets added in, like ports |
 
-**Candidate pools (2026-11-10).** The car manager's Choose Forza pool dialog
+**Live pools (2026-11-10).** Current plugins use the runtime selector described
+in [runtime-traffic-pools.md](runtime-traffic-pools.md). The static-copy design
+and measurements below document the older implementation. They do not describe
+the current live pool's residency or selection.
+
+The car manager's Choose Forza pool dialog
 edits `pool` for the selected chapter or the default. Add/remove selections
 survive filtering, and All Forza cars stores `all`, rather than a snapshot
 of installed keys. Globally disabled or traffic-off cars stay excluded but
 keep their saved membership. The CLI exposes the same field as `--pool`.
-Status distinguishes candidate count from selected models.
+Status distinguishes candidate count from resident streaming capacity.
 
-This is a configuration rule, not an expanded engine list: the shuffled deck
-is filtered by the requested pool before dealing `ports` cars. Native
-0x0076FDF0's 40-entry selector buffer and 0x005A79F0's resident-list semantics
-(section 1b) still determine the budget. The output contains only the
-selected models. Apply and Shuffle rewrite that selection; it is fixed
-during the drive. Existing explicit `ports` lists remain supported and are
-intersected with the candidate pool. Shared road-table warnings and mission
-pot reservations are unchanged.
+The full pool is serialized separately from native AI lists. Each primary
+ambient spawn draws from its active chapter's full weights and can request a
+nonresident model. There is no user shuffle step or timed batch rotation.
+Explicit legacy `ports` lists are intersected with the pool. Numeric `ports`
+values cap residency, not eligibility. Chapters sharing native road tables
+can now have distinct pools. Original native lists remain resident; disabled
+vanilla choices receive no weight in the live selector.
 
 `ambient.default` applies to every story set (Exposition, Chapters 1 to 7,
 Epilogue), and `ambient.sets.<name>` is laid over it for one set.
