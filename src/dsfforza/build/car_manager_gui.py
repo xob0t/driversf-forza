@@ -11,6 +11,7 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from copy import deepcopy
 from tkinter import messagebox, simpledialog, ttk
 
 from dsfforza import REPO
@@ -114,8 +115,10 @@ class App:
         threading.Thread(target=body, daemon=True).start()
 
     def save_traffic(self) -> None:
+        """Write traffic files before saving the requested settings."""
+        reports = self.tc.write()
         self.m.save_state()
-        for r in self.tc.write():
+        for r in reports:
             for note in r.notes:
                 self.log(f"traffic: {r.name}: {note}")
 
@@ -393,11 +396,28 @@ class App:
         self.preview()
 
     def apply_set(self) -> None:
+        """Apply a live-pool edit, restoring prior settings if writing fails."""
         if not self.ready():
             return
+        try:
+            self.tc.require_live_pools()
+        except SystemExit as e:
+            messagebox.showerror("Traffic pools", str(e))
+            return
         fields = self.gather()
-        self.tc.set_ambient(self.current_set(), **fields)
-        self.run(f"traffic set {self.set_name.get()}", self.save_traffic)
+        name = self.current_set()
+
+        def apply():
+            before = deepcopy(self.tc.t)
+            try:
+                self.tc.set_ambient(name, **fields)
+                self.save_traffic()
+            except (SystemExit, ValueError, OSError):
+                self.tc.t.clear()
+                self.tc.t.update(before)
+                raise
+
+        self.run(f"traffic set {self.set_name.get()}", apply)
 
     def reset_set(self) -> None:
         if not self.ready():

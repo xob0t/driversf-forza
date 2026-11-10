@@ -144,6 +144,9 @@ Live pools require the matching updated `dsfcars.asi`; the manager refuses to
 turn an explicit pool into a fixed batch for an older plugin. Pool and weight
 changes take effect at the next game start. Cold models stream asynchronously,
 so traffic uses eligible resident cars while a requested model loads.
+Traffic commands report write failures before saving the requested settings.
+Unrelated car installs, removals and enable changes log an unavailable live-pool
+update and continue; the pool settings remain saved for a later successful refresh.
 How the game picks traffic: [research/traffic.md](research/traffic.md) and
 [live pool research](research/runtime-traffic-pools.md).
 

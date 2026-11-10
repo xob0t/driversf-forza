@@ -97,7 +97,7 @@ Python tests verify all 721 candidates in serialized rows and previews,
 distinct pools for chapters sharing native ranges, unchanged original AI,
 legacy-copy removal, plugin compatibility and existing share/disable rules.
 `out/runtime-pool/python-runtime.log` records 36 targeted tests passing.
-The final suite passed 775 tests with lint, formatting and ratchet checks in
+The final suite passed 783 tests with lint, formatting and ratchet checks in
 `out/runtime-pool/tests-final-full.log`. The tracked branch's native test passes
 in `out/runtime-pool/build-branch-final.log`; the installed combination with
 the provider-map fix passes in `out/runtime-pool/build-v6.log`. The withdrawn Tk window check in
@@ -180,3 +180,14 @@ changed. The installer-helper backup is `out/runtime-pool/host-20261110-154922`.
 Regenerate settings with the car manager after changing the native vehicle
 slot limit. Full-roster host driving, replay transitions and mission/chapter
 transitions remain to be verified before removing the PR's draft status.
+
+**Car-management failure handling:** automatic `Manager.save()` refreshes use
+`write(strict=False)`, log unavailable live-pool updates and independently
+refresh IV settings when possible. Missing AI/scripts, an older plugin or
+traffic-file IO failures cannot abort unrelated install/enable/remove work
+or mask an install rollback's original error. Explicit CLI traffic edits
+and GUI Apply remain strict, write files before saving settings, and restore
+their prior settings on failure. `out/runtime-pool/review-targeted.log`
+records 78 relevant tests passing; the final full-suite log includes these
+regressions. Native code, installed DLL and pool membership are unchanged by
+this review fix.
