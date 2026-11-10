@@ -225,6 +225,15 @@ class App:
         ttk.Scale(top, from_=0.0, to=1.0, variable=self.blend, length=120).pack(side="left")
         self.budget = ttk.Label(self.sets_tab, text="")
         self.budget.pack(fill="x", padx=4)
+        choices = ttk.Frame(self.sets_tab)
+        choices.pack(fill="x")
+        ttk.Button(choices, text="Choose Forza pool...", command=self.choose_forza_pool).pack(side="left", padx=4)
+        self.pool_summary = ttk.Label(choices)
+        self.pool_summary.pack(side="left", padx=4)
+        ttk.Label(
+            self.sets_tab,
+            text="Selected traffic models and road shares. Apply saves; Shuffle ports picks a new selection from the pool.",
+        ).pack(fill="x", padx=4)
         cols = ("id", "model", "state", "factor", "now", "after")
         self.pool = ttk.Treeview(self.sets_tab, columns=cols, show="headings", selectmode="extended")
         for c, w in zip(cols, (60, 330, 90, 60, 70, 70)):
@@ -265,7 +274,26 @@ class App:
         self.share.set(0.2 if s.get("share") == "mean" else float(s.get("share") or 0.0))
         self.mode.set(s.get("weights") or "vanilla")
         self.blend.set(float(s.get("blend") or 0.0))
+        self.show_pool_summary()
         self.preview()
+
+    def show_pool_summary(self) -> None:
+        pool = self.pending.get("pool", "all")
+        count = len(self.tc.pool_keys(pool))
+        label = "All Forza cars" if pool == "all" else "Custom Forza pool"
+        self.pool_summary.configure(text=f"{label}: {count} eligible cars, before the loaded-model budget")
+
+    def choose_forza_pool(self) -> None:
+        from dsfforza.build.traffic_pool_gui import PoolDialog
+
+        if self.busy:
+            return
+        dialog = PoolDialog(self.root, self.tc.cars(), self.pending.get("pool", "all"))
+        self.root.wait_window(dialog.window)
+        if dialog.result is not None:
+            self.pending["pool"] = dialog.result
+            self.show_pool_summary()
+            self.preview()
 
     def gather(self) -> dict:
         out = dict(self.pending)
