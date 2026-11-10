@@ -109,6 +109,31 @@ class PoolSettingsTest(unittest.TestCase):
 
 
 class PoolDialogTest(unittest.TestCase):
+    def test_legacy_port_keys_are_shown_as_the_effective_pool(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from dsfforza.build.car_manager_gui import App
+
+        for pool, expected in (
+            ("all", ["active", "disabled", "missing"]),
+            (["active", "other"], ["active"]),
+        ):
+            with self.subTest(pool=pool):
+                ambient = {"default": {"pool": pool, "ports": ["active", "disabled", "missing"]}}
+                app = SimpleNamespace(
+                    tc=SimpleNamespace(t={"ambient": ambient}),
+                    current_set=lambda: tt.CH7,
+                    show_pool_summary=mock.Mock(),
+                    preview=mock.Mock(),
+                    **{name: mock.Mock() for name in ("fill", "ports", "mean", "share", "mode", "blend")},
+                )
+                App.load_set(app)
+                self.assertEqual(app.pending["pool"], expected)
+                self.assertEqual(app.pending["ports"], "fill")
+                self.assertEqual(ambient["default"]["ports"], ["active", "disabled", "missing"])
+                app.fill.set.assert_called_once_with(True)
+
     def test_filtering_preserves_edits_and_cancel_does_not_apply(self):
         from dsfforza.build.traffic_pool_gui import PoolDialog
 

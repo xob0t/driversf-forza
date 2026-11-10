@@ -33,7 +33,7 @@ model and the interesting-vehicle manager's ten-model maximum at `007EB860`.
 For each set/frequency, automatic added-model capacity is:
 
 ```
-max(0, min(vehicle_slots - native_list_count - mission_pot_max - 1,
+max(0, min(vehicle_slots - native_list_count - mission_pot_max - 1 - 10,
            50 - mission_pot_max - 1 - 10))
 ```
 
@@ -53,6 +53,19 @@ using the next RNG result. If that group is cold, temporarily use the other
 group. With both groups resident, the configured group shares remain intact.
 Model shares during loading depend on residency; preview shares describe the
 full configured pool, not a guarantee for each short stretch of road.
+
+A full cache cannot keep spawning every resident model forever: several live
+vehicles can keep each model referenced, preventing any new model from entering.
+When an unavailable weighted choice finds the cache full, stop new spawns of
+the oldest eligible added model in the native nontraffic list. Existing cars
+keep their references and disappear through native cleanup. Once the last
+reference is gone, native unload and admission make room for another full-pool
+choice. This is a FIFO residency policy using request order, with no timer or
+forced deletion. Native `005A7BE8` calls append helper `005A7E30`, whose
+`+3F4` sentinel links append each new node at the tail. With header `+5A4`,
+that is the loaded nontraffic sentinel `+998`. The native append fixture and
+the read-only runtime snapshot below both preserve that order. The fixture
+also checks that retirement never decrements live owners.
 
 The file starts with `DSFPOOL1`, then row, pair and package-ID counts. Package
 IDs are u32. Rows are 36 bytes: eight u32 fields for set hash, frequency,
@@ -93,7 +106,10 @@ The 24-model prototype drove in `vm1-20261110-110943` without a recorded
 fault. It made 25 prefetch requests and 24 native reference handoffs.
 The full 721-model binary has 280 context rows and 109,917 deduplicated
 weighted choices in 1,331,988 bytes. Every story chapter has 721 candidates;
-the combined 60-slot test has 23 to 26 added models of streaming capacity.
+the final 60-slot configuration reserves ten kind-0 slots for interesting
+vehicles as well as ten nontraffic nodes. This is conservative when the
+interesting vehicles are themselves Forza models, since they also count
+against the added-model quota.
 
 The first full-roster run, `vm1-20261110-114332`, transferred 19 distinct
 models but its driving probe stopped during chase view and the screen went
@@ -108,4 +124,33 @@ model was constructed. A read-only spooler snapshot at 15:07:03 showed
 queue. The outstanding prefetch, model 801, had one resident reference.
 Provider maps had crossed their 45 inline nodes. This correlation does not
 establish whether the map extension, loading callbacks or another subsystem
-caused the stall. A matched test using the native 45-node capacity is next.
+caused the stall.
+
+The attempted 45-slot control, `vm1-20261110-151125`, hit the same stall with
+67 speed samples. Its custom pool-file override was skipped by the harness:
+the overlay was suppressed for that path, but the harness only installs
+known archive overrides and root files. The plugin logged its feature marker
+but never logged pool parsing or hook installation. This was therefore a
+native-selection control, not a 45-slot live-pool test. The stall reproduces
+with no traffic hooks installed; it is not evidence against the live selector.
+
+Two further straight-throttle controls also stopped: `vm1-20261110-151925`
+with runtime pools explicitly off, and `vm1-20261110-152715` with package
+loading off, no overlay and native 35 slots. No cause is established. This
+also rules out attributing the stall solely to roster size or provider-map
+growth. The measured route below avoids relying on an uncontrolled drive.
+
+**Confirmed runtime turnover:** `vm2-20261110-153433` uses the existing
+`drawdist.lua` traffic route, the full binary filtered to 24 accepted package
+models, added IVs off and a deliberately small three-model streaming budget.
+Initial primary models were 15, 10 and 3. The selector stopped new births of
+15 at 15:35:17. Native cleanup released it at 15:36:20, then models 2 and 20
+loaded and spawned, followed by 15 again. Five distinct primary models used
+three resident slots, with six successful request-to-vehicle transfers and
+no recorded crash. The test never forced a model reference to zero or removed
+a visible vehicle. This verifies actual admission beyond the initial batch.
+
+The route is the repository's existing controlled 1500 m movement at 20 m/s,
+starting at its measured industrial straight. Its timing and test budget are
+test stimuli, not production streaming rules. Production has no timer.
+Full-roster route validation is recorded separately when complete.

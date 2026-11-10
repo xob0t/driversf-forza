@@ -403,7 +403,8 @@ class GuiSmokeTest(unittest.TestCase):
             self.assertIn("101", app.pool.get_children())
             app.tc.set_ambient(CH7, ports=["forza.fh1.CAR_A_10"])
             app.load_set()
-            self.assertEqual(app.gather()["ports"], ["forza.fh1.CAR_A_10"])  # keys kept
+            self.assertEqual(app.gather()["pool"], ["forza.fh1.CAR_A_10"])  # legacy keys kept in the pool
+            self.assertEqual(app.gather()["ports"], "fill")
             app.fill.set(False)
             app.ports.set(2)
             self.assertEqual(app.gather()["ports"], 2)

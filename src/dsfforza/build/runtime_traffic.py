@@ -85,12 +85,15 @@ def build(control: TrafficControl) -> tuple[bytes, list[Report]]:
         wanted = [key_ids[key] for key in pool]
         baseline = len(set(ts.lists.get(0, [])))
         pot = pots.get(name, traffic.POT_CAP)
-        limit = max(0, min(slots - baseline - pot - 1, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
+        limit = max(0, min(slots - baseline - pot - 1 - MAX_IV_MODELS, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
         if isinstance(settings["ports"], int):
             limit = min(limit, max(settings["ports"], 0))
         reports.append(Report(name, len(pool), baseline, limit, []))
         for frequency, loaded in ts.lists.items():
-            live_cap = max(0, min(slots - len(set(loaded)) - pot - 1, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
+            live_cap = max(
+                0,
+                min(slots - len(set(loaded)) - pot - 1 - MAX_IV_MODELS, MISSION_NODES - pot - 1 - MAX_IV_MODELS),
+            )
             if isinstance(settings["ports"], int):
                 live_cap = min(live_cap, max(settings["ports"], 0))
             for index in sorted(ai.road_ranges(ts, frequency)):
@@ -159,7 +162,7 @@ def preview(control: TrafficControl, name: str, ambient: dict) -> tuple[dict[int
     slots, pots = control.facts()
     baseline = len(set(ts.lists.get(0, [])))
     pot = pots.get(name, traffic.POT_CAP)
-    limit = max(0, min(slots - baseline - pot - 1, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
+    limit = max(0, min(slots - baseline - pot - 1 - MAX_IV_MODELS, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
     if isinstance(settings["ports"], int):
         limit = min(limit, max(settings["ports"], 0))
     for index in ai.road_ranges(ts, 0):

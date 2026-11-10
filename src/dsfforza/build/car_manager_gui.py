@@ -267,8 +267,15 @@ class App:
         if name is None:
             s = dict(traffic.DEFAULT_SET) | (amb.get("default") or {})
         self.pending = {k: s.get(k, traffic.DEFAULT_SET[k]) for k in traffic.DEFAULT_SET}
-        # ports chosen by key stay chosen unless the count is changed here
-        self.port_keys = list(s["ports"]) if isinstance(s["ports"], list) else None
+        # Show a legacy explicit selection as the actual pool, not as a hidden
+        # restriction behind an "All Forza cars" label. Apply migrates it.
+        if isinstance(s["ports"], list):
+            pool = self.pending["pool"]
+            keys = set(s["ports"])
+            self.pending["pool"] = list(s["ports"]) if pool == "all" else [key for key in pool if key in keys]
+            self.pending["ports"] = "fill"
+        s = self.pending
+        self.port_keys = None
         self.fill.set(s["ports"] == "fill")
         self.ports.set(0 if s["ports"] == "fill" else s["ports"] if isinstance(s["ports"], int) else len(s["ports"]))
         self.mean.set(s.get("share") == "mean")

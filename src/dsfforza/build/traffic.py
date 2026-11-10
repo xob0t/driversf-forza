@@ -26,7 +26,11 @@ raise is safe again (#586). Any set setting (`traffic ambient`, with or without 
 {"on": true}; then every story set gets DEFAULT_SET (filled to its budget, "mean" weights) under
 the settings made. `traffic ambient --off` stores {"off": true} for no changes at all.
 
-Rules (research/traffic.md 1b, the owner's):
+Live pools use runtime_traffic.py and research/runtime-traffic-pools.md. The original AI stays
+unchanged and each active chapter samples its complete configured pool. Native cleanup and
+admission control residency; numeric ports is a streaming budget, not a candidate count.
+
+Legacy static-writer rules (research/traffic.md 1b):
 - The per-road structure stays: a road whose range has no weight still has none, and only the
   models a road's range already allows are reweighted; added models spread over every road of
   the set that spawns anything.

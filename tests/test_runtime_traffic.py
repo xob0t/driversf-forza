@@ -49,6 +49,7 @@ class RuntimeTrafficTest(unittest.TestCase):
             self.assertEqual({mid for mid, _weight, flags in selected if flags == 1}, set(ids))
             self.assertGreater(row[6], 721)
             self.assertLessEqual(row[7], live.MISSION_NODES - tt.POTS[tt.CH7] - 1 - live.MAX_IV_MODELS)
+            self.assertLessEqual(row[7], 60 - 2 - tt.POTS[tt.CH7] - 1 - live.MAX_IV_MODELS)
         self.assertEqual(preview.candidates, 721)
         self.assertTrue(set(ids) <= set(after))
         self.assertEqual(next(r for r in reports if r.name == tt.CH7).candidates, 721)
