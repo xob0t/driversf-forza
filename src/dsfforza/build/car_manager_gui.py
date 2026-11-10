@@ -235,7 +235,10 @@ class App:
         self.pool_summary.pack(side="left", padx=4)
         ttk.Label(
             self.sets_tab,
-            text="Traffic draws from this pool while you drive. Apply saves changes for the next game start.",
+            text=(
+                "Bigger pools favor fresh models; vanilla traffic fills loading gaps.\n"
+                "Apply saves changes for the next game start."
+            ),
         ).pack(fill="x", padx=4)
         cols = ("id", "model", "state", "factor", "now", "after")
         self.pool = ttk.Treeview(self.sets_tab, columns=cols, show="headings", selectmode="extended")
