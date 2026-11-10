@@ -21,7 +21,9 @@ disassembly used for this change are under `out/runtime-pool/native/` in the
 | `[engine]+780`, `0086C5B0` | Vehicle-spec lookup. Package acceptance plus this lookup rejects invalid models; the native loaded query alone returns true for nonexistent models. |
 | `[engine]+214`, `005A7860` | Traffic spooler and mission-model request. Native admission `005A6FD0` checks free capacity. Requests can queue and do not immediately mean resident. |
 | `005A6EA0` | A model is resident if in traffic list `+330`, or in nontraffic list `+998` with a positive reference count. The implementation traverses each list once per pick. |
-| `005A6D20` | Each loaded list has 50 nodes. Nontraffic storage is `+5B0..+998`, twenty bytes per node. |
+| `005A6D20` | Each loaded list has 50 nodes. Nontraffic storage is `+5B0..+998`, twenty bytes per node. The independent pending queue has fifty twenty-byte nodes at `+9AC..+D94`, header `+9A0`, live count `+9A8`. |
+| `005A6FD0`, `005A6440`, `005A6480` | Admission accounts for queued requests, resident models and the single active load. Queued requests are distinct from the active loader, so several prefetch leases are valid. `005A6440` increments an existing queued load's reference count. |
+| `005A6B00`, `005A7100`, `005A66E0` | RefCount checks resident, queued and active-load ownership, in that order. A zero-ref unloading resident node masks its queued reload. Release ignores the currently unloading ID; use its queued-release helper `005A66E0` for that ID before Release. The helper decrements exactly one queued reference and removes a zero-ref queue node. |
 | `008D1380`, call at `008D1475` | Vehicle construction requests its own model reference. Transfer a prefetch lease by releasing exactly one reference after this succeeds. |
 | `008D4B50`, call at `008D4F8A`, `005A78D0` | Vehicle destruction releases its own reference. The last release queues native unload; the mod never evicts a visible car's model. |
 | `0074B7A0`, getter call `0074B8B6`, restore `0074BA20` | Replay captures model reference counts. Exclude the mod's transient lease from capture and cancel it before restore, so replay cannot recreate an ownerless lease. |
@@ -39,33 +41,43 @@ max(0, min(vehicle_slots - native_list_count - mission_pot_max - 1 - 10,
 
 A numeric user streaming budget can lower that capacity. All resident package
 models count toward it, including models owned by other systems. Native
-admission remains authoritative. There is one temporary prefetch lease, matching
-the loader's single current-request state at `+DAC/+D9C`. These are capacity
+admission remains authoritative. Each requested model has at most one temporary
+prefetch lease. Both resident models and outstanding leases count against the
+budget; a resident lease is counted once. The pending queue's fifty-node bound
+also limits admission. These are capacity
 reserves derived from native data, not fitted traffic-population targets.
 
 ## Selection and file contract
 
 Use the existing manager's road-weight rules over the entire selected pool.
 For each spawn, draw from those full weights with the native seeded RNG.
-Request an unavailable choice if there is room and no prefetch is outstanding.
+Request an unavailable added choice if there is room and that model has no
+prefetch outstanding. Several different model loads can queue concurrently.
 While it loads, draw among resident models in the same native/added group
 using the next RNG result. If that group is cold, temporarily use the other
 group. With both groups resident, the configured group shares remain intact.
 Model shares during loading depend on residency; preview shares describe the
 full configured pool, not a guarantee for each short stretch of road.
 
-A full cache cannot keep spawning every resident model forever: several live
-vehicles can keep each model referenced, preventing any new model from entering.
-When an unavailable weighted choice finds the cache full, stop new spawns of
-the oldest eligible added model in the native nontraffic list. Existing cars
-keep their references and disappear through native cleanup. Once the last
-reference is gone, native unload and admission make room for another full-pool
-choice. This is a FIFO residency policy using request order, with no timer or
-forced deletion. Native `005A7BE8` calls append helper `005A7E30`, whose
-`+3F4` sentinel links append each new node at the tail. With header `+5A4`,
-that is the loaded nontraffic sentinel `+998`. The native append fixture and
-the read-only runtime snapshot below both preserve that order. The fixture
-also checks that retirement never decrements live owners.
+When all eligible added models fit in the budget, retain ordinary weighted
+resident reuse. When they do not fit, prioritize fresh models: after one
+successful primary birth of an added model, exclude it from further births
+until native owners finish with it. Several served models can drain together.
+The first model to finish loading cannot fill an entire road while peers load.
+Ready prefetches still receive their first birth, so their temporary owners do
+not prevent retirement indefinitely. Vanilla models fill loading gaps.
+
+This is an explicit selection policy for the requested variety, not a claim
+about vanilla's picker or a fitted engine constant. It trades short-term Forza
+share for turnover when the entire pool cannot be resident. Existing cars keep
+their references and disappear through native cleanup. The last release makes
+room for another full-pool choice. There is no timer or forced deletion.
+
+Each lease is released exactly once after construction succeeds or when its
+context is cancelled. Replay capture excludes every owned lease. Reset drops
+tracking because native reset owns the references; set changes and replay
+restore cancel requests before calling their original functions. The unloading
+reload exception above is exercised against actual native queue helpers.
 
 The file starts with `DSFPOOL1`, then row, pair and package-ID counts. Package
 IDs are u32. Rows are 36 bytes: eight u32 fields for set hash, frequency,
@@ -191,3 +203,52 @@ their prior settings on failure. `out/runtime-pool/review-targeted.log`
 records 78 relevant tests passing; the final full-suite log includes these
 regressions. Native code, installed DLL and pool membership are unchanged by
 this review fix.
+
+## Host feedback and concurrent turnover correction
+
+The owner's host drive disproved the earlier selection policy's practical
+variety. `out/runtime-pool/user-20261110-235909/dsfcars.log` records only 41
+distinct constructed Forza models in about thirteen minutes. The first model,
+668, became available at 16:35:11.118; the next at 16:35:11.418. During that
+gap every added-group fallback could select 668. After filling the cache,
+retiring only one model at a time restricted admission to that model's cleanup
+latency. The owner observed an initially identical road population and a
+small recurring selection with rare additions. Eligibility alone did not
+verify the intended behavior.
+
+The corrected module uses the concurrent requests and per-model retirement
+policy described above. New native decompilations are in
+`out/runtime-pool/queued-requests/`. Both the branch DLL and its combination
+with PR #590 pass the mapped-executable tests in
+`out/runtime-pool/build-branch-v8.log` and `out/runtime-pool/build-v8.log`.
+New fixtures check multiple actual queued loads, duplicate-demand ownership,
+in-flight budget accounting, cancellation during load and unload, concurrent
+retirement, suppression of the first ready model's repeated births, and
+replay capture/restore with two independent leases. All pass.
+
+The final Python suite passed 783 tests in 136.587 seconds, including lint,
+format and ratchet checks, process exit zero, in
+`out/runtime-pool/tests-v7-full.log`. The GUI copy now explains vanilla filling
+loading gaps. A subsequent targeted lint/format check passed after that copy
+change.
+
+`vm2-20261111-002000` queued models 15, 14 and 7 in the same update, before
+any was ready. Each received one primary birth. With three added-model slots
+and 24 accepted packages, the run made seven requests and seven handoffs for
+seven distinct models, and recorded four native retirements. It later stopped
+at route t=11.52 and became black. `vm1-20261111-002025` accepted 721/721
+choices, queued eighteen initial models and constructed all eighteen without
+reusing a served model. Four models retired together at 00:24:14.517, followed
+by request 324. Its route stopped at t=0.96 and became black. Neither run
+recorded a crash, but neither completed the route. These establish concurrent
+admission and initial repeat suppression, not full-roster long-drive success.
+The unresolved VM pause and earlier controls remain on #589.
+
+The corrected combined test DLL was installed through `tools/install.ps1`
+helpers with SHA256
+`70cfc4d9a66f0b8aa139a971e5e4df15eb733dc215502ff7c2731fbc134d448c`.
+Backup: `out/runtime-pool/host-20261111-002827`.
+`out/runtime-pool/installed-v8.json` and `installed-v8-survey.json` verify the
+DLL hash, unchanged INI, sixteen manifest entries and 721 positive candidates
+in all 280 rows. This update changes only the installed DLL. Chapter budgets,
+manager settings, assets and renderer stay as they were.
