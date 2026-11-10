@@ -252,3 +252,13 @@ Backup: `out/runtime-pool/host-20261111-002827`.
 DLL hash, unchanged INI, sixteen manifest entries and 721 positive candidates
 in all 280 rows. This update changes only the installed DLL. Chapter budgets,
 manager settings, assets and renderer stay as they were.
+
+**GUI failure rollback review:** every explicit GUI traffic edit now supplies
+its mutation to `save_traffic`, which snapshots the shared settings inside the
+worker before mutating and restores them on `SystemExit`, `ValueError` or
+`OSError`. This covers IV Apply, car traffic toggles, pin/unpin, chapter Apply
+and reset, ambient off and the retained legacy shuffle handler. Strict write
+errors still reach the worker's error log. Regression tests exercise every
+handler with each failure type, deferred mutation, dictionary identity,
+successful IV persistence, and the reported old-plugin failure followed by an
+unrelated car save. The installed native DLL and pool data do not change.
