@@ -698,7 +698,7 @@ def add_traffic_parser(sub, common) -> None:
     a.add_argument("--extra", type=_ints, help="vanilla model IDs of other sets added in")
     a.add_argument("--reset", nargs="+", help="these fields back to the default's (or the game's)")
     a.add_argument("--off", action="store_true", help="no traffic set changes at all")
-    ts.add_parser("shuffle", help="deal the ports to the sets again")
+    ts.add_parser("shuffle", help="legacy static presets only; live pools select automatically")
     iv = ts.add_parser("iv", help="interesting vehicles: ports in their regions or not")
     iv.add_argument("state", choices=["on", "off"])
     iv.add_argument("--per-region", type=int)

@@ -30,10 +30,12 @@ Pair* g_pairs;
 uint8_t g_packages[kModels], g_valid[kModels], g_seen[kModels];
 uint32_t g_unique;
 int g_pending = -1;
+int g_retiring = -1;
 uint8_t* g_owner;
 DWORD g_thread;
 bool g_force_skip; // native offline fixture only
 bool g_weight_warning;
+bool g_validation_logged;
 using Pick = int(__thiscall*)(const Range*, uint32_t);
 using Request = bool(__thiscall*)(void*, uint32_t);
 using Release = void(__thiscall*)(void*, uint32_t);
@@ -58,6 +60,7 @@ uint32_t fnv(const void* data, size_t size, uint32_t hash = 2166136261u)
 
 void forget(const char* reason, bool release)
 {
+    g_retiring = -1;
     if (g_pending < 0) return;
     int id = g_pending;
     uint8_t* owner = g_owner;
@@ -153,6 +156,23 @@ bool valid_model(uint32_t id, bool package)
     return g_valid[id] == 1;
 }
 
+// 005A7BE8 -> 005A7E30 appends +998 nodes in request order. Stop selecting the oldest
+// eligible added model when a full cache needs room. Existing vehicles retain
+// every reference; only their normal cleanup can make this model unloadable.
+// No timer, forced vehicle removal, or fitted minimum population is involved.
+int oldest_added(uint8_t* s, const Pair* choices, uint32_t size, const uint8_t* ready)
+{
+    uint8_t* head = s + 0x998;
+    uint8_t* node = *(uint8_t**)(head + 4);
+    for (uint32_t n = 0; node != head && n < kNodes; node = *(uint8_t**)(node + 4), ++n) {
+        uint32_t id = *(uint32_t*)(node + 8);
+        if (id >= kModels || !ready[id]) continue;
+        for (uint32_t i = 0; i < size; ++i)
+            if (choices[i].id == id && choices[i].package && choices[i].weight > 0) return id;
+    }
+    return -1;
+}
+
 Row* find_row(const Range* range)
 {
     if (!g_header) return nullptr;
@@ -191,12 +211,25 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     for (uint32_t i = 0; i < row->size; ++i) {
         valid[choices[i].id] = valid_model(choices[i].id, (choices[i].package & 1) != 0);
     }
+    if (!g_validation_logged) {
+        uint32_t wanted=0, accepted=0;
+        for (uint32_t i=0; i<row->size; ++i) if ((choices[i].package & 1) && choices[i].weight>0) {
+            ++wanted; accepted += valid[choices[i].id] != 0;
+        }
+        dsf_log("live-pool: active set %08X/%u validates %u of %u positive package choices",
+                row->hash,row->frequency,accepted,wanted);
+        g_validation_logged=true;
+    }
     if (g_pending >= 0) {
         if (g_owner != s) forget("owner replaced", false);
     }
+    if (g_retiring >= 0 && !ready[g_retiring]) {
+        dsf_log("live-pool: retired %d through native cleanup", g_retiring);
+        g_retiring = -1;
+    }
     const Pair* chosen = sample(choices, row->size, row->total, seed, valid);
-    if (chosen && ready[chosen->id]) return chosen->id;
-    if (chosen && g_pending < 0) {
+    if (chosen && ready[chosen->id] && (int)chosen->id != g_retiring) return chosen->id;
+    if (chosen && !ready[chosen->id] && g_pending < 0) {
         uint8_t dynamic[kModels]; memcpy(dynamic, g_packages, sizeof dynamic);
         for (uint32_t i = 0; i < row->size; ++i) if (choices[i].package & 2) dynamic[choices[i].id] = 1;
         uint32_t loaded = 0;
@@ -205,6 +238,9 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
             g_pending = chosen->id; g_owner = s;
             dsf_log("live-pool: request %u, %u choices, package cache %u/%u, refs %u, thread %lu", chosen->id,
                     row->size, loaded, row->live_cap, ((RefCount)0x005A6B00)(s, chosen->id), g_thread);
+        } else if (row->live_cap && loaded >= row->live_cap && g_retiring < 0) {
+            g_retiring = oldest_added(s, choices, row->size, ready);
+            if (g_retiring >= 0) dsf_log("live-pool: stop new spawns of %d until native owners release it", g_retiring);
         }
     }
     // Retain the chosen native/added group, redistributing only within its
@@ -212,6 +248,7 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     // draw isn't reused as a biased fallback draw. Cold groups fall back to
     // the other group until a model is ready. No eligible model means failure.
     int group = chosen ? (chosen->package != 0) : -1;
+    if (g_retiring >= 0) ready[g_retiring] = 0;
     const Pair* fallback = sample(choices,row->size,row->total,seed,valid,ready,group,true);
     if (!fallback && group != -1) fallback = sample(choices,row->size,row->total,seed,valid,ready,!group,true);
     return fallback ? (int)fallback->id : -1;
@@ -266,16 +303,16 @@ uint32_t __fastcall capture_refs(void* s, void*, uint32_t id)
 void __fastcall restore(void* self, void*) { forget("replay restore", true); g_restore(self); }
 void* __fastcall construct(void* self, void*)
 {
-    forget("spooler constructed", false); memset(g_valid, 0, sizeof g_valid); return g_ctor(self);
+    forget("spooler constructed", false); memset(g_valid, 0, sizeof g_valid); g_validation_logged=false; return g_ctor(self);
 }
 void __fastcall clear(void* self, void*)
 {
-    if (self == g_owner) forget("native reset", false);
-    memset(g_valid, 0, sizeof g_valid); g_clear(self);
+    if (self == g_owner || self == spooler()) forget("native reset", false);
+    memset(g_valid, 0, sizeof g_valid); g_validation_logged=false; g_clear(self);
 }
 void __fastcall set(void* self, void*, uint32_t hash, uint32_t frequency)
 {
-    forget("traffic set change", true); memset(g_valid, 0, sizeof g_valid); g_set(self, hash, frequency);
+    forget("traffic set change", true); memset(g_valid, 0, sizeof g_valid); g_validation_logged=false; g_set(self, hash, frequency);
 }
 
 bool bind_file(void* bytes, size_t size)
@@ -443,6 +480,21 @@ int mod_traffic_selftest()
             LIVE_CHECK((actual>=700)==(expected>=700) && actual!=701); break;
         }
     }
+    // A full resident cache must eventually admit other pool members. Retire
+    // by stopping births, never by releasing another owner's live reference.
+    LIVE_CHECK(oldest_added(s,choices,4,ready)==700);
+    g_pending=-1; g_owner=nullptr; file.row.live_cap=1;
+    for(uint32_t seed=0;seed<10000;++seed) {
+        if(((Pick)0x00916870)(&range,seed)!=701) continue;
+        LIVE_CHECK(decide(&range,nullptr,seed)<700 && g_retiring==700 && node[4]==1);
+        break;
+    }
+    for(uint32_t seed=0;seed<10000;++seed) {
+        if(((Pick)0x00916870)(&range,seed)!=700) continue;
+        LIVE_CHECK(decide(&range,nullptr,seed)<700 && node[4]==1);
+        break;
+    }
+    g_retiring=-1; g_pending=700; g_owner=s; file.row.live_cap=26;
     trafficHead[0]=trafficHead[1]=(uint32_t)trafficHead;
     LIVE_CHECK(retain(s,nullptr,700));
     LIVE_CHECK(node[4]==1 && g_pending==-1 && g_owner==nullptr);
@@ -479,6 +531,20 @@ int mod_traffic_selftest()
     g_force_skip=false;
     g_pending=700; g_owner=s; ((Clear)0x005A7360)(s);
     LIVE_CHECK(g_pending==-1 && *(uint32_t*)(s+0xDAC)==5);
+    g_retiring=700; ((Clear)0x005A7360)(s);
+    LIVE_CHECK(g_retiring==-1); // reset also clears retirement without a prefetch
+    // Actual native append order, deliberately opposite numeric ID order.
+    uint8_t fifo[0xE6C]={};
+    uint32_t* fifoHead=(uint32_t*)(fifo+0x998);
+    fifoHead[0]=fifoHead[1]=(uint32_t)fifoHead;
+    *(uint32_t*)(fifo+0x5A4)=(uint32_t)(fifo+0x5B0);
+    using Append=void(__thiscall*)(void*,const uint32_t*);
+    uint32_t model[3]={701,0,1};
+    ((Append)0x005A7E30)(fifo+0x5A4,model);
+    model[0]=700; ((Append)0x005A7E30)(fifo+0x5A4,model);
+    ready[700]=ready[701]=1;
+    LIVE_CHECK(oldest_added(fifo,choices,4,ready)==701);
+    LIVE_CHECK(((RefCount)0x005A6B00)(fifo,700)==1 && ((RefCount)0x005A6B00)(fifo,701)==1);
     for(const Site& site:g_sites) LIVE_CHECK(patch_bytes(site.address,site.bytes,site.size));
     LIVE_CHECK(patch_bytes(0x0059C620,existsBytes,5));
     *(void**)0x00FE7228=savedEngine; *(void**)0x016DA940=savedPairs; free(tm);
