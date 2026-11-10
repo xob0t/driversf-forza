@@ -416,7 +416,8 @@ class GuiSmokeTest(unittest.TestCase):
                 app.shuffle()
                 app.apply_set()
                 app.apply_iv()
-            self.assertEqual(shown.call_count, 3)
+                app.choose_forza_pool()
+            self.assertEqual(shown.call_count, 4)
             self.assertEqual(json.dumps(app.tc.t, sort_keys=True), before)
         finally:
             root.destroy()
