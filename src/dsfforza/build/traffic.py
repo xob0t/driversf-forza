@@ -528,14 +528,35 @@ class TrafficControl:
             "pool" in fields for fields in (amb.get("sets") or {}).values()
         )
 
-    def write(self) -> list[SetReport]:
-        """The AI copy and its redirect line (neither when no set changes), and traffic.lua."""
+    def require_live_pools(self) -> None:
+        """Refuse a live-pool edit when the installed plugin cannot use it."""
+        if not self.live_pools():
+            raise SystemExit("live chapter pools need the updated dsfcars.asi; no static batch was generated")
+
+    def _write_live(self, *, strict: bool):
+        """Explicit edits fail; automatic refreshes warn without blocking car management."""
+        from dsfforza.build import runtime_traffic
+
+        try:
+            self.require_live_pools()
+            return runtime_traffic.write(self)
+        except (SystemExit, ValueError, OSError) as e:
+            if strict:
+                raise
+            self.m.log(f"live traffic update failed: {e}")
+        # IV settings do not need the ambient AI or mission scripts.
+        try:
+            self.write_lua()
+        except (SystemExit, ValueError, OSError) as e:
+            self.m.log(f"interesting-vehicle settings not written: {e}")
+        return []
+
+    def write(self, *, strict: bool = True) -> list[SetReport]:
+        """Write traffic files. Only automatic car saves may tolerate live-pool failures."""
         from dsfforza.build import car_gui, runtime_traffic
 
-        if self.ambient_changes() and self.live_pools():
-            return runtime_traffic.write(self)
-        if self.ambient_changes() and self.has_pool_setting():
-            raise SystemExit("live chapter pools need the updated dsfcars.asi; no static batch was generated")
+        if self.ambient_changes() and (self.live_pools() or self.has_pool_setting()):
+            return self._write_live(strict=strict)
         (self.m.game / runtime_traffic.POOL_FILE).unlink(missing_ok=True)
 
         game = self.m.game

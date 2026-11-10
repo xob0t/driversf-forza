@@ -1,7 +1,10 @@
 """Live pools retain all candidates and never emit a preload-every-model AI file."""
 
+import json
 import struct
 import unittest
+from copy import deepcopy
+from types import SimpleNamespace
 from unittest import mock
 
 from tests import test_traffic as tt
@@ -99,6 +102,144 @@ class RuntimeTrafficTest(unittest.TestCase):
             tc.write()
         self.assertFalse((self.game / traffic.AI_COPY).exists())
         self.assertTrue(any("not active" in line for line in tc.status()))
+
+    def check_car_changes(self, m, a):
+        b = m.install(self.package("CAR_B_10"))
+        m.set_enabled(a, enabled=False)
+        m.set_enabled(a, enabled=True)
+        m.remove(b)
+        saved = json.loads((m.cars_dir / car_manager.STATE).read_text())
+        self.assertEqual(set(saved["cars"]), {a})
+        self.assertTrue(saved["cars"][a]["enabled"])
+        self.assertFalse((m.cars_dir / (b + ".removed")).exists())
+        self.assertTrue((self.game / traffic.TRAFFIC_LUA).exists())
+        self.assertTrue(any("live traffic update failed" in line for line in self.lines))
+
+    def test_saved_pools_without_plugin_do_not_block_car_management(self):
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        self.control(m).set_ambient(None, pool="all")  # settings retained from a newer plugin
+        m.save_state()
+        self.check_car_changes(m, a)
+        self.assertFalse((self.game / traffic.AI_COPY).exists())
+
+    def test_missing_ai_does_not_block_car_management(self):
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        self.supports_live()
+        tc = self.control(m)
+        tc.set_ambient(None, pool="all")
+        tc.game_ai().unlink()
+        self.check_car_changes(m, a)
+
+    def test_live_build_failures_do_not_block_car_management(self):
+        for failure in (SystemExit("mission scripts missing"), ValueError("invalid AI"), OSError("pool locked")):
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                m = self.manager()
+                a = m.install(self.package("CAR_A_10"))
+                self.supports_live()
+                self.control(m).set_ambient(None, pool="all")
+                with mock.patch.object(live, "build", side_effect=failure):
+                    self.check_car_changes(m, a)
+
+    def test_traffic_failure_during_install_rollback_preserves_original_error(self):
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        self.supports_live()
+        self.control(m).set_ambient(None, pool="all")
+        m.save_state()
+        old_bytes = m.sp_path(a).read_bytes()
+        upgrade = self.package("CAR_A_10", version=2)
+        with (
+            mock.patch.object(m, "generate_gui", side_effect=[OSError("GUI write failed"), None]),
+            mock.patch.object(traffic.TrafficControl, "facts", side_effect=SystemExit("scripts missing")),
+            self.assertRaisesRegex(OSError, "GUI write failed"),
+        ):
+            m.install(upgrade)
+        self.assertEqual(m.sp_path(a).read_bytes(), old_bytes)
+        self.assertEqual(m.state["cars"][a]["version"], 1)
+        self.assertFalse((m.cars_dir / (a + ".old")).exists())
+        self.assertFalse((m.cars_dir / (a + ".new")).exists())
+
+    def test_optional_iv_write_failure_is_logged(self):
+        m = self.manager()
+        m.install(self.package("CAR_A_10"))
+        self.supports_live()
+        self.control(m).set_ambient(None, pool="all")
+        with (
+            mock.patch.object(live, "write", side_effect=OSError("pool locked")),
+            mock.patch.object(traffic.TrafficControl, "write_lua", side_effect=OSError("IV locked")),
+        ):
+            m.save()
+        self.assertTrue(any("pool locked" in line for line in self.lines))
+        self.assertTrue(any("IV locked" in line for line in self.lines))
+
+    def test_explicit_cli_failures_do_not_save_or_keep_failed_settings(self):
+        for failure in ("plugin", "AI", "scripts"):
+            with self.subTest(failure=failure):
+                self.setUp()
+                m = self.manager()
+                m.install(self.package("CAR_A_10"))
+                if failure != "plugin":
+                    self.supports_live()
+                if failure == "AI":
+                    (self.game / traffic.AI_FILE).unlink()
+                before = deepcopy(m.state["traffic"])
+                path = m.cars_dir / car_manager.STATE
+                saved = path.read_bytes()
+                args = car_manager.build_parser().parse_args(["traffic", "ambient", "--pool", "all"])
+                with (
+                    mock.patch.object(
+                        traffic.TrafficControl,
+                        "facts",
+                        return_value=(60, tt.POTS),
+                        side_effect=SystemExit("scripts missing") if failure == "scripts" else None,
+                    ),
+                    self.assertRaises((SystemExit, OSError)),
+                ):
+                    car_manager.run_traffic(m, args)
+                self.assertEqual(path.read_bytes(), saved)
+                self.assertEqual(m.state["traffic"], before)
+                self.assertFalse((self.game / live.POOL_FILE).exists())
+
+    def test_gui_apply_rejects_old_plugin_before_mutation(self):
+        from dsfforza.build.car_manager_gui import App
+
+        tc = self.control(self.manager())
+        before = deepcopy(tc.t)
+        app = SimpleNamespace(tc=tc, ready=lambda: True, gather=mock.Mock(), run=mock.Mock())
+        with mock.patch("dsfforza.build.car_manager_gui.messagebox.showerror") as shown:
+            App.apply_set(app)
+        shown.assert_called_once()
+        app.gather.assert_not_called()
+        app.run.assert_not_called()
+        self.assertEqual(tc.t, before)
+
+    def test_gui_apply_restores_settings_when_live_build_fails(self):
+        from dsfforza.build.car_manager_gui import App
+
+        m = self.manager()
+        m.install(self.package("CAR_A_10"))
+        self.supports_live()
+        tc = self.control(m)
+        before = deepcopy(tc.t)
+        saved = (m.cars_dir / car_manager.STATE).read_bytes()
+        tc.game_ai().unlink()
+        app = SimpleNamespace(
+            m=m,
+            tc=tc,
+            ready=lambda: True,
+            gather=lambda: {"pool": "all", "ports": "fill"},
+            current_set=lambda: tt.CH7,
+            set_name=SimpleNamespace(get=lambda: tt.CH7),
+            run=lambda _what, work: work(),
+        )
+        app.save_traffic = lambda: App.save_traffic(app)
+        with self.assertRaises(OSError):
+            App.apply_set(app)
+        self.assertEqual(tc.t, before)
+        self.assertEqual((m.cars_dir / car_manager.STATE).read_bytes(), saved)
 
     def test_explicit_share_and_disabled_candidates_use_existing_weight_math(self):
         m = self.manager()

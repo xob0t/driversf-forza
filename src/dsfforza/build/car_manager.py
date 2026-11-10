@@ -40,6 +40,7 @@ import json
 import re
 import shutil
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 from dsfforza.build import dsfcar
@@ -287,11 +288,10 @@ class Manager:
             self.write_traffic()
 
     def write_traffic(self) -> None:
-        """The traffic settings' files (build/traffic.py): the AI copy and its redirect line,
-        and traffic.lua. Cars enabled, disabled or removed change which ports are dealt."""
+        """Refresh traffic for car changes; optional live-pool failures are logged."""
         from dsfforza.build import traffic
 
-        for r in traffic.TrafficControl(self).write():
+        for r in traffic.TrafficControl(self).write(strict=False):
             for note in r.notes:
                 self.log(f"traffic: {r.name}: {note}")
 
@@ -706,6 +706,7 @@ def add_traffic_parser(sub, common) -> None:
 
 
 def run_traffic(m: Manager, args) -> None:
+    """Apply a traffic command; persist settings only after its strict write succeeds."""
     from dsfforza.build import traffic
 
     tc = traffic.TrafficControl(m)
@@ -713,27 +714,34 @@ def run_traffic(m: Manager, args) -> None:
     if act == "status":
         print("\n".join(tc.status()))
         return
-    if act in ("on", "off"):
-        tc.set_traffic(tc.select(args.selectors), on=act == "on")
-    elif act == "pin":
-        tc.pin(tc.select(args.selectors), args.regions)
-    elif act == "unpin":
-        tc.pin(tc.select(args.selectors), None)
-    elif act == "shuffle":
-        tc.shuffle()
-    elif act == "iv":
-        tc.t["iv"]["ports"] = args.state == "on"
-        if args.vanilla is not None:
-            tc.t["iv"]["vanilla"] = args.vanilla == "on"
-        if args.per_region is not None:
-            tc.t["iv"]["per_region"] = args.per_region
-    elif act == "ambient":
-        if args.off:
-            tc.ambient_off()
-        else:
-            tc.set_ambient(args.set_name, **ambient_fields(tc, args))
-    m.save_state()
-    for r in tc.write():
+    before = deepcopy(tc.t)
+    try:
+        if act in ("on", "off"):
+            tc.set_traffic(tc.select(args.selectors), on=act == "on")
+        elif act == "pin":
+            tc.pin(tc.select(args.selectors), args.regions)
+        elif act == "unpin":
+            tc.pin(tc.select(args.selectors), None)
+        elif act == "shuffle":
+            tc.shuffle()
+        elif act == "iv":
+            tc.t["iv"]["ports"] = args.state == "on"
+            if args.vanilla is not None:
+                tc.t["iv"]["vanilla"] = args.vanilla == "on"
+            if args.per_region is not None:
+                tc.t["iv"]["per_region"] = args.per_region
+        elif act == "ambient":
+            if args.off:
+                tc.ambient_off()
+            else:
+                tc.set_ambient(args.set_name, **ambient_fields(tc, args))
+        reports = tc.write()
+        m.save_state()
+    except (SystemExit, ValueError, OSError):
+        tc.t.clear()
+        tc.t.update(before)
+        raise
+    for r in reports:
         for note in r.notes:
             m.log(f"traffic: {r.name}: {note}")
     print("\n".join(tc.status()))
