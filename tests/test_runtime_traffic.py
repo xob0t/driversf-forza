@@ -235,11 +235,117 @@ class RuntimeTrafficTest(unittest.TestCase):
             set_name=SimpleNamespace(get=lambda: tt.CH7),
             run=lambda _what, work: work(),
         )
-        app.save_traffic = lambda: App.save_traffic(app)
+        app.save_traffic = lambda change=None: App.save_traffic(app, change)
         with self.assertRaises(OSError):
             App.apply_set(app)
         self.assertEqual(tc.t, before)
         self.assertEqual((m.cars_dir / car_manager.STATE).read_bytes(), saved)
+
+    def gui_app(self, m, tc, key, work):
+        """Capture worker callbacks without creating a Tk window or thread."""
+        from dsfforza.build.car_manager_gui import App
+
+        app = SimpleNamespace(
+            m=m,
+            tc=tc,
+            log=self.lines.append,
+            ready=lambda: True,
+            selected_keys=lambda: [key],
+            current_set=lambda: tt.CH7,
+            set_name=SimpleNamespace(get=lambda: tt.CH7),
+            gather=lambda: {"pool": "all", "ports": "fill"},
+            iv_ports=SimpleNamespace(get=lambda: False),
+            per_region=SimpleNamespace(get=lambda: 5),
+            iv_vanilla=SimpleNamespace(get=lambda: False),
+            regions=SimpleNamespace(get=lambda: "2"),
+            run=lambda _what, callback: work.append(callback),
+        )
+        app.save_traffic = lambda change=None: App.save_traffic(app, change)
+        return app
+
+    def test_gui_traffic_edits_restore_settings_on_strict_write_failures(self):
+        from dsfforza.build.car_manager_gui import App
+
+        m = self.manager()
+        key = m.install(self.package("CAR_A_10"))
+        self.supports_live()
+        tc = self.control(m)
+        tc.set_ambient(None, pool="all", ports="fill")
+        tc.set_ambient(tt.CH7, pool=[key])
+        tc.pin([key], [3])
+        m.save_state()
+        before = deepcopy(tc.t)
+        path = m.cars_dir / car_manager.STATE
+        saved = path.read_bytes()
+        handlers = (
+            ("apply_set", {}),
+            ("reset_set", {}),
+            ("shuffle", {}),
+            ("ambient_off", {}),
+            ("traffic_cars", {"on": False}),
+            ("apply_iv", {}),
+            ("pin", {"unpin": False}),
+            ("pin", {"unpin": True}),
+        )
+        for handler, args in handlers:
+            for error in (SystemExit, ValueError, OSError):
+                with self.subTest(handler=handler, args=args, error=error.__name__):
+                    work = []
+                    app = self.gui_app(m, tc, key, work)
+
+                    def fail_write(failure=error):
+                        self.assertNotEqual(tc.t, before)  # the edit reached the worker
+                        raise failure("write rejected")
+
+                    with (
+                        mock.patch("dsfforza.build.car_manager_gui.messagebox.askyesno", return_value=True),
+                        mock.patch.object(tc, "write", side_effect=fail_write),
+                    ):
+                        getattr(App, handler)(app, **args)
+                        self.assertEqual(tc.t, before)  # never mutate before the worker runs
+                        self.assertEqual(len(work), 1)
+                        with self.assertRaisesRegex(error, "write rejected"):
+                            work[0]()
+                    self.assertEqual(tc.t, before)
+                    self.assertIs(m.state["traffic"], tc.t)
+                    self.assertEqual(path.read_bytes(), saved)
+
+    def test_rejected_gui_iv_edit_cannot_leak_into_later_car_save(self):
+        from dsfforza.build.car_manager_gui import App
+
+        m = self.manager()
+        key = m.install(self.package("CAR_A_10"))
+        tc = self.control(m)
+        tc.set_ambient(None, pool="all")  # saved pools with an older installed plugin
+        m.save_state()
+        before = deepcopy(tc.t)
+        path = m.cars_dir / car_manager.STATE
+        saved = path.read_bytes()
+        work = []
+        app = self.gui_app(m, tc, key, work)
+        App.apply_iv(app)
+        with self.assertRaisesRegex(SystemExit, "updated dsfcars"):
+            work[0]()
+        self.assertEqual(tc.t, before)
+        self.assertEqual(path.read_bytes(), saved)
+        m.set_enabled(key, enabled=False)
+        self.assertEqual(json.loads(path.read_text())["traffic"], before)
+
+    def test_gui_iv_success_persists_the_requested_edit(self):
+        from dsfforza.build.car_manager_gui import App
+
+        m = self.manager()
+        key = m.install(self.package("CAR_A_10"))
+        tc = self.control(m)
+        work = []
+        app = self.gui_app(m, tc, key, work)
+        App.apply_iv(app)
+        with mock.patch.object(tc, "write", return_value=[]):
+            work[0]()
+        saved = json.loads((m.cars_dir / car_manager.STATE).read_text())
+        for name, value in {"ports": False, "per_region": 5, "vanilla": False}.items():
+            self.assertEqual(tc.t["iv"][name], value)
+            self.assertEqual(saved["traffic"]["iv"][name], value)
 
     def test_explicit_share_and_disabled_candidates_use_existing_weight_math(self):
         m = self.manager()
