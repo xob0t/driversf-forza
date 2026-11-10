@@ -114,10 +114,18 @@ class App:
 
         threading.Thread(target=body, daemon=True).start()
 
-    def save_traffic(self) -> None:
-        """Write traffic files before saving the requested settings."""
-        reports = self.tc.write()
-        self.m.save_state()
+    def save_traffic(self, change=None) -> None:
+        """Apply an edit and write it strictly, restoring settings on failure."""
+        before = deepcopy(self.tc.t)
+        try:
+            if change is not None:
+                change()
+            reports = self.tc.write()
+            self.m.save_state()
+        except (SystemExit, ValueError, OSError):
+            self.tc.t.clear()
+            self.tc.t.update(before)
+            raise
         for r in reports:
             for note in r.notes:
                 self.log(f"traffic: {r.name}: {note}")
@@ -198,8 +206,10 @@ class App:
     def traffic_cars(self, *, on: bool) -> None:
         keys = self.selected_keys()
         if keys and self.ready():
-            self.tc.set_traffic(keys, on=on)
-            self.run(f"traffic {'on' if on else 'off'} for {len(keys)} cars", self.save_traffic)
+            self.run(
+                f"traffic {'on' if on else 'off'} for {len(keys)} cars",
+                lambda: self.save_traffic(lambda: self.tc.set_traffic(keys, on=on)),
+            )
 
     # --- traffic sets tab ---
 
@@ -410,39 +420,33 @@ class App:
         fields = self.gather()
         name = self.current_set()
 
-        def apply():
-            before = deepcopy(self.tc.t)
-            try:
-                self.tc.set_ambient(name, **fields)
-                self.save_traffic()
-            except (SystemExit, ValueError, OSError):
-                self.tc.t.clear()
-                self.tc.t.update(before)
-                raise
-
-        self.run(f"traffic set {self.set_name.get()}", apply)
+        self.run(
+            f"traffic set {self.set_name.get()}",
+            lambda: self.save_traffic(lambda: self.tc.set_ambient(name, **fields)),
+        )
 
     def reset_set(self) -> None:
         if not self.ready():
             return
         name = self.current_set()
-        amb = self.tc.t["ambient"]
-        if name is None:
-            amb.pop("default", None)
-        else:
-            (amb.get("sets") or {}).pop(name, None)
-        self.run(f"reset {self.set_name.get()}", self.save_traffic)
+
+        def reset():
+            amb = self.tc.t["ambient"]
+            if name is None:
+                amb.pop("default", None)
+            else:
+                (amb.get("sets") or {}).pop(name, None)
+
+        self.run(f"reset {self.set_name.get()}", lambda: self.save_traffic(reset))
 
     def shuffle(self) -> None:
         if not self.ready():
             return
-        self.tc.shuffle()
-        self.run("shuffle the ports", self.save_traffic)
+        self.run("shuffle the ports", lambda: self.save_traffic(self.tc.shuffle))
 
     def ambient_off(self) -> None:
         if self.ready() and messagebox.askyesno("No set changes", "Put every traffic set back as the game has it?"):
-            self.tc.ambient_off()
-            self.run("traffic sets as the game has them", self.save_traffic)
+            self.run("traffic sets as the game has them", lambda: self.save_traffic(self.tc.ambient_off))
 
     # --- interesting vehicles tab ---
 
@@ -473,10 +477,12 @@ class App:
     def apply_iv(self) -> None:
         if not self.ready():
             return
-        self.tc.t["iv"]["ports"] = bool(self.iv_ports.get())
-        self.tc.t["iv"]["per_region"] = int(self.per_region.get())
-        self.tc.t["iv"]["vanilla"] = bool(self.iv_vanilla.get())
-        self.run("interesting vehicles", self.save_traffic)
+        fields = {
+            "ports": bool(self.iv_ports.get()),
+            "per_region": int(self.per_region.get()),
+            "vanilla": bool(self.iv_vanilla.get()),
+        }
+        self.run("interesting vehicles", lambda: self.save_traffic(lambda: self.tc.t["iv"].update(fields)))
 
     def pin(self, *, unpin: bool) -> None:
         keys = self.selected_keys()
@@ -489,12 +495,10 @@ class App:
             except ValueError:
                 messagebox.showerror("Regions", "Regions are numbers 1 to 17, separated by commas.")
                 return
-        try:
-            self.tc.pin(keys, regions)
-        except SystemExit as e:
-            messagebox.showerror("Regions", str(e))
-            return
-        self.run(f"{'unpin' if unpin else 'pin'} {len(keys)} cars", self.save_traffic)
+        self.run(
+            f"{'unpin' if unpin else 'pin'} {len(keys)} cars",
+            lambda: self.save_traffic(lambda: self.tc.pin(keys, regions)),
+        )
 
 
 def run(manager) -> None:
