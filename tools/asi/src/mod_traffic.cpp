@@ -29,8 +29,9 @@ Row* g_rows;
 Pair* g_pairs;
 uint8_t g_packages[kModels], g_valid[kModels], g_seen[kModels];
 uint32_t g_unique;
-int g_pending = -1;
-int g_retiring = -1;
+uint8_t g_pending[kModels], g_retiring[kModels];
+int g_selected = -1;
+bool g_rotate_selected;
 uint8_t* g_owner;
 DWORD g_thread;
 bool g_force_skip; // native offline fixture only
@@ -60,17 +61,22 @@ uint32_t fnv(const void* data, size_t size, uint32_t hash = 2166136261u)
 
 void forget(const char* reason, bool release)
 {
-    g_retiring = -1;
-    if (g_pending < 0) return;
-    int id = g_pending;
     uint8_t* owner = g_owner;
-    g_pending = -1; g_owner = nullptr;
-    if (release && owner == spooler() && *(uint32_t*)(owner + 0xDAC) != 5) {
-        unsigned refs = ((RefCount)0x005A6B00)(owner, id);
-        if (refs) ((Release)0x005A78D0)(owner, id);
-        dsf_log("live-pool: cancel %d (%s), refs %u -> %u", id, reason, refs,
-                ((RefCount)0x005A6B00)(owner, id));
-    } else dsf_log("live-pool: drop %d (%s)", id, reason);
+    g_owner = nullptr; g_selected = -1; g_rotate_selected = false;
+    memset(g_retiring, 0, sizeof g_retiring);
+    for (uint32_t id = 0; id < kModels; ++id) if (g_pending[id]) {
+        g_pending[id] = 0;
+        if (release && owner && owner == spooler() && *(uint32_t*)(owner + 0xDAC) != 5) {
+            // 005A6B00 prefers a resident node, even a zero-ref unloading one,
+            // over its queued reload. Release exactly our known ownership.
+            // 005A7100 skips the currently unloading ID; its normal queued-
+            // load release helper 005A66E0 cancels that reload explicitly.
+            if (*(uint32_t*)(owner + 0xDAC) == 3 && *(uint32_t*)(owner + 0xD9C) == id)
+                ((Request)0x005A66E0)(owner, id);
+            ((Release)0x005A78D0)(owner, id);
+            dsf_log("live-pool: cancel %u (%s)", id, reason);
+        } else dsf_log("live-pool: drop %u (%s)", id, reason);
+    }
 }
 
 // 0091689A..009168BB keeps the native RNG result extended until multiplication,
@@ -156,23 +162,6 @@ bool valid_model(uint32_t id, bool package)
     return g_valid[id] == 1;
 }
 
-// 005A7BE8 -> 005A7E30 appends +998 nodes in request order. Stop selecting the oldest
-// eligible added model when a full cache needs room. Existing vehicles retain
-// every reference; only their normal cleanup can make this model unloadable.
-// No timer, forced vehicle removal, or fitted minimum population is involved.
-int oldest_added(uint8_t* s, const Pair* choices, uint32_t size, const uint8_t* ready)
-{
-    uint8_t* head = s + 0x998;
-    uint8_t* node = *(uint8_t**)(head + 4);
-    for (uint32_t n = 0; node != head && n < kNodes; node = *(uint8_t**)(node + 4), ++n) {
-        uint32_t id = *(uint32_t*)(node + 8);
-        if (id >= kModels || !ready[id]) continue;
-        for (uint32_t i = 0; i < size; ++i)
-            if (choices[i].id == id && choices[i].package && choices[i].weight > 0) return id;
-    }
-    return -1;
-}
-
 Row* find_row(const Range* range)
 {
     if (!g_header) return nullptr;
@@ -199,12 +188,13 @@ Row* find_row(const Range* range)
 
 int __fastcall decide(const Range* range, void*, uint32_t seed)
 {
+    if (g_thread && GetCurrentThreadId() != g_thread) return ((Pick)0x00916870)(range, seed);
+    g_selected = -1; g_rotate_selected = false;
     if (g_force_skip) return -1;
     Row* row = find_row(range);
     uint8_t* s = spooler();
     if (!row || !s || *(uint32_t*)(s + 0xDAC) == 5) return ((Pick)0x00916870)(range, seed);
     if (!g_thread) g_thread = GetCurrentThreadId();
-    if (GetCurrentThreadId() != g_thread) return ((Pick)0x00916870)(range, seed);
     uint8_t ready[kModels], valid[kModels] = {};
     if (!ready_models(s, ready)) return ((Pick)0x00916870)(range, seed);
     const Pair* choices = g_pairs + row->first;
@@ -220,37 +210,49 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
                 row->hash,row->frequency,accepted,wanted);
         g_validation_logged=true;
     }
-    if (g_pending >= 0) {
-        if (g_owner != s) forget("owner replaced", false);
+    if (g_owner && g_owner != s) forget("owner replaced", false);
+    uint8_t dynamic[kModels]; memcpy(dynamic, g_packages, sizeof dynamic);
+    uint32_t added = 0;
+    for (uint32_t i = 0; i < row->size; ++i) if (choices[i].package) {
+        dynamic[choices[i].id] = 1;
+        added += valid[choices[i].id] && choices[i].weight > 0;
     }
-    if (g_retiring >= 0 && !ready[g_retiring]) {
-        dsf_log("live-pool: retired %d through native cleanup", g_retiring);
-        g_retiring = -1;
+    uint32_t occupied = 0;
+    for (uint32_t id = 0; id < kModels; ++id) {
+        occupied += (ready[id] && (dynamic[id] || g_retiring[id])) || g_pending[id];
+        if (g_retiring[id] && !ready[id]) {
+            dsf_log("live-pool: retired %u through native cleanup", id);
+            g_retiring[id] = 0;
+        }
     }
+    // A pool that fits keeps ordinary weighted reuse. A larger pool gives
+    // each loaded added model one primary birth, then lets native owners
+    // drain it. This explicit variety policy avoids an immortal small cache.
+    bool rotate = added > row->live_cap;
     const Pair* chosen = sample(choices, row->size, row->total, seed, valid);
-    if (chosen && ready[chosen->id] && (int)chosen->id != g_retiring) return chosen->id;
-    if (chosen && !ready[chosen->id] && g_pending < 0) {
-        uint8_t dynamic[kModels]; memcpy(dynamic, g_packages, sizeof dynamic);
-        for (uint32_t i = 0; i < row->size; ++i) if (choices[i].package & 2) dynamic[choices[i].id] = 1;
-        uint32_t loaded = 0;
-        for (uint32_t id = 0; id < kModels; ++id) loaded += ready[id] && dynamic[id];
-        if (loaded < row->live_cap && ((Request)0x005A7860)(s, chosen->id)) {
-            g_pending = chosen->id; g_owner = s;
-            dsf_log("live-pool: request %u, %u choices, package cache %u/%u, refs %u, thread %lu", chosen->id,
-                    row->size, loaded, row->live_cap, ((RefCount)0x005A6B00)(s, chosen->id), g_thread);
-        } else if (row->live_cap && loaded >= row->live_cap && g_retiring < 0) {
-            g_retiring = oldest_added(s, choices, row->size, ready);
-            if (g_retiring >= 0) dsf_log("live-pool: stop new spawns of %d until native owners release it", g_retiring);
+    if (chosen && chosen->package && !ready[chosen->id] && !g_pending[chosen->id] && occupied < row->live_cap) {
+        // +9A0 owns fifty pending nodes, independent of the single active
+        // loader at +D9C. 005A6FD0 admits multiple queued model requests.
+        if (*(uint32_t*)(s + 0x9A8) < kNodes && ((Request)0x005A7860)(s, chosen->id)) {
+            g_pending[chosen->id] = 1; g_owner = s;
+            dsf_log("live-pool: request %u, %u choices, package cache %u/%u, thread %lu", chosen->id,
+                    row->size, occupied, row->live_cap, g_thread);
         }
     }
     // Retain the chosen native/added group, redistributing only within its
     // resident models. Use the next native RNG draw so a conditional full
     // draw isn't reused as a biased fallback draw. Cold groups fall back to
-    // the other group until a model is ready. No eligible model means failure.
+    // the other group until a model is ready. Retired models cannot fill a
+    // loading gap; otherwise the first ready model populates whole roads.
     int group = chosen ? (chosen->package != 0) : -1;
-    if (g_retiring >= 0) ready[g_retiring] = 0;
-    const Pair* fallback = sample(choices,row->size,row->total,seed,valid,ready,group,true);
+    for (uint32_t i = 0; i < row->size; ++i)
+        if (choices[i].package && g_retiring[choices[i].id]) ready[choices[i].id] = 0;
+    const Pair* fallback = chosen && ready[chosen->id] ? chosen :
+            sample(choices,row->size,row->total,seed,valid,ready,group,true);
     if (!fallback && group != -1) fallback = sample(choices,row->size,row->total,seed,valid,ready,!group,true);
+    if (fallback && fallback->package) {
+        g_selected = fallback->id; g_rotate_selected = rotate;
+    }
     return fallback ? (int)fallback->id : -1;
 }
 
@@ -280,11 +282,18 @@ __declspec(naked) void primary_pick()
 bool __fastcall retain(void* s, void*, uint32_t id)
 {
     bool result = ((Request)0x005A7860)(s, id);
-    if (GetCurrentThreadId() == g_thread && result && g_pending == (int)id && g_owner == s) {
+    if (GetCurrentThreadId() == g_thread && result && id < kModels && g_pending[id] && g_owner == s) {
         unsigned before = ((RefCount)0x005A6B00)(s, id);
-        g_pending = -1; g_owner = nullptr;
+        g_pending[id] = 0;
         ((Release)0x005A78D0)(s, id);
         dsf_log("live-pool: transfer %u to vehicle, refs %u -> %u", id, before, ((RefCount)0x005A6B00)(s, id));
+    }
+    if (GetCurrentThreadId() == g_thread && result && id < kModels && g_selected == (int)id) {
+        if (g_rotate_selected) {
+            g_retiring[id] = 1;
+            dsf_log("live-pool: served %u, waiting for native owners before reuse", id);
+        }
+        g_selected = -1; g_rotate_selected = false;
     }
     if (GetCurrentThreadId() == g_thread && result && id < kModels && g_packages[id] && !g_seen[id]) {
         g_seen[id]=1;
@@ -297,7 +306,7 @@ uint32_t __fastcall capture_refs(void* s, void*, uint32_t id)
 {
     uint32_t refs = ((RefCount)0x005A6B00)(s, id);
     // 0074B7A0 serializes owners' counts, not this transient prefetch lease.
-    return refs && s == g_owner && (int)id == g_pending ? refs - 1 : refs;
+    return refs && s == g_owner && id < kModels && g_pending[id] ? refs - 1 : refs;
 }
 
 void __fastcall restore(void* self, void*) { forget("replay restore", true); g_restore(self); }
@@ -412,6 +421,7 @@ void mod_traffic_init()
 }
 
 static bool __fastcall fixture_exists(void*, void*, uint32_t, uint32_t) { return true; }
+static uint32_t __fastcall fixture_capacity(void*, void*, uint32_t, uint32_t) { return 60; }
 
 int mod_traffic_selftest()
 {
@@ -454,6 +464,8 @@ int mod_traffic_selftest()
     LIVE_CHECK(bind_file(&file,sizeof file));
     uint8_t existsBytes[5]; memcpy(existsBytes,(void*)0x0059C620,5);
     LIVE_CHECK(patch_jmp(0x0059C620,(void*)fixture_exists,5,existsBytes));
+    uint8_t capacityBytes[5]; memcpy(capacityBytes,(void*)0x0059C5C0,5);
+    LIVE_CHECK(patch_jmp(0x0059C5C0,(void*)fixture_capacity,5,capacityBytes));
     uint32_t node[5] = {};
     uint32_t* head = (uint32_t*)(s+0x330); head[0]=head[1]=(uint32_t)head;
     head=(uint32_t*)(s+0x998); head[0]=head[1]=(uint32_t)node;
@@ -462,7 +474,7 @@ int mod_traffic_selftest()
     head=(uint32_t*)(s+0xD94); head[0]=head[1]=(uint32_t)head;
     *(uint32_t*)(s+0x9A0)=(uint32_t)(s+0x9AC);
     *(int*)(s+0xDBC)=*(int*)(s+0xDC0)=*(int*)(s+0xDB0)=-1; *(int*)(s+0xDC4)=1;
-    g_thread=GetCurrentThreadId(); g_owner=s; g_pending=700;
+    g_thread=GetCurrentThreadId(); g_owner=s; g_pending[700]=1;
     // A resident fallback must keep the native/added group chosen by the
     // full weighted draw. One of two added models is resident here.
     uint32_t stock1[3]={},stock2[3]={};
@@ -480,73 +492,112 @@ int mod_traffic_selftest()
             LIVE_CHECK((actual>=700)==(expected>=700) && actual!=701); break;
         }
     }
-    // A full resident cache must eventually admit other pool members. Retire
-    // by stopping births, never by releasing another owner's live reference.
-    LIVE_CHECK(oldest_added(s,choices,4,ready)==700);
-    g_pending=-1; g_owner=nullptr; file.row.live_cap=1;
-    for(uint32_t seed=0;seed<10000;++seed) {
-        if(((Pick)0x00916870)(&range,seed)!=701) continue;
-        LIVE_CHECK(decide(&range,nullptr,seed)<700 && g_retiring==700 && node[4]==1);
-        break;
-    }
+    // A ready first model must not fill whole roads while its peers load.
+    // After its first actual birth it drains, retaining the vehicle's owner.
+    file.row.live_cap=1;
     for(uint32_t seed=0;seed<10000;++seed) {
         if(((Pick)0x00916870)(&range,seed)!=700) continue;
-        LIVE_CHECK(decide(&range,nullptr,seed)<700 && node[4]==1);
+        LIVE_CHECK(decide(&range,nullptr,seed)==700);
+        LIVE_CHECK(retain(s,nullptr,700));
+        LIVE_CHECK(g_retiring[700] && !g_pending[700] && node[4]==1);
         break;
     }
-    g_retiring=-1; g_pending=700; g_owner=s; file.row.live_cap=26;
-    trafficHead[0]=trafficHead[1]=(uint32_t)trafficHead;
-    LIVE_CHECK(retain(s,nullptr,700));
-    LIVE_CHECK(node[4]==1 && g_pending==-1 && g_owner==nullptr);
+    for(uint32_t seed=0;seed<10000;++seed) {
+        int actual=decide(&range,nullptr,seed);
+        if(actual>=700 || node[4]!=1) { LIVE_CHECK(actual<700 && node[4]==1); break; }
+    }
     // The native vehicle cleanup API releases its own reference and queues
     // unloading only after the last reference is gone.
     ((Release)0x005A78D0)(s,700);
-    LIVE_CHECK(node[4]==0 && *(uint32_t*)(s+0x9A8)==1);
+    LIVE_CHECK(node[4]==0 && *(uint32_t*)(s+0x9A8)==2);
     uint32_t* queued=(uint32_t*)head[1]; LIVE_CHECK(queued[2]==700 && queued[3]==1 && queued[4]==1);
-    // Reset the synthetic queue, then compare native replay capture before/
-    // after the hook. The transient reference must not survive restoration.
+    // Native request admits multiple cold models. In-flight leases consume
+    // our budget too; repeated demand never acquires a second owned lease.
     head[0]=head[1]=(uint32_t)head; *(uint32_t*)(s+0x9A0)=(uint32_t)(s+0x9AC);
-    *(uint32_t*)(s+0x9A8)=0; node[4]=1; g_pending=700; g_owner=s;
+    *(uint32_t*)(s+0x9A8)=0;
+    uint32_t* residentHead=(uint32_t*)(s+0x998);
+    residentHead[0]=residentHead[1]=(uint32_t)residentHead; *(uint32_t*)(s+0x5AC)=0;
+    forget("cold fixture",false); file.row.live_cap=2;
+    file.choices[1]={702,1,1}; g_valid[702]=1;
+    uint32_t seeds[3]={};
+    for(uint32_t seed=0;seed<10000;++seed) {
+        const Pair* pick=sample(file.choices,4,9.5f,seed);
+        if(pick && pick->id>=700 && pick->id<=702) seeds[pick->id-700]=seed;
+    }
+    LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && g_pending[700]);
+    LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && *(uint32_t*)(s+0x9A8)==1);
+    queued=(uint32_t*)head[1]; LIVE_CHECK(queued[2]==700 && queued[3]==0 && queued[4]==1);
+    LIVE_CHECK(decide(&range,nullptr,seeds[1])<700 && g_pending[701] && *(uint32_t*)(s+0x9A8)==2);
+    LIVE_CHECK(decide(&range,nullptr,seeds[2])<700 && !g_pending[702] && *(uint32_t*)(s+0x9A8)==2);
+    LIVE_CHECK(((RefCount)0x005A6B00)(s,700)==1 && ((RefCount)0x005A6B00)(s,701)==1);
+    forget("cancel queued fixture",true);
+    LIVE_CHECK(!g_pending[700] && !g_pending[701] && *(uint32_t*)(s+0x9A8)==0);
+    // Cancelling the sole active-load lease schedules its native unload.
+    // Other owners' active-load references remain intact.
+    *(uint32_t*)(s+0xDAC)=2; *(uint32_t*)(s+0xD9C)=702; *(uint32_t*)(s+0xDA4)=1;
+    g_pending[702]=1; g_owner=s; forget("cancel active fixture",true);
+    queued=(uint32_t*)head[1]; LIVE_CHECK(queued[2]==702 && queued[3]==1 && queued[4]==1);
+    head[0]=head[1]=(uint32_t)head; *(uint32_t*)(s+0x9A0)=(uint32_t)(s+0x9AC);
+    *(uint32_t*)(s+0x9A4)=*(uint32_t*)(s+0x9A8)=0; *(uint32_t*)(s+0xDA4)=3;
+    g_pending[702]=1; g_owner=s; forget("cancel shared active fixture",true);
+    LIVE_CHECK(*(uint32_t*)(s+0xDA4)==2 && *(uint32_t*)(s+0x9A8)==0);
+    // Native RefCount's zero-ref resident node masks a queued reload. Native
+    // Release ignores the active unloading ID, so cancel its queued owner.
+    residentHead[0]=residentHead[1]=(uint32_t)node; node[0]=node[1]=(uint32_t)residentHead; node[4]=0;
+    *(uint32_t*)(s+0xDAC)=3; *(uint32_t*)(s+0xD9C)=700;
+    LIVE_CHECK(((Request)0x005A7860)(s,700)); g_pending[700]=1; g_owner=s;
+    LIVE_CHECK(((RefCount)0x005A6B00)(s,700)==0 && *(uint32_t*)(s+0x9A8)==1);
+    forget("cancel unloading reload fixture",true);
+    LIVE_CHECK(!g_pending[700] && *(uint32_t*)(s+0x9A8)==0 && node[4]==0);
+    residentHead[0]=residentHead[1]=(uint32_t)residentHead;
+    *(uint32_t*)(s+0xDAC)=0; memcpy(file.choices,choices,sizeof choices);
+    // Two models can drain concurrently; neither keeps the other waiting.
+    uint32_t node2[5]={}; residentHead[0]=(uint32_t)node2; residentHead[1]=(uint32_t)node;
+    node[0]=(uint32_t)residentHead; node[1]=(uint32_t)node2; node[4]=1;
+    node2[0]=(uint32_t)node; node2[1]=(uint32_t)residentHead; node2[2]=701; node2[4]=1;
+    *(uint32_t*)(s+0x5AC)=2; g_pending[700]=g_pending[701]=1; g_owner=s; file.row.live_cap=1;
+    for(uint32_t id:{700u,701u}) {
+        for(uint32_t seed=0;seed<10000;++seed) {
+            if(((Pick)0x00916870)(&range,seed)!=(int)id) continue;
+            LIVE_CHECK(decide(&range,nullptr,seed)==(int)id && retain(s,nullptr,id)); break;
+        }
+    }
+    LIVE_CHECK(g_retiring[700] && g_retiring[701] && node[4]==1 && node2[4]==1);
+    LIVE_CHECK(!g_pending[700] && !g_pending[701]);
+    // Compare actual replay capture before/after the hook for both leases.
+    // No transient model reference may survive restoration.
+    trafficHead[0]=trafficHead[1]=(uint32_t)trafficHead;
+    forget("replay fixture",false); g_pending[700]=g_pending[701]=1; g_owner=s;
     uint32_t snapshot[156] = {}, captured[157] = {};
     captured[153]=0xAABBCCDD;
     ((Capture)0x0074B7A0)(snapshot,captured);
-    LIVE_CHECK(captured[0x33]==1 && captured[0x34]==700 && captured[0x35]==1);
+    LIVE_CHECK(captured[0x33]==2 && captured[0x34]==700 && captured[0x35]==1 && captured[0x37]==1);
     *(uint8_t*)0x0074B7A0 ^= 1;
     LIVE_CHECK(!install());
     for(const Site& site:g_sites) LIVE_CHECK(bytes_equal(site.address,site.bytes,site.size));
     *(uint8_t*)0x0074B7A0 ^= 1;
     LIVE_CHECK(install());
     ((Capture)0x0074B7A0)(snapshot,captured);
-    LIVE_CHECK(captured[0x33]==1 && captured[0x34]==700 && captured[0x35]==0 && node[4]==1);
+    LIVE_CHECK(captured[0x33]==2 && captured[0x34]==700 && captured[0x35]==0 && node[4]==1);
+    LIVE_CHECK(captured[0x36]==701 && captured[0x37]==0 && node2[4]==1);
     LIVE_CHECK(captured[153]==0xAABBCCDD);
     node[4]=2; LIVE_CHECK(capture_refs(s,nullptr,700)==1); node[4]=1;
     memcpy(snapshot+3,captured,153*4);
     ((Clear)0x0074BA20)(snapshot);
-    LIVE_CHECK(g_pending==-1 && node[4]==0 && snapshot[2]==2);
+    LIVE_CHECK(!g_pending[700] && !g_pending[701] && node[4]==0 && node2[4]==0 && snapshot[2]==2);
     // Execute the real spawn prologue and failure epilogue, proving the
     // no-ready-model path balances its four stack arguments and out pointer.
     using Spawn = uint32_t*(__thiscall*)(void*,uint32_t*,uint32_t,const Range*,int);
     g_force_skip=true; uint32_t out=0xDEADBEEF;
     LIVE_CHECK(((Spawn)0x0077ADA0)(tm,&out,42,&range,0)==&out && out==0);
     g_force_skip=false;
-    g_pending=700; g_owner=s; ((Clear)0x005A7360)(s);
-    LIVE_CHECK(g_pending==-1 && *(uint32_t*)(s+0xDAC)==5);
-    g_retiring=700; ((Clear)0x005A7360)(s);
-    LIVE_CHECK(g_retiring==-1); // reset also clears retirement without a prefetch
-    // Actual native append order, deliberately opposite numeric ID order.
-    uint8_t fifo[0xE6C]={};
-    uint32_t* fifoHead=(uint32_t*)(fifo+0x998);
-    fifoHead[0]=fifoHead[1]=(uint32_t)fifoHead;
-    *(uint32_t*)(fifo+0x5A4)=(uint32_t)(fifo+0x5B0);
-    using Append=void(__thiscall*)(void*,const uint32_t*);
-    uint32_t model[3]={701,0,1};
-    ((Append)0x005A7E30)(fifo+0x5A4,model);
-    model[0]=700; ((Append)0x005A7E30)(fifo+0x5A4,model);
-    ready[700]=ready[701]=1;
-    LIVE_CHECK(oldest_added(fifo,choices,4,ready)==701);
-    LIVE_CHECK(((RefCount)0x005A6B00)(fifo,700)==1 && ((RefCount)0x005A6B00)(fifo,701)==1);
+    g_pending[700]=g_pending[701]=1; g_owner=s; ((Clear)0x005A7360)(s);
+    LIVE_CHECK(!g_pending[700] && !g_pending[701] && *(uint32_t*)(s+0xDAC)==5);
+    g_retiring[700]=g_retiring[701]=1; ((Clear)0x005A7360)(s);
+    LIVE_CHECK(!g_retiring[700] && !g_retiring[701]);
     for(const Site& site:g_sites) LIVE_CHECK(patch_bytes(site.address,site.bytes,site.size));
     LIVE_CHECK(patch_bytes(0x0059C620,existsBytes,5));
+    LIVE_CHECK(patch_bytes(0x0059C5C0,capacityBytes,5));
     *(void**)0x00FE7228=savedEngine; *(void**)0x016DA940=savedPairs; free(tm);
     g_header=nullptr; g_rows=nullptr; g_pairs=nullptr; g_thread=0; g_unique=0;
     memset(g_packages,0,sizeof g_packages); memset(g_valid,0,sizeof g_valid); memset(g_seen,0,sizeof g_seen);

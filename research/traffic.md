@@ -889,6 +889,10 @@ Status distinguishes candidate count from resident streaming capacity.
 The full pool is serialized separately from native AI lists. Each primary
 ambient spawn draws from its active chapter's full weights and can request a
 nonresident model. There is no user shuffle step or timed batch rotation.
+When the full pool exceeds the streaming budget, each loaded added model gets
+a primary birth, then drains through native cleanup while fresh models queue.
+Vanilla traffic fills loading gaps; short-term Forza shares can fall below the
+full-pool preview. A pool that fits the budget retains ordinary weighted reuse.
 Explicit legacy `ports` lists are intersected with the pool. Numeric `ports`
 values cap residency, not eligibility. Chapters sharing native road tables
 can now have distinct pools. Original native lists remain resident; disabled
