@@ -213,9 +213,9 @@ class App:
         self.mean = tk.BooleanVar(value=True)
         self.mode = tk.StringVar(value="vanilla")
         self.blend = tk.DoubleVar(value=0.0)
-        ttk.Label(top, text="Ports").pack(side="left")
-        ttk.Spinbox(top, from_=0, to=40, textvariable=self.ports, width=4).pack(side="left")
-        ttk.Checkbutton(top, text="Fill to the budget", variable=self.fill).pack(side="left", padx=(4, 0))
+        ttk.Label(top, text="Streaming budget").pack(side="left")
+        ttk.Spinbox(top, from_=0, to=traffic.MAX_SLOTS, textvariable=self.ports, width=4).pack(side="left")
+        ttk.Checkbutton(top, text="Automatic", variable=self.fill).pack(side="left", padx=(4, 0))
         ttk.Label(top, text="Share").pack(side="left", padx=(8, 0))
         ttk.Scale(top, from_=0.0, to=0.9, variable=self.share, length=120).pack(side="left")
         ttk.Checkbutton(top, text="As an average vanilla car", variable=self.mean).pack(side="left", padx=(4, 0))
@@ -232,13 +232,15 @@ class App:
         self.pool_summary.pack(side="left", padx=4)
         ttk.Label(
             self.sets_tab,
-            text="Selected traffic models and road shares. Apply saves; Shuffle ports picks a new selection from the pool.",
+            text="Traffic draws from this pool while you drive. Apply saves changes for the next game start.",
         ).pack(fill="x", padx=4)
         cols = ("id", "model", "state", "factor", "now", "after")
         self.pool = ttk.Treeview(self.sets_tab, columns=cols, show="headings", selectmode="extended")
         for c, w in zip(cols, (60, 330, 90, 60, 70, 70)):
             self.pool.heading(c, text=c.capitalize())
             self.pool.column(c, width=w, anchor="w")
+        self.pool.heading("now", text="Native share")
+        self.pool.heading("after", text="Pool share")
         self.pool.pack(fill="both", expand=True)
         bar = ttk.Frame(self.sets_tab)
         bar.pack(fill="x")
@@ -249,7 +251,6 @@ class App:
             ("Add from other chapters...", self.add_extra),
             ("Apply", self.apply_set),
             ("Reset this set", self.reset_set),
-            ("Shuffle ports", self.shuffle),
             ("No set changes", self.ambient_off),
         ):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=4, pady=4)
@@ -293,6 +294,8 @@ class App:
         self.root.wait_window(dialog.window)
         if dialog.result is not None:
             self.pending["pool"] = dialog.result
+            self.port_keys = None
+            self.fill.set(True)
             self.show_pool_summary()
             self.preview()
 
@@ -309,28 +312,20 @@ class App:
         return out
 
     def preview(self) -> None:
-        """The set's models now and with the settings on screen (a dry run of traffic.plan)."""
-        from dsfforza.game import traffic_ai
+        """Preview every candidate's road share, independent of resident-model limits."""
+        from dsfforza.build import runtime_traffic
 
         name = self.current_set() or traffic.STORY_SETS[0]
         try:
-            ai = traffic_ai.AiTraffic.read(self.tc.game_ai(), traffic_ai.known_names())
-            ts = ai.by_name(name)
-            now = ai.share(ts)
             amb = dict(self.tc.t["ambient"])
             if self.current_set() is None:
                 amb["default"] = self.gather()
             else:
                 amb["sets"] = dict(amb.get("sets") or {}) | {name: self.gather()}
-            slots, pots = self.tc.facts()
-            ids = [i for i, _ in self.tc.in_traffic()]
-            key_ids = {k: c["id"] for k, c in self.tc.cars().items()}
-            reports = traffic.plan(ai, amb, ids, key_ids, slots=slots, pots=pots, seed=amb.get("seed", 0))
-            after = ai.share(ai.by_name(name))
+            now, after, rep = runtime_traffic.preview(self.tc, name, amb)
         except (OSError, ValueError, KeyError, SystemExit) as e:
             self.budget.configure(text=f"{name}: {e}")
             return
-        rep = next((r for r in reports if r.name == name), None)
         self.show_pool(name, now, after, rep)
 
     def show_pool(self, name: str, now: dict, after: dict, rep) -> None:
@@ -346,12 +341,12 @@ class App:
             values = (mid, label, state, factor, f"{now.get(mid, 0):.1%}", f"{after.get(mid, 0):.1%}")
             self.pool.insert("", "end", iid=str(mid), values=values)
         if rep:
-            text = f"{name}: {rep.models} models of {rep.budget} (slot budget)"
-            if rep.reaches:
-                text += f"; also changes {', '.join(rep.reaches)}"
+            text = f"{name}: {rep.candidates} candidates; automatic streaming, budget {rep.live_limit} models"
             text += "".join(f"; {n}" for n in rep.notes)
         else:
             text = f"{name}: as the game has it"
+        if not self.tc.live_pools():
+            text += "; install the updated plugin to activate live pools"
         self.budget.configure(text=text)
 
     def toggle_models(self) -> None:

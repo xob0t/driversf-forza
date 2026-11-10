@@ -20,6 +20,7 @@ void dsf_core_init();
 int mod_hands_selftest();
 int mod_garage_keys_selftest();
 int mod_archive_pkg_selftest(const char* dir);
+int mod_traffic_selftest();
 long mod_render_dropped();
 
 static int failures = 0;
@@ -441,6 +442,7 @@ int main(int argc, char** argv)
         CHECK(q.count == 2 && entries[0] == 10 && entries[8] == 11 && entries[15] == 8 && entries[16] == 0);
         CHECK(mod_render_dropped() == before + 1);
     }
+    CHECK(mod_traffic_selftest() == 0);
     printf("%s (%d failures); log: %s\\dsfcars.log\n", failures ? "FAILED" : "ok", failures, dsf_plugin_dir());
     return failures ? 1 : 0;
 }

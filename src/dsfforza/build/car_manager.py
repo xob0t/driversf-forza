@@ -684,7 +684,9 @@ def add_traffic_parser(sub, common) -> None:
         help="the traffic sets: ports, share, weights, the pool (off by default; this turns them on)",
     )
     a.add_argument("--set", dest="set_name", help="one set (e.g. 'Chapter 7'); default: every story set's default")
-    a.add_argument("--ports", help="fill (up to the slot budget), how many, or keys separated by commas")
+    a.add_argument(
+        "--ports", help="fill (automatic streaming budget), max cached models, or legacy keys separated by commas"
+    )
     a.add_argument(
         "--pool", help="candidate cars: all, none, or keys/selectors separated by commas (make:Ford, game:FH1)"
     )

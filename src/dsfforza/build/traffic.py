@@ -1,5 +1,5 @@
-"""The car manager's traffic settings: ambient traffic sets (a patched copy of the game's
-media/san_franciscoAI.fchunk) and interesting vehicles (dsfcars\\traffic.lua for register.lua).
+"""The car manager's traffic settings: live ambient pools with current plugins,
+legacy static AI copies with older plugins, and interesting vehicles.
 research/traffic.md has the game's side; section 6 the design.
 
 Settings (manager.json "traffic"; keys are package keys, so they survive reinstalls):
@@ -11,8 +11,7 @@ Settings (manager.json "traffic"; keys are package keys, so they survive reinsta
 Set settings (ambient.default for every story set, ambient.sets.<name> over it for one):
 
     pool         "all" (default) or candidate package keys; not limited to the resident-model budget
-    ports        "fill" (default: up to the set's slot budget), how many ports join the set (dealt
-                 from the cars in traffic), or a list of keys
+    ports        "fill" (automatic resident budget), a numeric resident limit, or legacy keys
     share        "mean" (default: each added model as likely on a road as the road's average
                  vanilla model, so the added models' share is k / (vanilla + k)), or their share of
                  every road's weight (0..1)
@@ -513,9 +512,27 @@ class TrafficControl:
         # "default" present, even empty: `traffic ambient` without fields before "on" was stored
         return bool(amb.get("on") or "default" in amb or amb.get("sets"))
 
+    def live_pools(self) -> bool:
+        """Whether the installed plugin supports selecting and streaming the full pool."""
+        from dsfforza.build import car_manager, runtime_traffic
+
+        return runtime_traffic.supported(self.m.game / car_manager.PLUGIN)
+
+    def has_pool_setting(self) -> bool:
+        amb = self.t["ambient"]
+        return "pool" in (amb.get("default") or {}) or any(
+            "pool" in fields for fields in (amb.get("sets") or {}).values()
+        )
+
     def write(self) -> list[SetReport]:
         """The AI copy and its redirect line (neither when no set changes), and traffic.lua."""
-        from dsfforza.build import car_gui
+        from dsfforza.build import car_gui, runtime_traffic
+
+        if self.ambient_changes() and self.live_pools():
+            return runtime_traffic.write(self)
+        if self.ambient_changes() and self.has_pool_setting():
+            raise SystemExit("live chapter pools need the updated dsfcars.asi; no static batch was generated")
+        (self.m.game / runtime_traffic.POOL_FILE).unlink(missing_ok=True)
 
         game = self.m.game
         copy = game / AI_COPY
@@ -580,7 +597,9 @@ class TrafficControl:
 
     def clear(self) -> None:
         """Uninstall: the copy, its redirect line and traffic.lua go."""
-        from dsfforza.build import car_gui
+        from dsfforza.build import car_gui, runtime_traffic
+
+        (self.m.game / runtime_traffic.POOL_FILE).unlink(missing_ok=True)
 
         (self.m.game / AI_COPY).unlink(missing_ok=True)
         (self.m.game / AI_SLOTS).unlink(missing_ok=True)
@@ -608,6 +627,21 @@ class TrafficControl:
             out.append(f"{ai_path}: {note}")
         if not self.ambient_changes():
             out.append("ambient traffic: as the game has it (`traffic ambient` puts ports in the sets)")
+            return out
+        if self.live_pools():
+            from dsfforza.build import runtime_traffic
+
+            _payload, reports = runtime_traffic.build(self)
+            out.append("live ambient pools: automatic selection and native streaming during the drive")
+            configured = set(STORY_SETS) | set(self.t["ambient"].get("sets") or {})
+            out.extend(
+                f"  {r.name}: {r.candidates} candidates, streaming budget {r.live_limit}, native baseline {r.baseline}"
+                for r in reports
+                if r.name in configured
+            )
+            return out
+        if self.has_pool_setting():
+            out.append("live pools require the updated dsfcars.asi; saved pools are not active")
             return out
         ai, reports = self.plan()
         slots, _ = self.facts()
