@@ -865,6 +865,7 @@ key):
 
 | Set setting | Meaning |
 | --- | --- |
+| `pool` | `all` (default): every enabled package car with traffic on, including later installs; or a list of stable package keys. Each chapter can override the default pool. Pool membership is independent of the number of resident models; a 721-car pool is retained in full. |
 | `ports` | `fill` (default): as many as the budget below leaves room for; or how many (dealt from the enabled cars in traffic, a shuffled deck the seed orders, so different sets get different ports); or a list of keys |
 | `share` | `mean` (default): each added model weighs as much on a road as the mean of the vanilla models that road allows, so the added models' share of a road is k / (allowed + k); or a fixed share of every road's weight, split evenly |
 | `weights` | `vanilla`: the game's weights; `equal`: every model a road allows equally likely, and the added models like them; `custom`: per-model factors |
@@ -872,6 +873,22 @@ key):
 | `custom` | `{model ID or key: factor}` |
 | `vanilla_off` | vanilla models out of the set: weight 0, and out of its spool list |
 | `extra` | vanilla models from other sets added in, like ports |
+
+**Candidate pools (2026-11-10).** The car manager's Choose Forza pool dialog
+edits `pool` for the selected chapter or the default. Add/remove selections
+survive filtering, and All Forza cars stores `all`, rather than a snapshot
+of installed keys. Globally disabled or traffic-off cars stay excluded but
+keep their saved membership. The CLI exposes the same field as `--pool`.
+Status distinguishes candidate count from selected models.
+
+This is a configuration rule, not an expanded engine list: the shuffled deck
+is filtered by the requested pool before dealing `ports` cars. Native
+0x0076FDF0's 40-entry selector buffer and 0x005A79F0's resident-list semantics
+(section 1b) still determine the budget. The output contains only the
+selected models. Apply and Shuffle rewrite that selection; it is fixed
+during the drive. Existing explicit `ports` lists remain supported and are
+intersected with the candidate pool. Shared road-table warnings and mission
+pot reservations are unchanged.
 
 `ambient.default` applies to every story set (Exposition, Chapters 1 to 7,
 Epilogue), and `ambient.sets.<name>` is laid over it for one set.
