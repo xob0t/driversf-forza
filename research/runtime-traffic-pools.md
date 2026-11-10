@@ -97,9 +97,10 @@ Python tests verify all 721 candidates in serialized rows and previews,
 distinct pools for chapters sharing native ranges, unchanged original AI,
 legacy-copy removal, plugin compatibility and existing share/disable rules.
 `out/runtime-pool/python-runtime.log` records 36 targeted tests passing.
-The full suite passed 774 tests with lint, formatting and ratchet checks in
-`out/runtime-pool/tests-full.log`. The tracked branch's native test passes
-in `out/runtime-pool/build-tracked.log`. The withdrawn Tk window check in
+The final suite passed 775 tests with lint, formatting and ratchet checks in
+`out/runtime-pool/tests-final-full.log`. The tracked branch's native test passes
+in `out/runtime-pool/build-branch-final.log`; the installed combination with
+the provider-map fix passes in `out/runtime-pool/build-v6.log`. The withdrawn Tk window check in
 `out/runtime-pool/gui-smoke.log` confirms 721 entries for every chapter.
 
 The 24-model prototype drove in `vm1-20261110-110943` without a recorded
@@ -154,3 +155,28 @@ The route is the repository's existing controlled 1500 m movement at 20 m/s,
 starting at its measured industrial straight. Its timing and test budget are
 test stimuli, not production streaming rules. Production has no timer.
 Full-roster route validation is recorded separately when complete.
+
+**Full-roster eligibility confirmed, long drive still open:**
+`vm2-20261110-154634` logged `validates 721 of 721 positive package choices`
+from the actual package-acceptance and native VSCT queries. It constructed
+18 distinct primary Forza models while resident package counts fell and new
+requests were admitted as the player changed roads. The controlled route
+stopped logging at t=27.84 and the screen went black, with C++ frames still
+rendering. No crash was recorded. This does not pass the long-drive check.
+The VM controls and unresolved pause are recorded on
+[#589](https://github.com/xob0t/driversf-forza/issues/589#issuecomment-6767935567).
+
+The owner requested installation for testing. The installed test build uses
+this module plus PR #590's provider-map fix and retains the owner's 60 slots.
+Its DLL SHA256 is `524975fb8d4a8c1da0cf363ae8fe4ae9c29acf41cf405e5ce6ee00d6b45c5028`.
+`out/runtime-pool/installed-survey.json` verifies 721 positive package choices
+in every one of 280 rows, 721 enabled cars, removal of the static AI copy and
+slot marker, and all 16 original uninstall-manifest entries with matching
+plugin/ini hashes. Before, chapters had 20 to 25 fixed Forza models; after,
+all nine story chapters have 721 live candidates and 15 to 21 added-model
+resident slots, with Chapter 7 at 18. The renderer and car assets were not
+changed. The installer-helper backup is `out/runtime-pool/host-20261110-154922`.
+
+Regenerate settings with the car manager after changing the native vehicle
+slot limit. Full-roster host driving, replay transitions and mission/chapter
+transitions remain to be verified before removing the PR's draft status.
