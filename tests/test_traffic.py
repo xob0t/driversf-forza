@@ -393,6 +393,8 @@ class GuiSmokeTest(unittest.TestCase):
             app.tc.facts = lambda: (41, POTS)
             app.set_name.set(CH7)
             self.assertEqual((app.gather()["ports"], app.gather()["share"]), ("fill", "mean"))  # the default
+            self.assertEqual(app.gather()["pool"], "all")
+            self.assertIn("1 eligible", app.pool_summary.cget("text"))
             app.fill.set(False)
             app.ports.set(1)
             app.preview()

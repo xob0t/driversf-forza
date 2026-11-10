@@ -10,6 +10,7 @@ Settings (manager.json "traffic"; keys are package keys, so they survive reinsta
 
 Set settings (ambient.default for every story set, ambient.sets.<name> over it for one):
 
+    pool         "all" (default) or candidate package keys; not limited to the resident-model budget
     ports        "fill" (default: up to the set's slot budget), how many ports join the set (dealt
                  from the cars in traffic), or a list of keys
     share        "mean" (default: each added model as likely on a road as the road's average
@@ -72,6 +73,7 @@ WEIGHT_MODES = ("vanilla", "equal", "custom")
 # budget, each port as likely on a road as an average vanilla car of that road ("mean"), the
 # vanilla models' weights as the game has them.
 DEFAULT_SET = {
+    "pool": "all",
     "ports": "fill",
     "share": "mean",
     "weights": "vanilla",
@@ -151,6 +153,8 @@ def set_settings(ambient: dict, name: str) -> dict:
     out.update((ambient.get("sets") or {}).get(name) or {})
     if out["weights"] not in WEIGHT_MODES:
         raise ValueError(f"{name}: weights {out['weights']!r} is not one of {WEIGHT_MODES}")
+    if out["pool"] != "all" and not (isinstance(out["pool"], list) and all(isinstance(k, str) for k in out["pool"])):
+        raise ValueError(f"{name}: pool must be 'all' or a list of package keys")
     out["blend"] = 1.0 if out["weights"] == "equal" else float(out.get("blend") or 0.0)
     return out
 
@@ -249,16 +253,20 @@ class _Planner:
                 out[mid] = float(v)
         return out
 
-    def deal(self, want, room: int) -> list[int]:
-        """The ports for one set: the keys asked for, the next `want` of the shuffled deck, or
-        with "fill" as many as the set has room for."""
+    def deal(self, want, room: int, pool="all") -> list[int]:
+        """Deal from this chapter's pool: explicit ports or the next candidates of the shuffled
+        deck, with "fill" taking as many as the set has room for. The saved pool stays intact."""
+        allowed = set(self.ports)
+        if pool != "all":
+            allowed &= {self.key_ids[k] for k in pool if k in self.key_ids}
         if isinstance(want, list):
-            return [self.key_ids[k] for k in want if self.key_ids.get(k) in self.ports]
+            return list(dict.fromkeys(self.key_ids[k] for k in want if self.key_ids.get(k) in allowed))
         count = room if want == "fill" else int(want or 0)
-        chosen = []
-        for _ in range(min(count, len(self.deck))):
-            chosen.append(self.deck[0])
-            self.deck.append(self.deck.pop(0))
+        chosen = [mid for mid in self.deck if mid in allowed][: max(count, 0)]
+        # A chapter's pool filters the shuffled deck, not its resident-model budget.
+        # Move only dealt cars to the back so other chapters keep their candidates.
+        picked = set(chosen)
+        self.deck = [mid for mid in self.deck if mid not in picked] + chosen
         return chosen
 
     def room(self, name, kept: int, reached) -> int:
@@ -282,7 +290,7 @@ class _Planner:
         reached = [(u, fr) for u, fr in ai.users(ranges) if not (u.index == ts.index and fr == 0)]
         kept = [m for m in vanilla_list if m not in off]
         free = self.room(name, len(kept), reached)
-        chosen = self.deal(s.get("ports"), max(free - len(extra), 0))
+        chosen = self.deal(s.get("ports"), max(free - len(extra), 0), s["pool"])
         added = (extra + chosen)[:free]
         if len(extra) + len(chosen) > free:
             rep.notes.append(f"{len(extra) + len(chosen) - free} of the added models left out: over the slot budget")
@@ -401,6 +409,14 @@ class TrafficControl:
     def in_traffic(self) -> list[tuple[int, str]]:
         """(ID, key) of the enabled cars with traffic on, in key order."""
         return [(c["id"], k) for k, c in self.cars().items() if c["enabled"] and c["traffic"]]
+
+    def pool_keys(self, pool="all") -> list[str]:
+        """Eligible package keys in a chapter's candidate pool, independent of its slot budget."""
+        eligible = [key for _, key in self.in_traffic()]
+        if pool == "all":
+            return eligible
+        allowed = set(pool)
+        return [key for key in eligible if key in allowed]
 
     # --- settings ---
 
@@ -598,6 +614,9 @@ class TrafficControl:
         out.append(f"ambient traffic ({slots} vehicle spool slots):")
         for r in reports:
             line = f"  {r.name}: {r.models} models of {r.budget}, weights {r.weights}"
+            s = set_settings(self.t["ambient"], r.name)
+            candidates = len(on) if s["pool"] == "all" else len(set(on) & set(s["pool"]))
+            line += f", Forza pool {candidates} candidates, {len(r.ports)} selected"
             if r.ports:
                 share = ai.share(ai.by_name(r.name))
                 line += f", ports {r.ports} ({sum(share.get(m, 0.0) for m in r.ports):.0%} of its roads)"

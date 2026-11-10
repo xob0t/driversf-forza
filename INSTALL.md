@@ -102,6 +102,10 @@ car_manager gui` does the same from a checkout. Its tabs:
   DLC). Enable or disable cars (the garage and traffic), or switch them in or
   out of traffic only.
 - **Traffic sets**: the cars around you come from the chapter's traffic set.
+  Choose a chapter, then **Choose Forza pool...** to add or remove candidate
+  cars. **All Forza cars** includes the whole enabled roster, including cars
+  installed later. Search by name, make or source and use Add selected or
+  Remove selected for a custom pool. Choose Use pool, then Apply to save.
   For every story chapter, or one at a time: how many of your cars join it and
   their share of the traffic, the weights (as the game has them, all models
   equally likely, or your own factor per model), vanilla models on or off,
@@ -112,6 +116,11 @@ car_manager gui` does the same from a checkout. Its tabs:
   your cars fit beside the game's); past
   that the chapter would never finish loading, so
   the car manager leaves the extra cars out and says so.
+  The candidate pool can hold all 700+ cars; only the selected traffic models
+  count against that loaded-model limit. **Shuffle ports** deals another
+  selection from the saved pools for the next game start. Selection does not
+  rotate during a drive. Sets that share road tables still change together,
+  as shown in the preview and status.
 - **Interesting vehicles**: the few special cars the game adds near you. Your
   cars can come as those too, and a car can be pinned to regions of the map.
 
@@ -132,6 +141,11 @@ reinstall) and take effect at the next game start. The same from the command
 line: `cars.cmd traffic status`, `cars.cmd traffic off make:FERRARI`,
 `cars.cmd traffic ambient --set "Chapter 7" --ports 4 --share 0.2` (or `--ports fill --share mean`),
 `cars.cmd traffic ambient --weights equal`, `cars.cmd traffic --help`.
+Choose a chapter's candidate pool with
+`cars.cmd traffic ambient --set "Chapter 7" --pool all` or
+`cars.cmd traffic ambient --set "Chapter 7" --pool make:FORD,game:FH1`.
+`--pool none` empties it; `--reset pool` restores its inherited pool.
+The default pool applies to every chapter without its own override.
 How the game picks traffic: [research/traffic.md](research/traffic.md).
 
 ### What the installer adds

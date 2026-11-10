@@ -685,6 +685,9 @@ def add_traffic_parser(sub, common) -> None:
     )
     a.add_argument("--set", dest="set_name", help="one set (e.g. 'Chapter 7'); default: every story set's default")
     a.add_argument("--ports", help="fill (up to the slot budget), how many, or keys separated by commas")
+    a.add_argument(
+        "--pool", help="candidate cars: all, none, or keys/selectors separated by commas (make:Ford, game:FH1)"
+    )
     a.add_argument("--share", help="mean (each as likely as an average vanilla car) or the added models' share (0..1)")
     a.add_argument("--weights", choices=["vanilla", "equal", "custom"])
     a.add_argument("--blend", type=float, help="0 = the game's weights .. 1 = equal")
@@ -736,6 +739,8 @@ def run_traffic(m: Manager, args) -> None:
 
 def ambient_fields(tc, args) -> dict:
     fields = {}
+    if args.pool is not None:
+        fields["pool"] = "all" if args.pool == "all" else [] if args.pool == "none" else tc.select(args.pool.split(","))
     if args.ports is not None:
         if args.ports == "fill" or args.ports.isdigit():
             fields["ports"] = "fill" if args.ports == "fill" else int(args.ports)
