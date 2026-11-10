@@ -1,0 +1,111 @@
+# Live chapter traffic pools
+
+DSF PC 1.04. This extends ambient selection without adding hundreds of models
+to the native traffic spool list. `traffic.md` describes the original fixed
+sets and their limits. The manager writes full per-chapter weighted choices
+to `dsfcars/traffic/pools.bin`; the native AI file and its resident lists stay
+unchanged. A pool is a set of eligible models, not a resident batch.
+
+## Confirmed static evidence
+
+Addresses are virtual addresses in Driver.exe. Decompiled functions and
+disassembly used for this change are under `out/runtime-pool/native/` in the
+`driversf-traffic-pools` worktree.
+
+| Native code/data | Meaning and consequence |
+| --- | --- |
+| `00916870`, called at `0077ADCB` in `0077ADA0` | Main ambient weighted picker. Hook this call only; the second picker at `0077AF4B` retains attached-vehicle behavior. |
+| `016DA940` | Pointer to native eight-byte model/float-weight pairs. The picker receives start, count and float total. |
+| `00866510`, `00866320`, `0091689A..009168BB` | Seed a 72-byte RNG and draw in x87 extended precision. Multiply by total before rounding to float, then subtract float weights. |
+| `[00FE7228]+758`, manager `+5CA840/+5CA844/+5CA9F0` | Active set hash, frequency and model override. Key full pools by active context; preserve overrides. |
+| `[engine]+780`, `0086C5B0` | Vehicle-spec lookup. Package acceptance plus this lookup rejects invalid models; the native loaded query alone returns true for nonexistent models. |
+| `[engine]+214`, `005A7860` | Traffic spooler and mission-model request. Native admission `005A6FD0` checks free capacity. Requests can queue and do not immediately mean resident. |
+| `005A6EA0` | A model is resident if in traffic list `+330`, or in nontraffic list `+998` with a positive reference count. The implementation traverses each list once per pick. |
+| `005A6D20` | Each loaded list has 50 nodes. Nontraffic storage is `+5B0..+998`, twenty bytes per node. |
+| `008D1380`, call at `008D1475` | Vehicle construction requests its own model reference. Transfer a prefetch lease by releasing exactly one reference after this succeeds. |
+| `008D4B50`, call at `008D4F8A`, `005A78D0` | Vehicle destruction releases its own reference. The last release queues native unload; the mod never evicts a visible car's model. |
+| `0074B7A0`, getter call `0074B8B6`, restore `0074BA20` | Replay captures model reference counts. Exclude the mod's transient lease from capture and cancel it before restore, so replay cannot recreate an ownerless lease. |
+| `005A7360`, `0076FDF0` | Native reset and traffic-set change. Clear or cancel temporary ownership with these transitions. |
+| `0077B2C6` | Native failed-spawn epilogue. When no eligible model is resident, return null before allocation, with the original stack cleanup. |
+
+The hook reserves the native mission pot from prepared Lua data, one player
+model and the interesting-vehicle manager's ten-model maximum at `007EB860`.
+For each set/frequency, automatic added-model capacity is:
+
+```
+max(0, min(vehicle_slots - native_list_count - mission_pot_max - 1,
+           50 - mission_pot_max - 1 - 10))
+```
+
+A numeric user streaming budget can lower that capacity. All resident package
+models count toward it, including models owned by other systems. Native
+admission remains authoritative. There is one temporary prefetch lease, matching
+the loader's single current-request state at `+DAC/+D9C`. These are capacity
+reserves derived from native data, not fitted traffic-population targets.
+
+## Selection and file contract
+
+Use the existing manager's road-weight rules over the entire selected pool.
+For each spawn, draw from those full weights with the native seeded RNG.
+Request an unavailable choice if there is room and no prefetch is outstanding.
+While it loads, draw among resident models in the same native/added group
+using the next RNG result. If that group is cold, temporarily use the other
+group. With both groups resident, the configured group shares remain intact.
+Model shares during loading depend on residency; preview shares describe the
+full configured pool, not a guarantee for each short stretch of road.
+
+The file starts with `DSFPOOL1`, then row, pair and package-ID counts. Package
+IDs are u32. Rows are 36 bytes: eight u32 fields for set hash, frequency,
+native start/count, native fingerprint, choice start/count and live capacity,
+then float total. Pairs are twelve bytes: model ID, float weight and flags
+for package model or native model added from another set. Reuse identical
+pair blocks across rows. Reject invalid bounds, nonfinite/negative weights,
+unknown flags and IDs outside the package base-ID domain below 1000.
+
+FNV-1a over the original twelve-byte range and its eight-byte pairs detects
+stale or externally changed native weights. A mismatch leaves that row native.
+The separate binary marker `DSFCARS-TRAFFIC-POOLS: 1` lets the manager detect
+support without changing car-package capabilities or rebuilding car assets.
+Patch sites are checked as a group before installation; missing pool files
+install no traffic hooks. The original native 40-entry selector buffer never
+receives the large pool.
+
+## Verification so far
+
+The mapped-executable fixture runs the actual native RNG/picker for 10,000
+full-pool seeds and 10,000 resident-filtered seeds. Another 10,000 seeds
+check that residency fallback preserves the selected native/added group.
+It exercises actual native request/release counts, last-release unload
+queuing, replay capture and restore, native reset, the no-model spawn
+epilogue, malformed files and atomic patch preflight. All pass in
+`out/runtime-pool/build-v3.log`.
+
+Python tests verify all 721 candidates in serialized rows and previews,
+distinct pools for chapters sharing native ranges, unchanged original AI,
+legacy-copy removal, plugin compatibility and existing share/disable rules.
+`out/runtime-pool/python-runtime.log` records 36 targeted tests passing.
+The full suite passed 774 tests with lint, formatting and ratchet checks in
+`out/runtime-pool/tests-full.log`. The tracked branch's native test passes
+in `out/runtime-pool/build-tracked.log`. The withdrawn Tk window check in
+`out/runtime-pool/gui-smoke.log` confirms 721 entries for every chapter.
+
+The 24-model prototype drove in `vm1-20261110-110943` without a recorded
+fault. It made 25 prefetch requests and 24 native reference handoffs.
+The full 721-model binary has 280 context rows and 109,917 deduplicated
+weighted choices in 1,331,988 bytes. Every story chapter has 721 candidates;
+the combined 60-slot test has 23 to 26 added models of streaming capacity.
+
+The first full-roster run, `vm1-20261110-114332`, transferred 19 distinct
+models but its driving probe stopped during chase view and the screen went
+black. Rendering continued and the harness recorded no crash. This is not
+accepted as a successful drive. Full-roster runtime validation remains open.
+
+The updated group-preserving selector, `vm1-20261110-150100`, drove the
+vanilla probe with 99 speed samples before the same black-screen stall.
+Twenty distinct primary prefetches transferred and one additional package
+model was constructed. A read-only spooler snapshot at 15:07:03 showed
+18 traffic nodes and 28 nontraffic nodes, state zero and an empty pending
+queue. The outstanding prefetch, model 801, had one resident reference.
+Provider maps had crossed their 45 inline nodes. This correlation does not
+establish whether the map extension, loading callbacks or another subsystem
+caused the stall. A matched test using the native 45-node capacity is next.
