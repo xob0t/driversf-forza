@@ -1969,6 +1969,8 @@ def _link_or_copy(src, dst) -> None:
 
 
 def cmd_build(args) -> None:
+    """port_batch build: plan the selection, take what earlier builds and the car store
+    have, convert the rest, then merge, lint and pack every car (finish)."""
     started = time.time()
     timings = {}
     dsf, isos, cars, dbs = common(args)
@@ -1981,7 +1983,44 @@ def cmd_build(args) -> None:
     work.mkdir(exist_ok=True)
     port_options = shlex.split(args.port if args.port is not None else DEFAULT_PORT_OPTIONS, posix=True)
     port_args = port_car_args(["--dsf", str(dsf), "--out", str(archive), "--car", "X"] + port_options)
+    progress = getattr(args, "progress", None)
 
+    picks, skipped, root_limit = plan_build(args, dsf, isos, cars, dbs)
+    warm_caches(dsf, port_args)
+    timings["plan"] = round(time.time() - started, 1)
+
+    jobs = build_jobs(picks, dsf, isos, args.cache, port_options, out_dir)
+    store, reuse, before = open_reuse(args, work)
+    t = time.time()
+    reused = take_earlier(jobs, work, resume=args.resume, reuse=reuse)
+    if reuse is not None:
+        timings["reuse_check"] = round(time.time() - t, 1)
+    for job in jobs:
+        job["requested_options"] = list(job["port_options"])
+    t = time.time()
+    args.jobs = gentle.jobs(args.jobs)
+    converted = convert_cars(jobs, reused, work, args.jobs, reuse, before=before, progress=progress)
+    results = {**reused, **converted}
+    timings["convert"] = round(time.time() - t, 1)
+    if reuse is not None:
+        verify_reused(args, reuse, jobs, work, results, timings)
+    if store is not None:
+        t = time.time()
+        store_cars(store, reuse, jobs, work, results)
+        timings["store"] = round(time.time() - t, 1)
+    ok, failed = split_results(picks, skipped, results)
+    pack = open_pack_reuse(args, dsf, out_dir, root_limit, reuse, store)
+    try:
+        finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
+    finally:
+        if pack is not None and pack.recorder is not None:
+            pack.recorder.stop()
+
+
+def plan_build(args, dsf: Path, isos: list[Path], cars: dict, dbs: dict[str, Path]) -> tuple[list, list, int]:
+    """build's plan: (the selected cars with their IDs, the ones left out with their notes,
+    the root limit). IDs are given over the whole selection; with --affected only the cars
+    a change since --base affects stay. The plan is printed and sent as the plan event."""
     picks = select(args, cars, dsf, dbs)
     skipped = [p for p in picks if p.notes]
     picks = [p for p in picks if not p.notes]
@@ -2001,14 +2040,18 @@ def cmd_build(args) -> None:
         if not picks:
             raise SystemExit("no car of the selection is affected")
     print_plan(picks + skipped)
-    progress = getattr(args, "progress", None)
     emit(
-        progress,
+        getattr(args, "progress", None),
         "plan",
         cars=[p.media for p in picks],
         skipped=[{"media": p.media, "error": "; ".join(p.notes)} for p in skipped],
     )
-    # Warm the shared caches once so workers only read them.
+    return picks, skipped, root_limit
+
+
+def warm_caches(dsf: Path, port_args) -> None:
+    """Fill the caches every worker reads once, so the workers only read them: the host
+    survey, the handling fleet (--handling dsf) and the vanilla sound banks' index."""
     from dsfforza.build import host_select
 
     host_select.survey(dsf)
@@ -2020,9 +2063,15 @@ def cmd_build(args) -> None:
         from dsfforza.convert import engine_sound
 
         engine_sound.vanilla_index(dsf)  # templates and reserved Wwise IDs (out/cache/sound/vanilla-banks.json)
-    timings["plan"] = round(time.time() - started, 1)
 
-    jobs = [
+
+def build_jobs(
+    picks: list[Pick], dsf: Path, isos: list[Path], cache: Path, port_options: list[str], out_dir: Path
+) -> list[dict]:
+    """A worker job per car: the car and its ID, the inputs and port_car options
+    (fingerprint.job_key reads them), and where its outputs go (out_dir/work, out_dir/sound)."""
+    work = out_dir / "work"
+    return [
         {
             "media": p.media,
             "game": p.game,
@@ -2032,7 +2081,7 @@ def cmd_build(args) -> None:
             "spool_id": p.spool_id,
             "dsf": str(dsf),
             "game_dir": str(game_from_dsf(dsf)),
-            "cache": str(args.cache),
+            "cache": str(cache),
             "isos": [str(i) for i in isos],
             "port_options": port_options,
             "sound_dir": str(out_dir / "sound"),
@@ -2041,11 +2090,16 @@ def cmd_build(args) -> None:
         }
         for p in picks
     ]
-    reused = {}
+
+
+def open_reuse(args, work: Path) -> tuple[object, Reuse | None, bool]:
+    """(the car store every worktree on the PC shares, the Reuse that takes cars from it and
+    from the --reuse builds, --before). The store is None with --no-store (or
+    DSFFORZA_STORE=off), the Reuse None without a store and --reuse. With --before the
+    Reuse checks the store's cars against --base's code, not this checkout's."""
     from dsfforza.build import carstore
 
-    # The car store every worktree on the PC shares (carstore.py): cars converted anywhere
-    # from the same job, inputs and code are taken, not converted again.
+    # Cars converted anywhere from the same job, inputs and code are taken, not converted again.
     store = None if getattr(args, "no_store", False) else carstore.Store.default()
     before = getattr(args, "before", False)
     if before and (store is None or getattr(args, "reuse", None)):
@@ -2059,55 +2113,77 @@ def cmd_build(args) -> None:
         base = base_rev(args)
         reuse.checker = fingerprint.Checker(units=fingerprint.GitUnits(base))
         print(f"--before: every car from the car store as {base[:10]}'s code made it")
-    t = time.time()
-    for job in jobs:  # results of an earlier run: reuse (--resume, --reuse) or drop
-        old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
-        if args.resume and old_job.exists() and old_report.exists() and Path(job["chunk"]).exists():
-            try:
-                earlier = json.loads(old_job.read_text(encoding="utf-8"))
-                report = json.loads(old_report.read_text(encoding="utf-8"))
-            except ValueError:  # cut short by an earlier crash: build the car again
-                earlier, report = {}, {}
-            same = (
-                all(earlier.get(k) == job[k] for k in ("spool_id", "game", "dsf"))
-                and earlier.get("requested_options", earlier.get("port_options")) == job["port_options"]
-            )
-            if same and report.get("ok"):
-                reused[job["media"]] = report
-                continue
-        # Everything an earlier run left for this car, so nothing stale is read as this run's.
-        for name in WORK_FILES + ("tmp", "json.tmp", "fp.json.tmp"):
-            (work / f"{job['media']}.{name}").unlink(missing_ok=True)
+    return store, reuse, before
+
+
+def resumed_report(job: dict, work: Path) -> dict | None:
+    """--resume: the report of the car when an earlier run in this folder built it with the
+    same ID, game, vanilla archive and options, else None."""
+    old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
+    if not (old_job.exists() and old_report.exists() and Path(job["chunk"]).exists()):
+        return None
+    try:
+        earlier = json.loads(old_job.read_text(encoding="utf-8"))
+        report = json.loads(old_report.read_text(encoding="utf-8"))
+    except ValueError:  # cut short by an earlier crash: build the car again
+        return None
+    same = (
+        all(earlier.get(k) == job[k] for k in ("spool_id", "game", "dsf"))
+        and earlier.get("requested_options", earlier.get("port_options")) == job["port_options"]
+    )
+    return report if same and report.get("ok") else None
+
+
+def clear_work(work: Path, media: str) -> None:
+    """Remove everything an earlier run left in work/ for a car (its work files and
+    half-written temporaries), so nothing stale is read as this run's."""
+    for name in WORK_FILES + ("tmp", "json.tmp", "fp.json.tmp"):
+        (work / f"{media}.{name}").unlink(missing_ok=True)
+
+
+def take_earlier(jobs: list[dict], work: Path, *, resume: bool, reuse: Reuse | None) -> dict[str, dict]:
+    """{media: report} of the cars an earlier build made: with --resume this folder's own
+    (resumed_report), else what `reuse` copies from the --reuse builds and the car store.
+    The other cars' leftovers in work/ are removed."""
+    reused = {}
+    for job in jobs:
+        report = resumed_report(job, work) if resume else None
+        if report is not None:
+            reused[job["media"]] = report
+            continue
+        clear_work(work, job["media"])
         if reuse is not None:
             report = reuse.take(job)
             if report is not None:
                 reused[job["media"]] = report
-    if reuse is not None:
-        timings["reuse_check"] = round(time.time() - t, 1)
-    for job in jobs:
-        job["requested_options"] = list(job["port_options"])
-    t = time.time()
+    return reused
+
+
+def convert_message(todo: int, jobs: int, reused: dict, reuse: Reuse | None) -> str:
+    """The line build prints before converting: how many cars, how many at a time and at
+    which priority, and where the reused ones came from."""
+    priority = "Idle priority: out/gentle" if gentle.enabled() else "Below Normal priority"
+    text = f"building {todo} cars, {jobs} at a time ({priority})"
+    if not reused:
+        return text
+    if reuse is not None and reuse.taken:
+        sources = [*map(str, reuse.sources), *([STORE] if reuse.store else [])]
+        return text + f"; {len(reused)} reused from {', '.join(sources)}"
+    return text + f"; {len(reused)} reused from the last run"
+
+
+def convert_cars(
+    jobs: list[dict], reused: dict, work: Path, parallel: int, reuse: Reuse | None, *, before: bool, progress
+) -> dict[str, dict]:
+    """Convert every car not taken from an earlier build (run_workers, the longest first),
+    and remember their times and attempts for later builds. With --before none is
+    converted: each is a failure, "not in the car store". Returns {media: report}."""
     todo = [j for j in jobs if j["media"] not in reused]
     missing = {}
     if before:
         missing = {j["media"]: reuse.rebuilt.get(j["media"], "not in the store") for j in todo}
         todo = []
-    args.jobs = gentle.jobs(args.jobs)
-    print(
-        f"building {len(todo)} cars, {args.jobs} at a time ("
-        + ("Idle priority: out/gentle" if gentle.enabled() else "Below Normal priority")
-        + ")"
-        + (
-            f"; {len(reused)} reused"
-            + (
-                f" from {', '.join([*map(str, reuse.sources), *([STORE] if reuse.store else [])])}"
-                if reuse is not None and reuse.taken
-                else " from the last run"
-            )
-            if reused
-            else ""
-        )
-    )
+    print(convert_message(len(todo), parallel, reused, reuse))
     if reuse is not None:
         reuse.summary()
     emit(
@@ -2116,71 +2192,75 @@ def cmd_build(args) -> None:
         todo=[j["media"] for j in todo],
         reused=sorted(reused),
         rebuilt=dict(reuse.rebuilt) if reuse is not None else {},
-        jobs=args.jobs,
+        jobs=parallel,
         gentle=gentle.enabled(),
     )
     for job in todo:
         job["probe_attempts"] = remembered_attempts(job)
-    converted = run_workers(longest_first(todo), work, args.jobs, progress=progress)
+    converted = run_workers(longest_first(todo), work, parallel, progress=progress)
     for media, why in missing.items():  # --before: no car in the store made by --base's code
         converted[media] = {"media": media, "ok": False, "cause": "not in the car store", "error": why}
     remember_seconds(converted.values())
     remember_attempts(converted.values())
-    results = {**reused, **converted}
-    timings["convert"] = round(time.time() - t, 1)
-    if reuse is not None:
-        t = time.time()
-        # A rebuilt car that differs from its reused output stops the build (--verify-mismatch
-        # stop), or (rebuild, dsff install) its fresh copy is kept and its build's other cars
-        # are converted again.
-        redo = reuse.verify(jobs, args.jobs, progress=progress, on_mismatch=getattr(args, "verify_mismatch", "stop"))
-        timings["verify_reuse"] = round(time.time() - t, 1)
-        if redo:
-            import shutil
+    return converted
 
-            t = time.time()
-            by_media = {j["media"]: j for j in jobs}
-            for media in redo:
-                for name in WORK_FILES + ("tmp", "json.tmp", "fp.json.tmp"):
-                    (work / f"{media}.{name}").unlink(missing_ok=True)
-                shutil.rmtree(Path(by_media[media]["sound_dir"]) / media, ignore_errors=True)
-                reused.pop(media, None)
-            results.update(run_workers([by_media[m] for m in redo], work, args.jobs, progress=progress))
-            timings["convert_again"] = round(time.time() - t, 1)
-        for media in reuse.mismatch.get("fresh_copies", []):
-            fresh = Path(work / f"{media}.json")
-            with contextlib.suppress(OSError, ValueError):
-                results[media] = json.loads(fresh.read_text(encoding="utf-8"))
-        args.reuse_record = reuse.record()
 
-    if store is not None:
-        # The cars this build converted, and those it took from elsewhere (--reuse, --resume),
-        # go into the store for every other build (the same car is kept once).
+def verify_reused(args, reuse: Reuse, jobs: list[dict], work: Path, results: dict, timings: dict) -> None:
+    """--verify-reuse: a few reused cars converted again (Reuse.verify). One that differs
+    stops the build (--verify-mismatch stop), or (rebuild, dsff install) its fresh copy is
+    kept and its build's other cars are converted again; `results` gets their reports.
+    The reuse record goes to args.reuse_record for the report."""
+    progress = getattr(args, "progress", None)
+    t = time.time()
+    redo = reuse.verify(jobs, args.jobs, progress=progress, on_mismatch=getattr(args, "verify_mismatch", "stop"))
+    timings["verify_reuse"] = round(time.time() - t, 1)
+    if redo:
+        import shutil
+
         t = time.time()
-        for job in jobs:
-            if results.get(job["media"], {}).get("ok") and (
-                reuse is None or reuse.taken_from.get(job["media"]) != STORE
-            ):
-                store.put(work, job["media"], Path(job["sound_dir"]))
-        store.evict()
-        timings["store"] = round(time.time() - t, 1)
+        by_media = {j["media"]: j for j in jobs}
+        for media in redo:
+            clear_work(work, media)
+            shutil.rmtree(Path(by_media[media]["sound_dir"]) / media, ignore_errors=True)
+        results.update(run_workers([by_media[m] for m in redo], work, args.jobs, progress=progress))
+        timings["convert_again"] = round(time.time() - t, 1)
+    for media in reuse.mismatch.get("fresh_copies", []):
+        fresh = Path(work / f"{media}.json")
+        with contextlib.suppress(OSError, ValueError):
+            results[media] = json.loads(fresh.read_text(encoding="utf-8"))
+    args.reuse_record = reuse.record()
+
+
+def store_cars(store, reuse: Reuse | None, jobs: list[dict], work: Path, results: dict) -> None:
+    """Put the cars this build converted, and those it took from elsewhere (--reuse,
+    --resume), into the car store for every other build (the same car is kept once); not
+    the ones it took from the store. Then let the store evict what it doesn't keep."""
+    for job in jobs:
+        if results.get(job["media"], {}).get("ok") and (reuse is None or reuse.taken_from.get(job["media"]) != STORE):
+            store.put(work, job["media"], Path(job["sound_dir"]))
+    store.evict()
+
+
+def split_results(picks: list[Pick], skipped: list[Pick], results: dict) -> tuple[list[dict], list[dict]]:
+    """(the built cars' reports in plan order, the failures: the cars that failed, then the
+    ones the plan left out, cause "not selected")."""
     ok = [results[p.media] for p in picks if results.get(p.media, {}).get("ok")]
     failed = [results[p.media] for p in picks if not results.get(p.media, {}).get("ok")]
     failed += [{"media": p.media, "ok": False, "cause": "not selected", "error": "; ".join(p.notes)} for p in skipped]
-    pack = None
-    if not getattr(args, "no_pack_reuse", False):
-        from dsfforza.build import pack_reuse
+    return ok, failed
 
-        # This folder's own earlier pack (--resume, a rerun) and the --reuse builds'.
-        settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
-        pack = pack_reuse.PackReuse(
-            out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf), store=store
-        )
-    try:
-        finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
-    finally:
-        if pack is not None and pack.recorder is not None:
-            pack.recorder.stop()
+
+def open_pack_reuse(args, dsf: Path, out_dir: Path, root_limit: int, reuse: Reuse | None, store):
+    """The pack_reuse.PackReuse that takes what didn't change from this folder's own earlier
+    pack (--resume, a rerun) and the --reuse builds' packs, or None with --no-pack-reuse."""
+    if getattr(args, "no_pack_reuse", False):
+        return None
+    from dsfforza.build import pack_reuse
+
+    settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
+    return pack_reuse.PackReuse(
+        out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf), store=store
+    )
 
 
 def finish(
