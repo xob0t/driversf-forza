@@ -1379,6 +1379,7 @@ def lint_all(
     cars: list[dict],
     parallel: int,
     log=print,
+    *,
     facts: bool = False,
     defined: set[int] | frozenset = frozenset(),
     records: list | None = None,
@@ -2323,7 +2324,7 @@ def finish(
         t = time.time()
         pack.save(
             merge_failed,
-            pack_outputs(out_dir, cars_out, args.gui) + pack.image_outputs(),
+            pack_outputs(out_dir, cars_out, gui=args.gui) + pack.image_outputs(),
             timings.get("gui_error"),
         )
         timings["pack_record"] = round(time.time() - t, 1)
@@ -2387,7 +2388,7 @@ def gui_isos(args) -> list[Path]:
     return [Path(i) for i in (getattr(args, "iso", None) or forza_roster.default_images())]
 
 
-def pack_outputs(out_dir: Path, cars: list[dict], gui: bool) -> list[str]:
+def pack_outputs(out_dir: Path, cars: list[dict], *, gui: bool) -> list[str]:
     """The files a pack of `cars` wrote, relative to out_dir (dngvehicles.json and .lua are
     written every time): the archive, or its merge plan when it wasn't written, gui/ (not
     the previews of cars no longer in it) and pack/pictures/."""
@@ -2427,7 +2428,7 @@ def verify_pack(args, dsf, out_dir, work, ok, failed, port_args, port_options, r
 
     gui_assets._TEXT_PLATES.clear()  # drawn again, not taken from the pack being checked
     finish(check, dsf, folder, work, ok, failed, port_args, port_options, {}, time.time(), results, pack=None)
-    diffs = compare_packs(out_dir, folder, args.gui)
+    diffs = compare_packs(out_dir, folder, gui=args.gui)
     if diffs:
         raise SystemExit(
             f"--verify-pack: the pack differs from a full pack of the same cars in {len(diffs)} file(s): "
@@ -2438,7 +2439,7 @@ def verify_pack(args, dsf, out_dir, work, ok, failed, port_args, port_options, r
     shutil.rmtree(folder, ignore_errors=True)
 
 
-def compare_packs(mine: Path, full: Path, gui: bool) -> list[str]:
+def compare_packs(mine: Path, full: Path, *, gui: bool) -> list[str]:
     """What differs between two packs of the same cars: the archive, the Lua, the manifest
     (but its time and archive path) and every file of the full pack's gui/."""
     from dsfforza.build import pack_reuse
@@ -2470,10 +2471,10 @@ def compare_packs(mine: Path, full: Path, gui: bool) -> list[str]:
                 rel = path.relative_to(full).as_posix()
                 if not same(mine / rel, path):
                     diffs.append(rel)
-        expected = set(pack_outputs(full, json.loads((full / "dngvehicles.json").read_text())["cars"], gui))
+        expected = set(pack_outputs(full, json.loads((full / "dngvehicles.json").read_text())["cars"], gui=gui))
         extra = [
             rel
-            for rel in pack_outputs(mine, json.loads((mine / "dngvehicles.json").read_text())["cars"], gui)
+            for rel in pack_outputs(mine, json.loads((mine / "dngvehicles.json").read_text())["cars"], gui=gui)
             if rel.startswith("gui/") and rel not in expected
         ]
         diffs += [f"{rel} (not in the full pack)" for rel in extra]

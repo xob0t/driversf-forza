@@ -433,9 +433,9 @@ def test_without_the_archive_the_pack_lints_and_draws_the_same():
         full = files_of(root / "with")
         assert full.pop("dngvehicles.sp")
         assert mine == full
-        assert port_batch.compare_packs(root / "b", root / "full", True) == []
+        assert port_batch.compare_packs(root / "b", root / "full", gui=True) == []
         # A pack with the archive against one without isn't the same.
-        assert port_batch.compare_packs(root / "with", root / "full", True) == ["dngvehicles.sp"]
+        assert port_batch.compare_packs(root / "with", root / "full", gui=True) == ["dngvehicles.sp"]
 
 
 def test_compare_packs_names_what_differs():
@@ -445,10 +445,10 @@ def test_compare_packs_names_what_differs():
         with Patched(Stand(root / "work")):
             pack(root, "a", results)
             pack(root, "full", results, reuse=False)
-        assert port_batch.compare_packs(root / "a", root / "full", True) == []
+        assert port_batch.compare_packs(root / "a", root / "full", gui=True) == []
         (root / "a" / "gui" / "hud.lua").write_text("other\n")
         (root / "a" / "gui" / "dsfforza_other_car_00.png").write_bytes(b"x")
-        assert port_batch.compare_packs(root / "a", root / "full", True) == ["gui/hud.lua"]
+        assert port_batch.compare_packs(root / "a", root / "full", gui=True) == ["gui/hud.lua"]
 
 
 if __name__ == "__main__":
