@@ -1559,7 +1559,18 @@ def string_tables(isos: list[Path]) -> None:
                 print(f"warning: {game} string tables from {iso.name}: {type(error).__name__}: {error}")
 
 
+def vanilla_ids(dsf: Path) -> tuple[int, set[int]]:
+    """(how many root entries the vanilla archive has, the spool IDs its vehicles take)."""
+    from dsfforza.build import clone_vehicle
+    from dsfforza.formats.chnk import read_chunk
+
+    with dsf.open("rb") as stream:
+        entries = read_chunk(stream, 0).entries
+        return len(entries), clone_vehicle.taken_ids(stream, entries)
+
+
 def print_plan(picks: list[Pick]) -> None:
+    """The plan as a table: ID, car, game, year, body, drive, power, host and counterpart, notes."""
     print(f"{'ID':>4}  {'car':30} {'game':4} {'year':4}  {'body':11} {'drive':5} {'kW':>5}  host / counterpart")
     for p in picks:
         cp = f"   vanilla {p.counterpart} {p.counterpart_model}" if p.counterpart else ""
@@ -1578,11 +1589,7 @@ def print_plan(picks: list[Pick]) -> None:
 def cmd_plan(args) -> None:
     dsf, isos, cars, dbs = common(args)
     picks = select(args, cars, dsf, dbs)
-    from dsfforza.build import clone_vehicle
-    from dsfforza.formats.chnk import read_chunk
-
-    with dsf.open("rb") as stream:
-        taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
+    _, taken = vanilla_ids(dsf)
     assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id, isos)
     print_plan(picks)
     print(f"{len(picks)} cars")
@@ -1656,11 +1663,7 @@ def cmd_affected(args) -> None:
     fingerprints (carstore.affected), without building anything."""
     dsf, isos, cars, dbs = common(args)
     picks = [p for p in select(args, cars, dsf, dbs) if not p.notes]
-    from dsfforza.build import clone_vehicle
-    from dsfforza.formats.chnk import read_chunk
-
-    with dsf.open("rb") as stream:
-        taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
+    _, taken = vanilla_ids(dsf)
     assign_ids(picks, taken, args.id_policy, args.first_id, isos)
     found = affected_cars(args, picks)
     if args.write_list:
@@ -1982,15 +1985,10 @@ def cmd_build(args) -> None:
     picks = select(args, cars, dsf, dbs)
     skipped = [p for p in picks if p.notes]
     picks = [p for p in picks if not p.notes]
-    from dsfforza.build import clone_vehicle
-    from dsfforza.formats.chnk import read_chunk
-
-    with dsf.open("rb") as stream:
-        vanilla_entries = read_chunk(stream, 0).entries
-        taken = clone_vehicle.taken_ids(stream, vanilla_entries)
+    vanilla_entries, taken = vanilla_ids(dsf)
     assign_ids(picks, taken, args.id_policy, args.first_id, isos)
     root_limit = root_limit_of(args)
-    room = (root_limit - len(vanilla_entries)) // 3  # 453 root entries in the vanilla archive
+    room = (root_limit - vanilla_entries) // 3  # 453 root entries in the vanilla archive
     if len(picks) > room:
         raise SystemExit(
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
@@ -2532,11 +2530,7 @@ def cmd_remerge(args) -> None:
         report = json.loads((work / f"{c['media']}.json").read_text(encoding="utf-8"))
         if report.get("ok"):
             ok.append(report)
-    from dsfforza.build import clone_vehicle
-    from dsfforza.formats.chnk import read_chunk
-
-    with args.dsf.open("rb") as stream:
-        taken = clone_vehicle.taken_ids(stream, read_chunk(stream, 0).entries)
+    _, taken = vanilla_ids(args.dsf)
     picks = [Pick(r["media"], r["game"], None, "", {}) for r in ok]
     assign_ids(picks, taken, args.id_policy, args.first_id)
     for r, p in zip(ok, picks):
