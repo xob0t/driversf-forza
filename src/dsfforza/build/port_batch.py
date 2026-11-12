@@ -1000,10 +1000,7 @@ def longest_first(jobs: list[dict], cache: Path | None = None) -> list[dict]:
     never built counts as the median), so no long car starts last and runs on alone
     while the other workers idle: 20 cars on 8 workers finish about 13% sooner. The
     order changes nothing in a car's output, and the merge sorts by ID."""
-    try:
-        seconds = json.loads((cache or SECONDS_CACHE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        seconds = {}
+    seconds = read_cache(cache or SECONDS_CACHE)
     known = sorted(v for v in (seconds.get(_car_key(j)) for j in jobs) if isinstance(v, int | float))
     if not known:
         return list(jobs)
@@ -1018,8 +1015,8 @@ def remembered_attempts(job: dict, cache: Path | None = None) -> int | None:
     """How many conversion attempts the job's car took in an earlier build (remember_attempts),
     or None: port_car.build_car converts the attempts before that one's full entry alone."""
     try:
-        return json.loads((cache or ATTEMPTS_CACHE).read_text(encoding="utf-8")).get(_car_key(job))
-    except (OSError, ValueError, AttributeError):
+        return read_cache(cache or ATTEMPTS_CACHE).get(_car_key(job))
+    except AttributeError:  # not a JSON object
         return None
 
 
@@ -1035,20 +1032,10 @@ def remember_attempts(reports, cache: Path | None = None) -> None:
         retried = len(attempts) > 1 and all(set(a.get("problems", {})) <= {"0"} for a in attempts)
         changes[_car_key(r)] = len(attempts) if retried else None
     path = cache or ATTEMPTS_CACHE
-    try:
-        known = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        known = {}
+    known = read_cache(path)
     updated = {k: v for k, v in {**known, **changes}.items() if v}
-    if updated == known:
-        return
-    from dsfforza.build.port_car import write_atomic
-
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(path, json.dumps(dict(sorted(updated.items())), indent=0).encode())
-    except OSError as error:  # only how a later build converts it depends on it, not what
-        print(f"note: {path.name} not written: {error}")
+    if updated != known:
+        write_cache(path, updated)
 
 
 def remember_seconds(reports, cache: Path | None = None) -> None:
@@ -1057,17 +1044,29 @@ def remember_seconds(reports, cache: Path | None = None) -> None:
     if not new:
         return
     path = cache or SECONDS_CACHE
-    try:
-        seconds = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        seconds = {}
+    seconds = read_cache(path)
     seconds.update(new)
+    write_cache(path, seconds)
+
+
+def read_cache(path: Path) -> dict:
+    """A cache of earlier builds (SECONDS_CACHE, ATTEMPTS_CACHE): its JSON, {} when it is
+    missing or unreadable."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_cache(path: Path, data: dict) -> None:
+    """Write a cache of earlier builds, sorted by key. Not writing it is only a note: the
+    caches steer how a later build runs (its order, a car's first attempt), not what it makes."""
     from dsfforza.build.port_car import write_atomic
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(path, json.dumps(dict(sorted(seconds.items())), indent=0).encode())
-    except OSError as error:  # only the order of a later build depends on it
+        write_atomic(path, json.dumps(dict(sorted(data.items())), indent=0).encode())
+    except OSError as error:
         print(f"note: {path.name} not written: {error}")
 
 
@@ -1652,10 +1651,15 @@ def affected_cars(args, picks: list[Pick], log=print) -> dict[str, dict]:
         for why in found[media]["why"]:
             reasons.setdefault(why, []).append(media)
     for why, cars in sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        log(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
+        log(f"  {why}: {len(cars)} ({name_list(cars, 6)})")
     if by["unknown"]:
-        log(f"  unknown: {', '.join(by['unknown'][:12])}{', ...' if len(by['unknown']) > 12 else ''}")
+        log(f"  unknown: {name_list(by['unknown'], 12)}")
     return found
+
+
+def name_list(names: list[str], limit: int) -> str:
+    """The first `limit` names, comma-separated, and ", ..." when there are more."""
+    return ", ".join(names[:limit]) + (", ..." if len(names) > limit else "")
 
 
 def cmd_affected(args) -> None:
@@ -1834,7 +1838,7 @@ class Reuse:
         for media, why in self.rebuilt.items():
             reasons.setdefault(why, []).append(media)
         for why, cars in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
-            print(f"  {why}: {len(cars)} ({', '.join(cars[:6])}{', ...' if len(cars) > 6 else ''})")
+            print(f"  {why}: {len(cars)} ({name_list(cars, 6)})")
 
     def verify(self, jobs: list[dict], parallel: int, progress=None, on_mismatch: str = "stop") -> list[str]:
         """Convert a random few of the reused cars again into work/verify/ and require the
@@ -2431,12 +2435,12 @@ def write_manifest(
     """dngvehicles.json (port_car's manifest format, plus "batch": the ID policy, the
     options and the failures) and dngvehicles.lua (port_car.lua_snippet). Returns the
     manifest's path."""
-    from dsfforza.build import port_car
+    from dsfforza.build import pack_reuse, port_car
 
     manifest = {
         "archive": str(archive),
         "vanilla": str(dsf),
-        "vanilla_sha256": sha256(dsf),
+        "vanilla_sha256": pack_reuse.sha256_file(dsf).upper(),
         "host": port_args.host,
         "sound_host": port_args.sound_host,
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -2685,14 +2689,6 @@ def cmd_remerge(args) -> None:
     finish(
         args, args.dsf, args.out, work, ok, failed, port_args, port_options, {}, started, {r["media"]: r for r in ok}
     )
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while block := handle.read(1 << 22):
-            digest.update(block)
-    return digest.hexdigest().upper()
 
 
 def write_report(
