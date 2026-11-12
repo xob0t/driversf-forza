@@ -1,6 +1,6 @@
 # Handling (VO3D) and generating it from Forza data
 
-Updated: 2026-11-05
+Updated: 2026-11-12 (CoG height offset, #520)
 
 Static analysis of `Driver.exe` 1.04 and the vanilla `dngvehicles.sp`, plus
 the FH1 and FM4 `gamedb.slt` databases, and in-game measurements with the
@@ -558,7 +558,7 @@ code, the issue saying what its derivation needs.
 | 15 | p366, longitudinal stiffness A | 366, 367 | ridge fit prediction | fitted | kept, #517 |
 | 16 | aerodynamic drag M: host x mass ratio | 509 | chosen so light cars on heavy hosts reach their top speed | fitted | kept, #516 |
 | 17 | springs, dampers, grip M | 1, 2, 368 | host x mass ratio keeps the host's ride frequency and grip in g | derived | kept |
-| 18 | CoG height CY = hub + `CMHeight` - tyre radius + 0.052 | 30, 599 | the 0.052 m offset fitted on the pairs | fitted (offset) | kept, #520 |
+| 18 | CoG height CY = hub + `CMHeight` - tyre radius + 0.052 | 30, 599 | the 0.052 m offset fitted on the pairs | fitted (offset) | kept, #520 (static round 2026-11-12: no static reference explains it, "CoG height offset: static round") |
 | 19 | CoG fore/aft CZ from `CMBackFront` | 32 | static moments | derived | kept (its clamp is row 20) |
 | 20 | front weight clamped to 0.42..0.58 | 32, 345, 505 | vanilla range | fitted | kept, #519 |
 | 21 | axle balance W = 0.9448 - 0.8298 fw; spring scale 3.035 - 3.812 fw | 345, 505 | regressions over the fleet | fitted | kept, #519 |
@@ -573,6 +573,63 @@ code, the issue saying what its derivation needs.
 | 30 | `handling_tune`: per-car p18 and p345 toward vanilla 0-60 and rotation targets; the Huayra's steering set | 18, 345, steering | closed-loop calibration | fitted (per car) | kept, #516 |
 | 31 | HUD stat bars: Speed, Strength, Drift regressions, clamped 0.05..1 | vehicleStats | fits over 137 vanilla cars | fitted | kept, #521 |
 | 32 | `--handling forza`: `TOP_SPEED_FIT`, `TORQUE_FIT`, `CURVE_SCALE`, `CLAMP`, gear compression, `MASS_SCALED` | many | pair fits, vanilla ranges | fitted | kept (not the default; rule Z takes only its mass, inertia, redline, radius, lock and CoG) |
+
+### CoG height offset: static round (2026-11-12, #520)
+
+A static RE round on rule CY's 0.052 m (`handling_dsf.COG_HEIGHT_OFFSET`). No build or game run.
+Tool: `tools/re/cog_offset.py`. Result: **ruled out statically**. No reference that the DSF code
+or the data defines accounts for the offset. The pairs can't give one either, because
+Reflections' p30 is hand-set.
+
+**p30 is a hand-entered value (confirmed-static, 140 vanilla vehicles).** All 140 four-wheeled
+vehicles' p30 are whole centimetres, and 54% are multiples of 5 cm (the pairs: 100% and 50%).
+Examples: the Mito 0.30, the F-350 0.40, the Countach -0.25, the GT-R -0.17, the Scirocco 0.20.
+The engine takes it as it is: `FUN_008902C0` stores (0, -p30, -p32) at spec+0x35F0, and
+`FUN_0088E310` adds that to every hierarchy position ("Mass, inertia, geometry"). So p30 is
+Reflections' rounded estimate of each car's CoG, and the pairs' residual against Forza's
+`CMHeight` is the spread of those estimates.
+
+**The residual against candidate references (48 pairs).** The residual is
+`p30 - (hub + CMHeight - drive tyre radius)`: median 0.050 m, IQR 0.031..0.076, sd 0.048. A
+candidate that were the offset would show slope 1, intercept 0, and a spread of
+residual - candidate well under 0.048.
+
+| Candidate | Where it comes from | Median | r | Slope | sd(residual - x) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| DSF static sag max(p4, 17 m / (100 p1)) | `FUN_0088D750`; would hold if the UPVH hubs were the unloaded pose | 0.107 | -0.13 | -0.22 | 0.059 |
+| ride offset p25 | `FUN_0088D620` | 0 | -0.04 | -0.13 | 0.051 |
+| dead zone p4 | `FUN_008BA900` | 0 | -0.04 | -0.07 | 0.055 |
+| Forza radius - p360 | DSF's own drive radius as the ground | 0.004 | +0.18 | +0.66 | 0.047 |
+| BlockDimY / 2 | `CMHeight` from the inertia box's centre | 0.429 | -0.06 | -0.05 | 0.073 |
+| `PristineBoundingBoxMinY` | `CMHeight` from the body's lowest point | -0.333 | -0.15 | -0.32 | 0.056 |
+| `ModelFront/RearStockRideHeight` | `CMHeight` from the floor at ride height | 0.149 / 0.153 | -0.16 | -0.11 / -0.12 | 0.088 |
+| `BottomCenterWheelbasePos` y, z | the gamedb's body reference point | 0 / -0.009 | -0.07 / -0.01 | | 0.051 / 0.103 |
+| `CMHeight` itself (a proportional offset) | | 0.481 | -0.32 | -0.20 | 0.103 |
+
+None comes close. The DSF-side sag, which #520 named as the likeliest, has the wrong sign of
+correlation and twice the median. The rest pose is no help either: the drawn wheel at rest sits
+within a few mm of the hub table on vanilla cars ("Wheel clearance" in wheels.md: median +4 mm
+front, -8 mm rear), so the hub table is the drawn rest pose to that accuracy (the physics' contact is the open item below).
+`BottomCenterWheelbasePosx` (r +0.58) is nonzero on a few cars only and lateral; it can't be a
+height reference.
+
+**What is left, and isn't static on this PC:**
+
+- What Forza's `CMHeight` is measured from. That takes the FM4 body setup that reads
+  `List_UpgradeCarBodyWeight` (forza-recomp.md). Its generated source isn't on this PC now, and
+  building it is a full recompilation. If it is the ground at rest, rule CY's physical part (no
+  offset) is already the derived rule.
+- Where DSF's physics puts the ground under the hub-table wheel at rest: the suspension's contact
+  in `FUN_008BA900`, not the drawn offset of `FUN_0088D620`. A runtime check would read a vanilla
+  car's body height over its wheels at rest (Lua `gameVehicle.matrix` and the wheel positions)
+  against p30.
+
+Prediction if both answers are "the ground at rest": p30 = hub + `CMHeight` - drive radius.
+The CoG then drops by 0.052 m on every port not on its own model's host. For example the 370Z
+(host 227) goes from -0.126 to -0.178 (Reflections: -0.110), the GT-R (228) from -0.164 to
+-0.216 (-0.170), and the Scirocco (275) from 0.248 to 0.196 (0.200). Round 3 found the CoG the
+strongest handbrake-rotation predictor, so this needs the in-game handbrake check before it
+ships.
 
 ## DSF-first mapping (default, src/dsfforza/build/handling_dsf.py)
 
