@@ -416,7 +416,7 @@ def region_map(frame: cr.Frame, region: np.ndarray) -> np.ndarray:
     return out.reshape(frame.view.height, frame.view.width)
 
 
-def tri_map(frame: cr.Frame, values: np.ndarray, see_through: bool = True) -> np.ndarray:
+def tri_map(frame: cr.Frame, values: np.ndarray, *, see_through: bool = True) -> np.ndarray:
     """(h, w) per-pixel value of the opaque triangle (or of the nearest see-through layer)."""
     size = frame.view.width * frame.view.height
     out = np.zeros(size, values.dtype)
@@ -450,7 +450,7 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
         if side == "ours":
             # What draws each pixel; under DSF window glass (plain glass kept over the lamps,
             # #379) the surface behind it, not the glass.
-            programs, behind = tri_map(frame, pair.ours_program), tri_map(frame, pair.ours_program, False)
+            programs, behind = tri_map(frame, pair.ours_program), tri_map(frame, pair.ours_program, see_through=False)
             out["programs"] = np.where((programs == PID["glass"]) & (behind != PID["none"]), behind, programs)
         for mode in view.modes:
             lt = cr.LIGHTINGS[mode]
@@ -1041,7 +1041,7 @@ def _save_images(folder: Path, images: dict, flags: list) -> None:
 
 
 def compare_car(
-    archive: Path, roots, car: dict, out: Path, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",), keep=False
+    archive: Path, roots, car: dict, out: Path, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",), *, keep=False
 ) -> dict:
     """Render, score and save one car: out/cars/<media>.json and its images (with keep,
     each view's renders too: out/cars/<media>/<view>.npz, for rescore)."""
@@ -1166,7 +1166,7 @@ def _worker(args):
     results = []
     for car in cars:
         archive = Path(car["archive"])  # the build's, or a shard of it (BuildArchives)
-        r = compare_car(archive, roots_of(archive), car, Path(out), views, size, entries, keep)
+        r = compare_car(archive, roots_of(archive), car, Path(out), views, size, entries, keep=keep)
         print(f"{car['media']}: score {r.get('score')} {r.get('error', '')} ({r.get('seconds')} s)", flush=True)
         results.append({k: r.get(k) for k in RESULT_KEYS})
     return results
@@ -1180,6 +1180,7 @@ def run(
     views=DEFAULT_VIEWS,
     size=SIZE,
     entries=("exterior",),
+    *,
     keep: bool = False,
 ) -> list[dict]:
     out.mkdir(parents=True, exist_ok=True)
@@ -1311,7 +1312,7 @@ def main(argv: list[str] | None = None) -> int:
             tuple(args.views.split(",")),
             (w, h),
             tuple(args.entries.split(",")),
-            args.keep,
+            keep=args.keep,
         )
         for r in ranking[:20]:
             print(
