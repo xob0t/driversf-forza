@@ -724,148 +724,176 @@ def flags_for(metrics: dict) -> list[dict]:
     """Flags from a car's metrics ({view: {mode: {region: m}}}, glow under "glow_<mode>"),
     each with a severity; the worst view per (region, what) is kept."""
     flags: list = []
-    L = LIMITS
     for view, modes in metrics.items():
-        day = modes.get("day", {})
-        for region, m in day.items():
+        for region, m in modes.get("day", {}).items():
             if region in LAMP_REGIONS and view in LAMP_VIEWS_SKIP:
                 continue
-            limit = L["cockpit_missing"] if region == fr.COCKPIT else L["missing"]
-            if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > limit:
-                # (the cockpit: weighted down: the reference's shell is the finest LOD, ours the
-                # converter's coarser one, so the bonnet seen through the windscreen differs on
-                # many cars by design; research/render-compare.md, "Open")
-                severity = m["missing"] * (5 if region == fr.COCKPIT else 1)
-                text = (
-                    f"{region}: {m['missing']:.0%} not drawn"
-                    if region != fr.COCKPIT
-                    else (f"cockpit: {m['missing']:.0%} covered by something Forza's hasn't")
-                )
-                _flag(flags, region, view, "missing", m["missing"], severity, text)
-            if (
-                m.get("extra") is not None
-                and region != fr.PLATES
-                and m["ours_px"] >= MIN_PIXELS * 2
-                and m["extra"] > L["extra"]
-            ):
-                _flag(flags, region, view, "extra", m["extra"], m["extra"] * 0.7, f"{region}: {m['extra']:.0%} extra")
+            _coverage_flags(flags, view, region, m)
             if "L_ours" in m:
-                d = m["L_ref"] - m["L_ours"]
-                if d > L["dark"]:
-                    _flag(
-                        flags, region, view, "dark", d, d / 40, f"{region}: too dark (L* {m['L_ours']} vs {m['L_ref']})"
-                    )
-                elif -d > (L["trims_light"] if region == fr.TRIMS else L["light"]):
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        "light",
-                        -d,
-                        -d / (15 if region == fr.TRIMS else 40),
-                        f"{region}: washed out (L* {m['L_ours']} vs {m['L_ref']})",
-                    )
-                if m["dE"] > L["colour"] and abs(d) < L["dark"]:
-                    _flag(flags, region, view, "colour", m["dE"], m["dE"] / 60, f"{region}: colour off (dE {m['dE']})")
-                if m["contrast_ref"] > 2.0:
-                    lost = 1 - m["contrast_ours"] / m["contrast_ref"]
-                    if lost > L["detail"]:
-                        _flag(flags, region, view, "detail", lost, lost, f"{region}: detail lost {lost:.0%}")
-                s = m.get("structure")
-                if s is not None and s < L["structure"] and m["contrast_ref"] > 4.0 and m["contrast_ours"] > 2.0:
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        "structure",
-                        s,
-                        (L["structure"] - s) * 1.5,
-                        f"{region}: different detail (structure {s:.2f})",
-                    )
-            if region in LAMP_REGIONS and m.get("drawn_as"):
-                bad = sum(v for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
-                if bad > L["drawn_as"]:
-                    kinds = ", ".join(f"{k} {v:.0%}" for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
-                    _flag(flags, region, view, "drawn_as", bad, bad * 1.2, f"{region}: drawn as {kinds}")
-            if region == fr.PLATES and m.get("over"):
-                # A plate on a trim may be on its holder; on a badge, a lamp or chrome it isn't.
-                over = sum(v for k, v in m["over"].items() if k in PLATE_NOT_ON)
-                if over > L["plate_over"]:
-                    where = ", ".join(f"{k} {v:.0%}" for k, v in m["over"].items() if k != fr.BODY)
-                    _flag(flags, region, view, "plate_over", over, over, f"plates: over {where}")
+                _tone_flags(flags, view, region, m)
+            _drawn_flags(flags, view, region, m)
         for mode in ("day_lit", "dark"):
-            words = mode.replace("_", " ")
             for region, g in modes.get(f"glow_{mode}", {}).items():
                 if region == "stray":
-                    if g["ours_px"] > 300 and g["ours_px"] > 3 * g["ref_px"]:
-                        _flag(
-                            flags,
-                            fr.TRIMS,
-                            view,
-                            f"stray_glow_{mode}",
-                            g["ours_px"],
-                            0.5,
-                            f"glow off the lamps ({words}): {g['ours_px']} px",
-                        )
-                    continue
-                if view in LAMP_VIEWS_SKIP:
-                    continue
-                ref_lit = g["ref_p95"] > 2 * GLOW_FLOOR and g["ref_lit_px"] >= 40
-                if ref_lit and g["ours_p95"] < GLOW_FLOOR:
-                    _flag(flags, region, view, f"no_glow_{mode}", g["ours_p95"], 1.0, f"{region}: no glow {words}")
-                    continue
-                if ref_lit and "covered" in g and max(g["covered"], g["inside"]) < L["glow_place"]:
-                    v = max(g["covered"], g["inside"])
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        f"glow_place_{mode}",
-                        v,
-                        0.6 * (1 - v),
-                        f"{region}: glows elsewhere than Forza's lamp ({words}, {g['covered']:.0%} of it)",
-                    )
-                if mode == "day_lit" and g["ours_p95"] > L["glare"] and g["ours_lit_px"] >= 60:
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        "glare_day_lit",
-                        g["ours_p95"],
-                        min(2.0, g["ours_p95"] / L["glare"]),
-                        f"{region}: white plate by day (glow p95 {g['ours_p95']:.1f})",
-                    )
-                if mode == "day_lit" and g.get("spread_ref") and g["ours_lit_px"] >= 60:
-                    flat = g["spread_ours"] / g["spread_ref"]
-                    if flat < L["flat_glow"]:
-                        _flag(
-                            flags,
-                            region,
-                            view,
-                            f"flat_glow_{mode}",
-                            flat,
-                            0.6 * (1 - flat),
-                            f"{region}: flat glow by day ({flat:.0%} of Forza's spread)",
-                        )
-                if "green_red_ours" in g:
-                    a_, b_ = max(g["green_red_ours"], 0.02), max(g["green_red_ref"], 0.02)
-                    off = abs(math.log(a_ / b_))
-                    if off > L["glow_hue"]:
-                        _flag(
-                            flags,
-                            region,
-                            view,
-                            f"glow_hue_{mode}",
-                            off,
-                            0.4 * min(off, 3),
-                            f"{region}: glows in another colour ({words})",
-                        )
+                    _stray_glow_flag(flags, view, mode, g)
+                elif view not in LAMP_VIEWS_SKIP:
+                    _glow_flags(flags, view, mode, region, g)
+    return worst_flags(flags)
+
+
+def worst_flags(flags: list[dict]) -> list[dict]:
+    """The worst flag of each (region, what), the worst first."""
     best: dict = {}
     for f in flags:
         key = (f["region"], f["what"])
         if key not in best or f["severity"] > best[key]["severity"]:
             best[key] = f
     return sorted(best.values(), key=lambda f: -f["severity"])
+
+
+def _coverage_flags(flags: list, view: str, region: str, m: dict) -> None:
+    """A region Forza draws that ours doesn't ("missing"), or ours draws more of ("extra")."""
+    limit = LIMITS["cockpit_missing"] if region == fr.COCKPIT else LIMITS["missing"]
+    if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > limit:
+        # (the cockpit: weighted down: the reference's shell is the finest LOD, ours the
+        # converter's coarser one, so the bonnet seen through the windscreen differs on
+        # many cars by design; research/render-compare.md, "Open")
+        severity = m["missing"] * (5 if region == fr.COCKPIT else 1)
+        text = (
+            f"{region}: {m['missing']:.0%} not drawn"
+            if region != fr.COCKPIT
+            else (f"cockpit: {m['missing']:.0%} covered by something Forza's hasn't")
+        )
+        _flag(flags, region, view, "missing", m["missing"], severity, text)
+    if (
+        m.get("extra") is not None
+        and region != fr.PLATES
+        and m["ours_px"] >= MIN_PIXELS * 2
+        and m["extra"] > LIMITS["extra"]
+    ):
+        _flag(flags, region, view, "extra", m["extra"], m["extra"] * 0.7, f"{region}: {m['extra']:.0%} extra")
+
+
+def _tone_flags(flags: list, view: str, region: str, m: dict) -> None:
+    """Where both draw a region: too dark or washed out, another colour, detail lost or different."""
+    L = LIMITS
+    d = m["L_ref"] - m["L_ours"]
+    if d > L["dark"]:
+        _flag(flags, region, view, "dark", d, d / 40, f"{region}: too dark (L* {m['L_ours']} vs {m['L_ref']})")
+    elif -d > (L["trims_light"] if region == fr.TRIMS else L["light"]):
+        _flag(
+            flags,
+            region,
+            view,
+            "light",
+            -d,
+            -d / (15 if region == fr.TRIMS else 40),
+            f"{region}: washed out (L* {m['L_ours']} vs {m['L_ref']})",
+        )
+    if m["dE"] > L["colour"] and abs(d) < L["dark"]:
+        _flag(flags, region, view, "colour", m["dE"], m["dE"] / 60, f"{region}: colour off (dE {m['dE']})")
+    if m["contrast_ref"] > 2.0:
+        lost = 1 - m["contrast_ours"] / m["contrast_ref"]
+        if lost > L["detail"]:
+            _flag(flags, region, view, "detail", lost, lost, f"{region}: detail lost {lost:.0%}")
+    s = m.get("structure")
+    if s is not None and s < L["structure"] and m["contrast_ref"] > 4.0 and m["contrast_ours"] > 2.0:
+        _flag(
+            flags,
+            region,
+            view,
+            "structure",
+            s,
+            (L["structure"] - s) * 1.5,
+            f"{region}: different detail (structure {s:.2f})",
+        )
+
+
+def _drawn_flags(flags: list, view: str, region: str, m: dict) -> None:
+    """A lamp drawn by a program that can't draw lamps; a plate over badges, lamps or chrome."""
+    if region in LAMP_REGIONS and m.get("drawn_as"):
+        bad = sum(v for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
+        if bad > LIMITS["drawn_as"]:
+            kinds = ", ".join(f"{k} {v:.0%}" for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
+            _flag(flags, region, view, "drawn_as", bad, bad * 1.2, f"{region}: drawn as {kinds}")
+    if region == fr.PLATES and m.get("over"):
+        # A plate on a trim may be on its holder; on a badge, a lamp or chrome it isn't.
+        over = sum(v for k, v in m["over"].items() if k in PLATE_NOT_ON)
+        if over > LIMITS["plate_over"]:
+            where = ", ".join(f"{k} {v:.0%}" for k, v in m["over"].items() if k != fr.BODY)
+            _flag(flags, region, view, "plate_over", over, over, f"plates: over {where}")
+
+
+def _stray_glow_flag(flags: list, view: str, mode: str, g: dict) -> None:
+    """Our lamps' light off the lamps (trims, body), well over Forza's."""
+    if g["ours_px"] > 300 and g["ours_px"] > 3 * g["ref_px"]:
+        words = mode.replace("_", " ")
+        _flag(
+            flags,
+            fr.TRIMS,
+            view,
+            f"stray_glow_{mode}",
+            g["ours_px"],
+            0.5,
+            f"glow off the lamps ({words}): {g['ours_px']} px",
+        )
+
+
+def _glow_flags(flags: list, view: str, mode: str, region: str, g: dict) -> None:
+    """A lamp region's glow in a lit mode: none where Forza's lamp glows, elsewhere than
+    Forza's, a white plate by day, flat, or in another colour."""
+    L = LIMITS
+    words = mode.replace("_", " ")
+    ref_lit = g["ref_p95"] > 2 * GLOW_FLOOR and g["ref_lit_px"] >= 40
+    if ref_lit and g["ours_p95"] < GLOW_FLOOR:
+        _flag(flags, region, view, f"no_glow_{mode}", g["ours_p95"], 1.0, f"{region}: no glow {words}")
+        return
+    if ref_lit and "covered" in g and max(g["covered"], g["inside"]) < L["glow_place"]:
+        v = max(g["covered"], g["inside"])
+        _flag(
+            flags,
+            region,
+            view,
+            f"glow_place_{mode}",
+            v,
+            0.6 * (1 - v),
+            f"{region}: glows elsewhere than Forza's lamp ({words}, {g['covered']:.0%} of it)",
+        )
+    if mode == "day_lit" and g["ours_p95"] > L["glare"] and g["ours_lit_px"] >= 60:
+        _flag(
+            flags,
+            region,
+            view,
+            "glare_day_lit",
+            g["ours_p95"],
+            min(2.0, g["ours_p95"] / L["glare"]),
+            f"{region}: white plate by day (glow p95 {g['ours_p95']:.1f})",
+        )
+    if mode == "day_lit" and g.get("spread_ref") and g["ours_lit_px"] >= 60:
+        flat = g["spread_ours"] / g["spread_ref"]
+        if flat < L["flat_glow"]:
+            _flag(
+                flags,
+                region,
+                view,
+                f"flat_glow_{mode}",
+                flat,
+                0.6 * (1 - flat),
+                f"{region}: flat glow by day ({flat:.0%} of Forza's spread)",
+            )
+    if "green_red_ours" in g:
+        a_, b_ = max(g["green_red_ours"], 0.02), max(g["green_red_ref"], 0.02)
+        off = abs(math.log(a_ / b_))
+        if off > L["glow_hue"]:
+            _flag(
+                flags,
+                region,
+                view,
+                f"glow_hue_{mode}",
+                off,
+                0.4 * min(off, 3),
+                f"{region}: glows in another colour ({words})",
+            )
 
 
 def car_score(flags: list[dict]) -> float:

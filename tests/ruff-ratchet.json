@@ -52,7 +52,7 @@
   "src/dsfforza/game/gui_assets.py": {"ARG001": 1, "C901": 3, "FBT001": 5, "FBT002": 4, "PLR0912": 2, "PLR0915": 4},
   "src/dsfforza/harness/dyno.py": {"C901": 1, "FBT001": 1, "FBT002": 1, "PLR0912": 1, "PLR0915": 1},
   "src/dsfforza/harness/forza_render.py": {"C901": 2, "FBT001": 9, "FBT002": 5, "PLR0912": 2, "PLR0915": 1},
-  "src/dsfforza/harness/render_compare.py": {"C901": 1, "PLR0912": 1, "PLR0915": 2},
+  "src/dsfforza/harness/render_compare.py": {"PLR0915": 1},
   "src/dsfforza/harness/render_diff.py": {"FBT001": 1, "FBT002": 1},
   "tests/__main__.py": {"FBT001": 1, "FBT002": 1},
   "tests/test_appearance.py": {"ARG002": 1, "FBT002": 1},
