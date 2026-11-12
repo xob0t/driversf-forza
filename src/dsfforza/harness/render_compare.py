@@ -1286,7 +1286,8 @@ def _done(out: Path, media: str) -> bool:
     return "metrics" in r and not r.get("error")
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """render_compare's command line: run, rescore, diff, thumbnail and sheet."""
     ap = argparse.ArgumentParser(
         prog="dsff render_compare", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1322,71 +1323,105 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("sheet", help="write the HTML contact sheet of a run")
     s.add_argument("run", type=Path)
     s.add_argument("--top", type=int, default=0, help="only the N worst cars")
-    args = ap.parse_args(argv)
-    idle_priority()
-    if args.cmd == "run":
-        cars = roster(args.build)
-        if args.cars:
-            want = [w.strip() for w in args.cars.split(",") if w.strip()]
-            cars = [c for c in cars if c["media"] in want or str(c["spool_id"]) in want]
-        if args.resume:
-            cars = [c for c in cars if not _done(args.out, c["media"])]
-        w, h = (int(x) for x in args.size.lower().split("x"))
-        ranking = run(
-            args.build,
-            args.out,
-            cars,
-            args.jobs,
-            tuple(args.views.split(",")),
-            (w, h),
-            tuple(args.entries.split(",")),
-            keep=args.keep,
-        )
-        for r in ranking[:20]:
-            print(
-                f"{r.get('score') or 0:7.2f}  {r['media']:32} "
-                + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
-            )
-        if not args.no_sheet:
-            from dsfforza.harness import render_sheet
+    return ap
 
-            print(render_sheet.write(args.out))
-        return 0
-    if args.cmd == "diff":
-        from dsfforza.harness import render_diff
 
-        w, h = (int(x) for x in args.size.lower().split("x"))
-        s = render_diff.run(
-            args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), (w, h), args.limit
-        )
+def parse_size(text: str) -> tuple[int, int]:
+    """--size WxH as (width, height) in pixels."""
+    w, h = (int(x) for x in text.lower().split("x"))
+    return w, h
+
+
+def pick_cars(cars: list[dict], names: str | None) -> list[dict]:
+    """The cars --cars names (media names or spool IDs, comma-separated); every car without it."""
+    if not names:
+        return cars
+    want = [w.strip() for w in names.split(",") if w.strip()]
+    return [c for c in cars if c["media"] in want or str(c["spool_id"]) in want]
+
+
+def print_ranking(ranking: list[dict], top: int = 20) -> None:
+    """The worst cars of a ranking: score, car and its first three flags."""
+    for r in ranking[:top]:
         print(
-            f"{s['changed']} changed ({s['drawn_differently']} drawn differently, {len(s['renders_alike'])} alike), "
-            f"{s['unchanged']} unchanged ({s['seconds']} s)"
+            f"{r.get('score') or 0:7.2f}  {r['media']:32} " + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
         )
-        for car in s["cars"][:30]:
-            top = "; ".join(
-                f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]
-            )
-            print(f"  {car['media']:32} {car.get('score_before')} -> {car.get('score_after')}  {top}")
-        print(render_diff.write_sheet(args.out))
-        return 0
-    if args.cmd == "rescore":
-        for r in rescore(args.run, args.jobs)[:20]:
-            print(
-                f"{r.get('score') or 0:7.2f}  {r['media']:32} "
-                + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
-            )
-        return 0
-    if args.cmd == "thumbnail":
-        for media in args.cars.split(","):
-            print(media, thumbnail_check(args.build, media.strip(), args.out))
-        return 0
-    if args.cmd == "sheet":
+
+
+def cmd_run(args) -> int:
+    """render_compare run: render and score the build's cars (--resume: those --out has no
+    scores for), print the worst and write the contact sheet."""
+    cars = pick_cars(roster(args.build), args.cars)
+    if args.resume:
+        cars = [c for c in cars if not _done(args.out, c["media"])]
+    ranking = run(
+        args.build,
+        args.out,
+        cars,
+        args.jobs,
+        tuple(args.views.split(",")),
+        parse_size(args.size),
+        tuple(args.entries.split(",")),
+        keep=args.keep,
+    )
+    print_ranking(ranking)
+    if not args.no_sheet:
         from dsfforza.harness import render_sheet
 
-        print(render_sheet.write(args.run, top=args.top))
-        return 0
-    return 2
+        print(render_sheet.write(args.out))
+    return 0
+
+
+def cmd_diff(args) -> int:
+    """render_compare diff (render_diff.run): the cars two builds draw differently, and how."""
+    from dsfforza.harness import render_diff
+
+    s = render_diff.run(
+        args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), parse_size(args.size), args.limit
+    )
+    print(
+        f"{s['changed']} changed ({s['drawn_differently']} drawn differently, {len(s['renders_alike'])} alike), "
+        f"{s['unchanged']} unchanged ({s['seconds']} s)"
+    )
+    for car in s["cars"][:30]:
+        top = "; ".join(
+            f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]
+        )
+        print(f"  {car['media']:32} {car.get('score_before')} -> {car.get('score_after')}  {top}")
+    print(render_diff.write_sheet(args.out))
+    return 0
+
+
+def cmd_rescore(args) -> int:
+    """render_compare rescore: score a --keep run again and print the worst."""
+    print_ranking(rescore(args.run, args.jobs))
+    return 0
+
+
+def cmd_thumbnail(args) -> int:
+    """render_compare thumbnail: Forza's own picture beside the reference and ours, per car."""
+    for media in args.cars.split(","):
+        print(media, thumbnail_check(args.build, media.strip(), args.out))
+    return 0
+
+
+def cmd_sheet(args) -> int:
+    """render_compare sheet: the HTML contact sheet of a run."""
+    from dsfforza.harness import render_sheet
+
+    print(render_sheet.write(args.run, top=args.top))
+    return 0
+
+
+COMMANDS = {"run": cmd_run, "diff": cmd_diff, "rescore": cmd_rescore, "thumbnail": cmd_thumbnail, "sheet": cmd_sheet}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """dsff render_compare: run the command at Idle priority; returns the exit code."""
+    args = build_parser().parse_args(argv)
+    idle_priority()
+    command = COMMANDS.get(args.cmd)
+    return command(args) if command is not None else 2
 
 
 if __name__ == "__main__":
