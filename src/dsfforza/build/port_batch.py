@@ -2066,13 +2066,13 @@ def cmd_build(args) -> None:
         old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
         if args.resume and old_job.exists() and old_report.exists() and Path(job["chunk"]).exists():
             try:
-                before = json.loads(old_job.read_text(encoding="utf-8"))
+                earlier = json.loads(old_job.read_text(encoding="utf-8"))
                 report = json.loads(old_report.read_text(encoding="utf-8"))
             except ValueError:  # cut short by an earlier crash: build the car again
-                before, report = {}, {}
+                earlier, report = {}, {}
             same = (
-                all(before.get(k) == job[k] for k in ("spool_id", "game", "dsf"))
-                and before.get("requested_options", before.get("port_options")) == job["port_options"]
+                all(earlier.get(k) == job[k] for k in ("spool_id", "game", "dsf"))
+                and earlier.get("requested_options", earlier.get("port_options")) == job["port_options"]
             )
             if same and report.get("ok"):
                 reused[job["media"]] = report
