@@ -543,3 +543,22 @@ def test_a_build_without_its_archive_is_read_from_its_merge_plan():
             pass
         else:
             raise AssertionError("a build with neither the archive nor a plan")
+
+
+def test_command_line():
+    args = rc.build_parser().parse_args(["run", "--build", "b", "--out", "o", "--cars", "A, 7", "--keep"])
+    assert (args.cmd, args.cars, args.keep, args.jobs, args.views) == (
+        "run",
+        "A, 7",
+        True,
+        1,
+        ",".join(rc.DEFAULT_VIEWS),
+    )
+    assert rc.build_parser().parse_args(["sheet", "r", "--top", "5"]).top == 5
+    assert set(rc.COMMANDS) == {"run", "diff", "rescore", "thumbnail", "sheet"}
+    assert rc.parse_size("800x450") == (800, 450)
+    assert rc.parse_size("640X360") == (640, 360)
+    cars = [{"media": "A", "spool_id": 7}, {"media": "B", "spool_id": 8}, {"media": "C", "spool_id": 70}]
+    assert rc.pick_cars(cars, None) == cars
+    assert rc.pick_cars(cars, " A,,70 ") == [cars[0], cars[2]]
+    assert rc.pick_cars(cars, "7") == [cars[0]]  # a spool ID matches whole, not a prefix

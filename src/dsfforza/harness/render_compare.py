@@ -34,6 +34,8 @@ from pathlib import Path
 
 import numpy as np
 
+from dsfforza.build import port_batch
+from dsfforza.build.port_batch import MERGE_PLAN
 from dsfforza.game import car_render as cr
 from dsfforza.harness import forza_render as fr
 
@@ -76,6 +78,9 @@ PID = {name: i for i, name in enumerate(PROGRAMS)}
 
 @dataclass(frozen=True)
 class View:
+    """A view of the comparison: its name, the camera, the end of the car it frames (zoom:
+    "front", "rear" or the whole car) and the lighting modes it renders."""
+
     name: str
     camera: cr.Camera
     zoom: str = ""  # "front" / "rear": frame that end of the car only (ZOOM_DEPTH)
@@ -113,9 +118,6 @@ def car_report(build: Path, media: str) -> dict | None:
         return None
 
 
-MERGE_PLAN = "dngvehicles.plan.json"  # port_batch.MERGE_PLAN
-
-
 def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
     """(the vanilla archive, the merge plan) of a build that wrote no dngvehicles.sp
     (port_batch: past 4 GiB, or --no-archive; research/batch.md, "Builds past 4 GiB"), or
@@ -125,8 +127,6 @@ def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
     output) gets it from its manifest: plan_from_manifest."""
     path = Path(build) / MERGE_PLAN
     if path.is_file():
-        from dsfforza.build import port_batch
-
         dsf, plan = port_batch.read_plan(path)
     else:
         found = plan_from_manifest(build)
@@ -181,8 +181,6 @@ class BuildArchives:
             found = merge_plan(build)
             if found is None:
                 raise SystemExit(f"{build}: neither dngvehicles.sp nor {MERGE_PLAN}")
-            from dsfforza.build import port_batch
-
             self.shards = port_batch.Shards(found[0], found[1], Path(folder), log=log)
 
     def of(self, spool_ids) -> dict[int, Path]:
@@ -192,6 +190,7 @@ class BuildArchives:
         return self.shards([{"spool_id": sid} for sid in spool_ids])
 
     def close(self) -> None:
+        """Remove the shard archives made for a build without its own."""
         if self.shards is not None:
             self.shards.close()
 
@@ -200,6 +199,7 @@ _ROOTS: dict = {}  # a process's root entries by archive (gui_assets._root_entri
 
 
 def roots_of(archive: Path) -> list:
+    """The root entries of an archive, read once per process."""
     from dsfforza.formats import chnk
 
     key = str(Path(archive).resolve())
@@ -229,7 +229,8 @@ def roster(build: Path) -> list[dict]:
     return out
 
 
-def _cache_dir(build: Path, media: str, report: dict | None) -> Path:
+def _cache_dir(media: str, report: dict | None) -> Path:
+    """The car's Forza extraction: the one its report names, else out/cache/<game>/<media>."""
     if report and report.get("entry", {}).get("cache"):
         p = Path(report["entry"]["cache"])
         if p.exists():
@@ -299,7 +300,7 @@ def build_pair(archive: Path, roots, spool_id: int, media: str, report: dict, en
         ours.lamp[ours.inside] = -1  # the cabin's own light bytes are no lamps of the outside
     placement = rep["placement"]
     daytime = any(lp.type == 0x1D for lp in ours.lamps or [])
-    folder = _cache_dir(archive.parent, media, report)
+    folder = _cache_dir(media, report)
     ref = fr.body_scene(folder, media, placement, lod, ours.info["paint"], ours.info["hubs"], daytime)
     wheel_part = ours.info["wheel"]
     cabin = ours.inside if ours.inside is not None else np.zeros(len(ours.mat), bool)
@@ -369,7 +370,7 @@ def build_cockpit_pair(archive: Path, roots, spool_id: int, media: str, report: 
     ours.lamp = np.full(len(ours.mat), -1, np.int32)
     # The reference's shell at the finest LOD: the converter's coarser one can close the
     # cockpit (the Audi R10's lid, #157), which is what this view should find.
-    folder = _cache_dir(archive.parent, media, report)
+    folder = _cache_dir(media, report)
     ref, _ = fr.cockpit_scene(folder, media, rep["placement"], ours.info["paint"], 1)
     src, dist = rm.match(ours.pos, ref.scene.pos)
     ref_region = np.array([RID[o.region] for o in ref.origins], np.uint8)[ref.scene.tag]
@@ -406,7 +407,7 @@ def _view_box(view: View, box) -> tuple:
     return lo, hi
 
 
-def region_map(scene: cr.Scene, frame: cr.Frame, region: np.ndarray) -> np.ndarray:
+def region_map(frame: cr.Frame, region: np.ndarray) -> np.ndarray:
     """(h, w) region id per pixel: the nearest surface, seeing through window glass
     (lamp glass and the other see-through parts label their pixels)."""
     size = frame.view.width * frame.view.height
@@ -420,7 +421,7 @@ def region_map(scene: cr.Scene, frame: cr.Frame, region: np.ndarray) -> np.ndarr
     return out.reshape(frame.view.height, frame.view.width)
 
 
-def tri_map(frame: cr.Frame, values: np.ndarray, see_through: bool = True) -> np.ndarray:
+def tri_map(frame: cr.Frame, values: np.ndarray, *, see_through: bool = True) -> np.ndarray:
     """(h, w) per-pixel value of the opaque triangle (or of the nearest see-through layer)."""
     size = frame.view.width * frame.view.height
     out = np.zeros(size, values.dtype)
@@ -450,11 +451,11 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
     for side, scene, region in (("ours", pair.ours, pair.ours_region), ("ref", pair.ref, pair.ref_region)):
         v = cr._View(scene, view.camera, w, h, box=box)
         frame = cr.rasterize(scene, v)
-        out["regions"][side] = region_map(scene, frame, region)
+        out["regions"][side] = region_map(frame, region)
         if side == "ours":
             # What draws each pixel; under DSF window glass (plain glass kept over the lamps,
             # #379) the surface behind it, not the glass.
-            programs, behind = tri_map(frame, pair.ours_program), tri_map(frame, pair.ours_program, False)
+            programs, behind = tri_map(frame, pair.ours_program), tri_map(frame, pair.ours_program, see_through=False)
             out["programs"] = np.where((programs == PID["glass"]) & (behind != PID["none"]), behind, programs)
         for mode in view.modes:
             lt = cr.LIGHTINGS[mode]
@@ -607,10 +608,6 @@ def _local_std(a: np.ndarray, mask: np.ndarray, r: int = DETAIL_RADIUS) -> np.nd
     return np.sqrt(np.maximum(s2 / np.maximum(w, 1e-6) - mean * mean, 0))
 
 
-def _lum(rgb: np.ndarray) -> np.ndarray:
-    return rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)
-
-
 def _glow(r: dict, side: str, mode: str) -> np.ndarray:
     """(h, w) light a side's lamps add in a lit mode, its brightest channel (a red lamp
     glows with little luminance): the lit render less the same frame and light with the
@@ -732,142 +729,25 @@ def flags_for(metrics: dict) -> list[dict]:
     """Flags from a car's metrics ({view: {mode: {region: m}}}, glow under "glow_<mode>"),
     each with a severity; the worst view per (region, what) is kept."""
     flags: list = []
-    L = LIMITS
     for view, modes in metrics.items():
-        day = modes.get("day", {})
-        for region, m in day.items():
+        for region, m in modes.get("day", {}).items():
             if region in LAMP_REGIONS and view in LAMP_VIEWS_SKIP:
                 continue
-            limit = L["cockpit_missing"] if region == fr.COCKPIT else L["missing"]
-            if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > limit:
-                # (the cockpit: weighted down: the reference's shell is the finest LOD, ours the
-                # converter's coarser one, so the bonnet seen through the windscreen differs on
-                # many cars by design; research/render-compare.md, "Open")
-                severity = m["missing"] * (5 if region == fr.COCKPIT else 1)
-                text = (
-                    f"{region}: {m['missing']:.0%} not drawn"
-                    if region != fr.COCKPIT
-                    else (f"cockpit: {m['missing']:.0%} covered by something Forza's hasn't")
-                )
-                _flag(flags, region, view, "missing", m["missing"], severity, text)
-            if (
-                m.get("extra") is not None
-                and region != fr.PLATES
-                and m["ours_px"] >= MIN_PIXELS * 2
-                and m["extra"] > L["extra"]
-            ):
-                _flag(flags, region, view, "extra", m["extra"], m["extra"] * 0.7, f"{region}: {m['extra']:.0%} extra")
+            _coverage_flags(flags, view, region, m)
             if "L_ours" in m:
-                d = m["L_ref"] - m["L_ours"]
-                if d > L["dark"]:
-                    _flag(
-                        flags, region, view, "dark", d, d / 40, f"{region}: too dark (L* {m['L_ours']} vs {m['L_ref']})"
-                    )
-                elif -d > (L["trims_light"] if region == fr.TRIMS else L["light"]):
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        "light",
-                        -d,
-                        -d / (15 if region == fr.TRIMS else 40),
-                        f"{region}: washed out (L* {m['L_ours']} vs {m['L_ref']})",
-                    )
-                if m["dE"] > L["colour"] and abs(d) < L["dark"]:
-                    _flag(flags, region, view, "colour", m["dE"], m["dE"] / 60, f"{region}: colour off (dE {m['dE']})")
-                if m["contrast_ref"] > 2.0:
-                    lost = 1 - m["contrast_ours"] / m["contrast_ref"]
-                    if lost > L["detail"]:
-                        _flag(flags, region, view, "detail", lost, lost, f"{region}: detail lost {lost:.0%}")
-                s = m.get("structure")
-                if s is not None and s < L["structure"] and m["contrast_ref"] > 4.0 and m["contrast_ours"] > 2.0:
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        "structure",
-                        s,
-                        (L["structure"] - s) * 1.5,
-                        f"{region}: different detail (structure {s:.2f})",
-                    )
-            if region in LAMP_REGIONS and m.get("drawn_as"):
-                bad = sum(v for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
-                if bad > L["drawn_as"]:
-                    kinds = ", ".join(f"{k} {v:.0%}" for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
-                    _flag(flags, region, view, "drawn_as", bad, bad * 1.2, f"{region}: drawn as {kinds}")
-            if region == fr.PLATES and m.get("over"):
-                # A plate on a trim may be on its holder; on a badge, a lamp or chrome it isn't.
-                over = sum(v for k, v in m["over"].items() if k in PLATE_NOT_ON)
-                if over > L["plate_over"]:
-                    where = ", ".join(f"{k} {v:.0%}" for k, v in m["over"].items() if k != fr.BODY)
-                    _flag(flags, region, view, "plate_over", over, over, f"plates: over {where}")
+                _tone_flags(flags, view, region, m)
+            _drawn_flags(flags, view, region, m)
         for mode in ("day_lit", "dark"):
-            words = mode.replace("_", " ")
             for region, g in modes.get(f"glow_{mode}", {}).items():
                 if region == "stray":
-                    if g["ours_px"] > 300 and g["ours_px"] > 3 * g["ref_px"]:
-                        _flag(
-                            flags,
-                            fr.TRIMS,
-                            view,
-                            f"stray_glow_{mode}",
-                            g["ours_px"],
-                            0.5,
-                            f"glow off the lamps ({words}): {g['ours_px']} px",
-                        )
-                    continue
-                if view in LAMP_VIEWS_SKIP:
-                    continue
-                ref_lit = g["ref_p95"] > 2 * GLOW_FLOOR and g["ref_lit_px"] >= 40
-                if ref_lit and g["ours_p95"] < GLOW_FLOOR:
-                    _flag(flags, region, view, f"no_glow_{mode}", g["ours_p95"], 1.0, f"{region}: no glow {words}")
-                    continue
-                if ref_lit and "covered" in g and max(g["covered"], g["inside"]) < L["glow_place"]:
-                    v = max(g["covered"], g["inside"])
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        f"glow_place_{mode}",
-                        v,
-                        0.6 * (1 - v),
-                        f"{region}: glows elsewhere than Forza's lamp ({words}, {g['covered']:.0%} of it)",
-                    )
-                if mode == "day_lit" and g["ours_p95"] > L["glare"] and g["ours_lit_px"] >= 60:
-                    _flag(
-                        flags,
-                        region,
-                        view,
-                        "glare_day_lit",
-                        g["ours_p95"],
-                        min(2.0, g["ours_p95"] / L["glare"]),
-                        f"{region}: white plate by day (glow p95 {g['ours_p95']:.1f})",
-                    )
-                if mode == "day_lit" and g.get("spread_ref") and g["ours_lit_px"] >= 60:
-                    flat = g["spread_ours"] / g["spread_ref"]
-                    if flat < L["flat_glow"]:
-                        _flag(
-                            flags,
-                            region,
-                            view,
-                            f"flat_glow_{mode}",
-                            flat,
-                            0.6 * (1 - flat),
-                            f"{region}: flat glow by day ({flat:.0%} of Forza's spread)",
-                        )
-                if "green_red_ours" in g:
-                    a_, b_ = max(g["green_red_ours"], 0.02), max(g["green_red_ref"], 0.02)
-                    off = abs(math.log(a_ / b_))
-                    if off > L["glow_hue"]:
-                        _flag(
-                            flags,
-                            region,
-                            view,
-                            f"glow_hue_{mode}",
-                            off,
-                            0.4 * min(off, 3),
-                            f"{region}: glows in another colour ({words})",
-                        )
+                    _stray_glow_flag(flags, view, mode, g)
+                elif view not in LAMP_VIEWS_SKIP:
+                    _glow_flags(flags, view, mode, region, g)
+    return worst_flags(flags)
+
+
+def worst_flags(flags: list[dict]) -> list[dict]:
+    """The worst flag of each (region, what), the worst first."""
     best: dict = {}
     for f in flags:
         key = (f["region"], f["what"])
@@ -876,7 +756,153 @@ def flags_for(metrics: dict) -> list[dict]:
     return sorted(best.values(), key=lambda f: -f["severity"])
 
 
+def _coverage_flags(flags: list, view: str, region: str, m: dict) -> None:
+    """A region Forza draws that ours doesn't ("missing"), or ours draws more of ("extra")."""
+    limit = LIMITS["cockpit_missing"] if region == fr.COCKPIT else LIMITS["missing"]
+    if m.get("missing") is not None and m["ref_px"] >= MIN_PIXELS * 2 and m["missing"] > limit:
+        # (the cockpit: weighted down: the reference's shell is the finest LOD, ours the
+        # converter's coarser one, so the bonnet seen through the windscreen differs on
+        # many cars by design; research/render-compare.md, "Open")
+        severity = m["missing"] * (5 if region == fr.COCKPIT else 1)
+        text = (
+            f"{region}: {m['missing']:.0%} not drawn"
+            if region != fr.COCKPIT
+            else (f"cockpit: {m['missing']:.0%} covered by something Forza's hasn't")
+        )
+        _flag(flags, region, view, "missing", m["missing"], severity, text)
+    if (
+        m.get("extra") is not None
+        and region != fr.PLATES
+        and m["ours_px"] >= MIN_PIXELS * 2
+        and m["extra"] > LIMITS["extra"]
+    ):
+        _flag(flags, region, view, "extra", m["extra"], m["extra"] * 0.7, f"{region}: {m['extra']:.0%} extra")
+
+
+def _tone_flags(flags: list, view: str, region: str, m: dict) -> None:
+    """Where both draw a region: too dark or washed out, another colour, detail lost or different."""
+    L = LIMITS
+    d = m["L_ref"] - m["L_ours"]
+    if d > L["dark"]:
+        _flag(flags, region, view, "dark", d, d / 40, f"{region}: too dark (L* {m['L_ours']} vs {m['L_ref']})")
+    elif -d > (L["trims_light"] if region == fr.TRIMS else L["light"]):
+        _flag(
+            flags,
+            region,
+            view,
+            "light",
+            -d,
+            -d / (15 if region == fr.TRIMS else 40),
+            f"{region}: washed out (L* {m['L_ours']} vs {m['L_ref']})",
+        )
+    if m["dE"] > L["colour"] and abs(d) < L["dark"]:
+        _flag(flags, region, view, "colour", m["dE"], m["dE"] / 60, f"{region}: colour off (dE {m['dE']})")
+    if m["contrast_ref"] > 2.0:
+        lost = 1 - m["contrast_ours"] / m["contrast_ref"]
+        if lost > L["detail"]:
+            _flag(flags, region, view, "detail", lost, lost, f"{region}: detail lost {lost:.0%}")
+    s = m.get("structure")
+    if s is not None and s < L["structure"] and m["contrast_ref"] > 4.0 and m["contrast_ours"] > 2.0:
+        _flag(
+            flags,
+            region,
+            view,
+            "structure",
+            s,
+            (L["structure"] - s) * 1.5,
+            f"{region}: different detail (structure {s:.2f})",
+        )
+
+
+def _drawn_flags(flags: list, view: str, region: str, m: dict) -> None:
+    """A lamp drawn by a program that can't draw lamps; a plate over badges, lamps or chrome."""
+    if region in LAMP_REGIONS and m.get("drawn_as"):
+        bad = sum(v for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
+        if bad > LIMITS["drawn_as"]:
+            kinds = ", ".join(f"{k} {v:.0%}" for k, v in m["drawn_as"].items() if k not in LAMP_PROGRAMS)
+            _flag(flags, region, view, "drawn_as", bad, bad * 1.2, f"{region}: drawn as {kinds}")
+    if region == fr.PLATES and m.get("over"):
+        # A plate on a trim may be on its holder; on a badge, a lamp or chrome it isn't.
+        over = sum(v for k, v in m["over"].items() if k in PLATE_NOT_ON)
+        if over > LIMITS["plate_over"]:
+            where = ", ".join(f"{k} {v:.0%}" for k, v in m["over"].items() if k != fr.BODY)
+            _flag(flags, region, view, "plate_over", over, over, f"plates: over {where}")
+
+
+def _stray_glow_flag(flags: list, view: str, mode: str, g: dict) -> None:
+    """Our lamps' light off the lamps (trims, body), well over Forza's."""
+    if g["ours_px"] > 300 and g["ours_px"] > 3 * g["ref_px"]:
+        words = mode.replace("_", " ")
+        _flag(
+            flags,
+            fr.TRIMS,
+            view,
+            f"stray_glow_{mode}",
+            g["ours_px"],
+            0.5,
+            f"glow off the lamps ({words}): {g['ours_px']} px",
+        )
+
+
+def _glow_flags(flags: list, view: str, mode: str, region: str, g: dict) -> None:
+    """A lamp region's glow in a lit mode: none where Forza's lamp glows, elsewhere than
+    Forza's, a white plate by day, flat, or in another colour."""
+    L = LIMITS
+    words = mode.replace("_", " ")
+    ref_lit = g["ref_p95"] > 2 * GLOW_FLOOR and g["ref_lit_px"] >= 40
+    if ref_lit and g["ours_p95"] < GLOW_FLOOR:
+        _flag(flags, region, view, f"no_glow_{mode}", g["ours_p95"], 1.0, f"{region}: no glow {words}")
+        return
+    if ref_lit and "covered" in g and max(g["covered"], g["inside"]) < L["glow_place"]:
+        v = max(g["covered"], g["inside"])
+        _flag(
+            flags,
+            region,
+            view,
+            f"glow_place_{mode}",
+            v,
+            0.6 * (1 - v),
+            f"{region}: glows elsewhere than Forza's lamp ({words}, {g['covered']:.0%} of it)",
+        )
+    if mode == "day_lit" and g["ours_p95"] > L["glare"] and g["ours_lit_px"] >= 60:
+        _flag(
+            flags,
+            region,
+            view,
+            "glare_day_lit",
+            g["ours_p95"],
+            min(2.0, g["ours_p95"] / L["glare"]),
+            f"{region}: white plate by day (glow p95 {g['ours_p95']:.1f})",
+        )
+    if mode == "day_lit" and g.get("spread_ref") and g["ours_lit_px"] >= 60:
+        flat = g["spread_ours"] / g["spread_ref"]
+        if flat < L["flat_glow"]:
+            _flag(
+                flags,
+                region,
+                view,
+                f"flat_glow_{mode}",
+                flat,
+                0.6 * (1 - flat),
+                f"{region}: flat glow by day ({flat:.0%} of Forza's spread)",
+            )
+    if "green_red_ours" in g:
+        a_, b_ = max(g["green_red_ours"], 0.02), max(g["green_red_ref"], 0.02)
+        off = abs(math.log(a_ / b_))
+        if off > L["glow_hue"]:
+            _flag(
+                flags,
+                region,
+                view,
+                f"glow_hue_{mode}",
+                off,
+                0.4 * min(off, 3),
+                f"{region}: glows in another colour ({words})",
+            )
+
+
 def car_score(flags: list[dict]) -> float:
+    """A car's score: its flags' severities added up (higher is worse)."""
     return round(sum(f["severity"] for f in flags), 3)
 
 
@@ -886,6 +912,8 @@ BACKDROP = 58  # sRGB grey behind the cars
 
 
 def to_srgb8(rgb_linear: np.ndarray, alpha: np.ndarray, mode: str = "day") -> np.ndarray:
+    """8-bit sRGB of a linear render as the mode displays it, over the BACKDROP grey by its
+    alpha."""
     srgb = cr._linear_to_srgb(cr.display(rgb_linear, cr.LIGHTINGS[mode])) * 255
     a = alpha[..., None]
     return np.clip(srgb * a + BACKDROP * (1 - a) + 0.5, 0, 255).astype(np.uint8)
@@ -898,6 +926,7 @@ def outline(img: np.ndarray, mask: np.ndarray, colour=(255, 60, 200)) -> None:
 
 
 def save_jpeg(path: Path, img: np.ndarray, quality: int = 85) -> None:
+    """Write an image as a JPEG, making its folder."""
     from PIL import Image
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -920,7 +949,7 @@ def pair_image(r: dict, mode: str, outline_regions=()) -> np.ndarray:
 THUMB_CAMERA = cr.Camera(-62.0, 6.0, 1.45)  # FM4's thumbnails: front left, near eye level
 
 
-def forza_thumbnail(media: str, game: str | None) -> np.ndarray | None:
+def forza_thumbnail(media: str) -> np.ndarray | None:
     """Forza's own picture of the car (RGBA): FM4's Thumbnails/Thumbnail_<id>.xds by its
     gamedb id (out/db/fm4_gamedb.slt), else FH1's (gui_assets.forza_car_id); the car part
     (left two thirds; the right third is a top view)."""
@@ -958,7 +987,7 @@ def thumbnail_check(build: Path, media: str, out: Path, size=(640, 300)) -> Path
     report = car_report(build, media)
     if report is None:
         return None
-    thumb = forza_thumbnail(media, report.get("game"))
+    thumb = forza_thumbnail(media)
     if thumb is None:
         return None
     rgb = thumb[..., :3].astype(np.float32)
@@ -1025,6 +1054,7 @@ def save_renders(path: Path, r: dict) -> None:
 
 
 def load_renders(path: Path) -> dict:
+    """A view's renders and ID maps as save_renders stored them, in render_view's form."""
     z = np.load(path)
     r = {
         "regions": {"ours": z["regions_ours"], "ref": z["regions_ref"]},
@@ -1049,7 +1079,7 @@ def _save_images(folder: Path, images: dict, flags: list) -> None:
 
 
 def compare_car(
-    archive: Path, roots, car: dict, out: Path, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",), keep=False
+    archive: Path, roots, car: dict, out: Path, views=DEFAULT_VIEWS, size=SIZE, entries=("exterior",), *, keep=False
 ) -> dict:
     """Render, score and save one car: out/cars/<media>.json and its images (with keep,
     each view's renders too: out/cars/<media>/<view>.npz, for rescore)."""
@@ -1174,11 +1204,9 @@ def _worker(args):
     results = []
     for car in cars:
         archive = Path(car["archive"])  # the build's, or a shard of it (BuildArchives)
-        r = compare_car(archive, roots_of(archive), car, Path(out), views, size, entries, keep)
+        r = compare_car(archive, roots_of(archive), car, Path(out), views, size, entries, keep=keep)
         print(f"{car['media']}: score {r.get('score')} {r.get('error', '')} ({r.get('seconds')} s)", flush=True)
-        results.append(
-            {k: r.get(k) for k in ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")}
-        )
+        results.append({k: r.get(k) for k in RESULT_KEYS})
     return results
 
 
@@ -1190,8 +1218,12 @@ def run(
     views=DEFAULT_VIEWS,
     size=SIZE,
     entries=("exterior",),
+    *,
     keep: bool = False,
 ) -> list[dict]:
+    """render_compare run: compare each of `cars` (compare_car) in up to `jobs` processes,
+    from the build's archive or, for a build without one, its shards. Writes
+    out/roster.json with every car --out has and returns the ranking, worst first."""
     out.mkdir(parents=True, exist_ok=True)
     archives = BuildArchives(build, out / "shards")
     try:
@@ -1212,17 +1244,15 @@ def _run(build, out, cars, jobs, views, size, entries, keep) -> list[dict]:
         results = _worker((cars, str(out), views, size, entries, keep))
     else:
         from dsfforza.build import jobpool
-        from dsfforza.build.port_batch import RENDER_RAM
 
         os.environ.setdefault("OMP_NUM_THREADS", "1")
-        with jobpool.executor(jobs, "render_compare", RENDER_RAM) as pool:
+        with jobpool.executor(jobs, "render_compare", port_batch.RENDER_RAM) as pool:
             results = [
                 r
                 for part in pool.map(_worker, [(c, str(out), views, size, entries, keep) for c in chunks])
                 for r in part
             ]
     # Every car --out has (a --resume run's earlier ones too).
-    keys = ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")
     done = {r["media"]: r for r in results}
     for path in (out / "cars").glob("*.json"):
         if path.stem not in done:
@@ -1230,7 +1260,7 @@ def _run(build, out, cars, jobs, views, size, entries, keep) -> list[dict]:
                 r = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            done[path.stem] = {k: r.get(k) for k in keys}
+            done[path.stem] = {k: r.get(k) for k in RESULT_KEYS}
     results = list(done.values())
     ranking = sorted(results, key=lambda r: -(r.get("score") or 0))
     summary = {
@@ -1269,7 +1299,8 @@ def _done(out: Path, media: str) -> bool:
     return "metrics" in r and not r.get("error")
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """render_compare's command line: run, rescore, diff, thumbnail and sheet."""
     ap = argparse.ArgumentParser(
         prog="dsff render_compare", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1305,71 +1336,105 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("sheet", help="write the HTML contact sheet of a run")
     s.add_argument("run", type=Path)
     s.add_argument("--top", type=int, default=0, help="only the N worst cars")
-    args = ap.parse_args(argv)
-    idle_priority()
-    if args.cmd == "run":
-        cars = roster(args.build)
-        if args.cars:
-            want = [w.strip() for w in args.cars.split(",") if w.strip()]
-            cars = [c for c in cars if c["media"] in want or str(c["spool_id"]) in want]
-        if args.resume:
-            cars = [c for c in cars if not _done(args.out, c["media"])]
-        w, h = (int(x) for x in args.size.lower().split("x"))
-        ranking = run(
-            args.build,
-            args.out,
-            cars,
-            args.jobs,
-            tuple(args.views.split(",")),
-            (w, h),
-            tuple(args.entries.split(",")),
-            args.keep,
-        )
-        for r in ranking[:20]:
-            print(
-                f"{r.get('score') or 0:7.2f}  {r['media']:32} "
-                + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
-            )
-        if not args.no_sheet:
-            from dsfforza.harness import render_sheet
+    return ap
 
-            print(render_sheet.write(args.out))
-        return 0
-    if args.cmd == "diff":
-        from dsfforza.harness import render_diff
 
-        w, h = (int(x) for x in args.size.lower().split("x"))
-        s = render_diff.run(
-            args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), (w, h), args.limit
-        )
+def parse_size(text: str) -> tuple[int, int]:
+    """--size WxH as (width, height) in pixels."""
+    w, h = (int(x) for x in text.lower().split("x"))
+    return w, h
+
+
+def pick_cars(cars: list[dict], names: str | None) -> list[dict]:
+    """The cars --cars names (media names or spool IDs, comma-separated); every car without it."""
+    if not names:
+        return cars
+    want = [w.strip() for w in names.split(",") if w.strip()]
+    return [c for c in cars if c["media"] in want or str(c["spool_id"]) in want]
+
+
+def print_ranking(ranking: list[dict], top: int = 20) -> None:
+    """The worst cars of a ranking: score, car and its first three flags."""
+    for r in ranking[:top]:
         print(
-            f"{s['changed']} changed ({s['drawn_differently']} drawn differently, {len(s['renders_alike'])} alike), "
-            f"{s['unchanged']} unchanged ({s['seconds']} s)"
+            f"{r.get('score') or 0:7.2f}  {r['media']:32} " + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
         )
-        for car in s["cars"][:30]:
-            top = "; ".join(
-                f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]
-            )
-            print(f"  {car['media']:32} {car.get('score_before')} -> {car.get('score_after')}  {top}")
-        print(render_diff.write_sheet(args.out))
-        return 0
-    if args.cmd == "rescore":
-        for r in rescore(args.run, args.jobs)[:20]:
-            print(
-                f"{r.get('score') or 0:7.2f}  {r['media']:32} "
-                + "; ".join(f["text"] for f in (r.get("flags") or [])[:3])
-            )
-        return 0
-    if args.cmd == "thumbnail":
-        for media in args.cars.split(","):
-            print(media, thumbnail_check(args.build, media.strip(), args.out))
-        return 0
-    if args.cmd == "sheet":
+
+
+def cmd_run(args) -> int:
+    """render_compare run: render and score the build's cars (--resume: those --out has no
+    scores for), print the worst and write the contact sheet."""
+    cars = pick_cars(roster(args.build), args.cars)
+    if args.resume:
+        cars = [c for c in cars if not _done(args.out, c["media"])]
+    ranking = run(
+        args.build,
+        args.out,
+        cars,
+        args.jobs,
+        tuple(args.views.split(",")),
+        parse_size(args.size),
+        tuple(args.entries.split(",")),
+        keep=args.keep,
+    )
+    print_ranking(ranking)
+    if not args.no_sheet:
         from dsfforza.harness import render_sheet
 
-        print(render_sheet.write(args.run, top=args.top))
-        return 0
-    return 2
+        print(render_sheet.write(args.out))
+    return 0
+
+
+def cmd_diff(args) -> int:
+    """render_compare diff (render_diff.run): the cars two builds draw differently, and how."""
+    from dsfforza.harness import render_diff
+
+    s = render_diff.run(
+        args.before, args.after, args.out, args.jobs, tuple(args.views.split(",")), parse_size(args.size), args.limit
+    )
+    print(
+        f"{s['changed']} changed ({s['drawn_differently']} drawn differently, {len(s['renders_alike'])} alike), "
+        f"{s['unchanged']} unchanged ({s['seconds']} s)"
+    )
+    for car in s["cars"][:30]:
+        top = "; ".join(
+            f"{c['region']} {c['view']} {c['mode']} {c['changed']:.0%}" for c in (car.get("changes") or [])[:3]
+        )
+        print(f"  {car['media']:32} {car.get('score_before')} -> {car.get('score_after')}  {top}")
+    print(render_diff.write_sheet(args.out))
+    return 0
+
+
+def cmd_rescore(args) -> int:
+    """render_compare rescore: score a --keep run again and print the worst."""
+    print_ranking(rescore(args.run, args.jobs))
+    return 0
+
+
+def cmd_thumbnail(args) -> int:
+    """render_compare thumbnail: Forza's own picture beside the reference and ours, per car."""
+    for media in args.cars.split(","):
+        print(media, thumbnail_check(args.build, media.strip(), args.out))
+    return 0
+
+
+def cmd_sheet(args) -> int:
+    """render_compare sheet: the HTML contact sheet of a run."""
+    from dsfforza.harness import render_sheet
+
+    print(render_sheet.write(args.run, top=args.top))
+    return 0
+
+
+COMMANDS = {"run": cmd_run, "diff": cmd_diff, "rescore": cmd_rescore, "thumbnail": cmd_thumbnail, "sheet": cmd_sheet}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """dsff render_compare: run the command at Idle priority; returns the exit code."""
+    args = build_parser().parse_args(argv)
+    idle_priority()
+    command = COMMANDS.get(args.cmd)
+    return command(args) if command is not None else 2
 
 
 if __name__ == "__main__":

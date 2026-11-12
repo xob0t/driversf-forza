@@ -174,7 +174,7 @@ def to_srgb(lin: np.ndarray, exposure: float = cr.EXPOSURE) -> np.ndarray:
 def thumbnail(media: str) -> np.ndarray | None:
     from dsfforza.harness import render_compare as rc
 
-    t = rc.forza_thumbnail(media, None)
+    t = rc.forza_thumbnail(media)
     return None if t is None else t[..., :3]
 
 
