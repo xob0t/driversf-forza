@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from dsfforza.build import dsfcar, install, port_batch
+from dsfforza.build import dsfcar, install, install_display, port_batch
 
 
 class WritePackagesTest(unittest.TestCase):
@@ -101,7 +101,7 @@ class InstallFlagsTest(unittest.TestCase):
         self.assertIn("-Force", run.install_flags(None, None))
 
     def test_tracker_shows_the_packages_step(self):
-        tracker = install.Tracker()
+        tracker = install_display.Tracker()
         notes = tracker.handle("packages", cars=3)
         self.assertEqual(notes, [])
         self.assertEqual(tracker.pack_detail(), "writing 3 car packages")
