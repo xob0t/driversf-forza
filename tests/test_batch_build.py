@@ -144,11 +144,12 @@ def test_build_resume_keeps_the_before_flag():
         _earlier(work, first, ok)
         converted, finished = [], []
 
-        def run_workers(todo, work, parallel, *, progress):
+        def run_workers(todo, *_args, **_kw):
             converted.extend(j["media"] for j in todo)
             return {j["media"]: {"media": j["media"], "ok": True} for j in todo}
 
-        def finish(args, dsf, out_dir, work, ok, failed, *rest):
+        def finish(*args):
+            ok, failed = args[4], args[5]
             finished.append(([r["media"] for r in ok], failed))
 
         args = SimpleNamespace(
@@ -156,16 +157,16 @@ def test_build_resume_keeps_the_before_flag():
         )
         with mock.patch.multiple(
             port_batch,
-            common=lambda args: (Path("v.sp"), [], {}, {}),
+            common=lambda *_a: (Path("v.sp"), [], {}, {}),
             port_car_args=lambda argv: argv,
-            plan_build=lambda *a: (picks, [], 0),
-            warm_caches=lambda *a: None,
-            open_reuse=lambda args, work: (None, None, False),
-            remembered_attempts=lambda job: None,
-            remember_seconds=lambda reports: None,
-            remember_attempts=lambda reports: None,
+            plan_build=lambda *_a: (picks, [], 0),
+            warm_caches=lambda *_a: None,
+            open_reuse=lambda *_a: (None, None, False),
+            remembered_attempts=lambda *_a: None,
+            remember_seconds=lambda *_a: None,
+            remember_attempts=lambda *_a: None,
             run_workers=run_workers,
-            open_pack_reuse=lambda *a: None,
+            open_pack_reuse=lambda *_a: None,
             finish=finish,
         ):
             port_batch.cmd_build(args)
