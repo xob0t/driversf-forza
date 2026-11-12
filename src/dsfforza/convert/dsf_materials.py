@@ -1447,6 +1447,10 @@ class Texturing:
     wheel_paint: dict = field(default_factory=dict)  # rim technique -> PaintScale applied (_wheel_paint_scale)
     # The wheel's blur disc (WHEEL_BLUR_MAT): plan(wheel_blur=True) puts the picture in the atlas.
     wheel_blur_tint: tuple | None = None  # g_vec4WheelBlurColour RGB (wheel_blur_ramp)
+    # "front"/"rear" -> the wheel part's fit the build draws that axle's rotor with
+    # (forza2dsf conversion's part_fit: axial, radial, tyre centre); prepare(rotor_fits=...).
+    # An axle without one: identity, the wheel model at its own size.
+    rotor_fits: dict = field(default_factory=dict)
     # Exterior only: lamp lenses baked over what lies behind them (src/dsfforza/convert/lenses.py).
     bake_lenses: bool = True
     lens_report: dict = field(default_factory=dict)  # lenses.bake's report
@@ -1767,7 +1771,10 @@ class Texturing:
 
     def _front_rotor(self, lod: int):
         """The front brake rotor section as the build draws it (forza2dsf.brake_rotor_section of
-        the car's rotor carbin, in the wheel model's frame), or None without one."""
+        the car's rotor carbin with the wheel part's fit, rotor_fits), in the wheel model's frame,
+        or None without one. The fit puts the rotor at Forza's own size once the wheel model is
+        scaled by it, so against the unscaled rim the rotor is 1 / fit of its own size, as on
+        the car (research/wheels.md, "Brake rotors"; #596)."""
         from dsfforza.convert.forza2dsf.car import load_rotors
         from dsfforza.convert.forza2dsf.wheels import brake_rotor_section
 
@@ -1775,8 +1782,9 @@ class Texturing:
             rotors = load_rotors(self.car_dir)
         except (OSError, ValueError):
             return None
-        rotor = rotors.get("front") or rotors.get("rear")
-        return brake_rotor_section(rotor, lod, (1.0, 1.0)) if rotor else None
+        axle = "front" if rotors.get("front") else "rear"
+        rotor = rotors.get(axle)
+        return brake_rotor_section(rotor, lod, self.rotor_fits.get(axle, (1.0, 1.0))) if rotor else None
 
     def _wheel_paint_scale(self, sections, lods) -> dict[str, float]:
         """Scale, in place, the RGB of the wheel texture's texels by the PaintScale
@@ -3135,6 +3143,7 @@ def prepare(
     wheels=None,
     uid_seed: bytes | None = None,
     blur_materials: dict | None = None,
+    rotor_fits: dict | None = None,
 ) -> tuple[Binding, Binding | None]:
     """Plan and encode the car's atlas and install it in a host vehicle's full
     entry (and its clean exterior entry). Call before rebuilding the DRSPs,
@@ -3143,7 +3152,8 @@ def prepare(
     chassis texture's, so replace mode leaves the entry size unchanged.
     wheels: (wheel sections, LODs), see Texturing.plan. blur_materials: the shared
     SpokeDisc MACOs (shared_macos(SPOKE_DISC_MATERIALS)); with them the wheel's blur disc
-    samples Forza's spinning-wheel picture (Texturing.plan(wheel_blur=True))."""
+    samples Forza's spinning-wheel picture (Texturing.plan(wheel_blur=True)). rotor_fits:
+    axle -> the wheel part's fit (Texturing.rotor_fits)."""
     full_drsp = child(child(full_vehc, "MDXN"), "DRSP")
     host = host_texture(stream, full_drsp)
     if host is not None:
@@ -3155,7 +3165,9 @@ def prepare(
     # The atlas's background and plain cell: the Desanne's neutral texel (paint
     # itself samples the shared paint texture, PAINT_TEXEL_UV).
     plain = DEFAULT_PLAIN
-    t = Texturing(Path(car_dir), size=size, mips=mips, swatch_trims=swatch_trims, plain=plain)
+    t = Texturing(
+        Path(car_dir), size=size, mips=mips, swatch_trims=swatch_trims, plain=plain, rotor_fits=dict(rotor_fits or {})
+    )
     blur_materials = blur_materials or {}
     t.plan(sections, set(lods), wheels=wheels, wheel_blur=all(u in blur_materials for u in SPOKE_DISC_MATERIALS))
     if t.lens_report:
