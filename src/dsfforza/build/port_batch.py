@@ -114,6 +114,9 @@ DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 
 
 def game_from_dsf(dsf: Path) -> Path:
+    """The game folder of a vanilla archive path (<game>/Install/dngvehicles.sp): one up
+    from a dsfcars backup's copy, and the real game (game_paths.game_dir) for the repo's
+    vanilla copy."""
     game = dsf.resolve().parent.parent
     # <game>/dsfcars-backup/Install/dngvehicles.sp (src/dsfforza/game/game_paths.py): the game is one up.
     if game == game_paths.REPO_VANILLA.resolve():  # the repo's vanilla copy (a junction in a worktree): the real game
@@ -164,7 +167,8 @@ def lint_jobs(jobs: int, free: int | None = None) -> int:
     return max(1, min(jobs, free // LINT_RAM)) if free else max(1, jobs)
 
 
-def _memory_status(field: str) -> int | None:
+def _memory_status(name: str) -> int | None:
+    """A field of GlobalMemoryStatusEx ("avail", "total": bytes), or None outside Windows."""
     if os.name != "nt":
         return None
 
@@ -185,7 +189,7 @@ def _memory_status(field: str) -> int | None:
     status.length = ctypes.sizeof(MemoryStatus)
     if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
         return None
-    return getattr(status, field)
+    return getattr(status, name)
 
 
 def lower_priority() -> None:
@@ -219,6 +223,10 @@ def port_car_args(argv: list[str]) -> argparse.Namespace:
 
 @dataclass
 class Pick:
+    """One car of a selection, as plan prints it and build converts it: the car and its
+    Forza source, body, drive and power, the best host and the vanilla counterpart, the
+    spool ID assign_ids gives it, and notes (a car with notes isn't built)."""
+
     media: str
     game: str
     year: int | None
@@ -383,6 +391,8 @@ def _describe(cars: dict, requests, dbs: dict[str, Path], cache: Path | None, ho
 
 
 def read_list(path: Path) -> list[tuple[str, str | None]]:
+    """The (media, game or None) lines of a car list file: one car per line, MEDIA or
+    MEDIA@fh1/@fm4, # starts a comment."""
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
@@ -1085,6 +1095,8 @@ class MultiStream:
         self.add(first)
 
     def add(self, path: Path) -> int:
+        """Append a file to the address space, at the next 4 KiB boundary; returns where it
+        starts."""
         handle = path.open("rb")
         size = path.stat().st_size
         base = self.size
@@ -1101,6 +1113,8 @@ class MultiStream:
         return self.pos
 
     def read(self, n: int = -1) -> bytes:
+        """Up to n bytes from the current position, within the file it falls in (b"" between
+        files and past the end)."""
         k = bisect.bisect_right(self.starts, self.pos) - 1
         if k < 0:
             return b""
@@ -1326,6 +1340,7 @@ def write_plan(path: Path, dsf: Path, plan: list[dict]) -> Path:
 
 
 def read_plan(path: Path) -> tuple[Path, list[dict]]:
+    """The vanilla archive and the cars of a merge plan file (write_plan)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return Path(data["vanilla"]), data["cars"]
 
@@ -1510,6 +1525,10 @@ def _lint_results(procs: list, records: list | None, log) -> dict[str, dict]:
 
 
 def common(args) -> tuple[Path, list[Path], dict, dict[str, Path]]:
+    """What every command needs first: DSF_GAME_DIR from --dsf, the FM4 DLC packs (or
+    --no-fm4-dlc), Below Normal priority, the disc images identified by their content,
+    game_data prepare, the roster, the gamedbs and the string tables. Returns (dsf, isos,
+    cars, dbs)."""
     set_game_env(args.dsf)
     if getattr(args, "no_fm4_dlc", False):
         from dsfforza.build import fm4_dlc
@@ -1586,6 +1605,8 @@ def print_plan(picks: list[Pick]) -> None:
 
 
 def cmd_plan(args) -> None:
+    """port_batch plan: the selection with its hosts and IDs as a table (and with --tsv as a
+    tab-separated file); nothing is built."""
     dsf, isos, cars, dbs = common(args)
     picks = select(args, cars, dsf, dbs)
     _, taken = vanilla_ids(dsf)
@@ -1827,6 +1848,8 @@ class Reuse:
         return {**report, "reused_from": str(source)}
 
     def summary(self) -> None:
+        """Print how many cars are reused and from where, and why the others are built again
+        (by reason)."""
         names = ", ".join([str(s) for s in self.sources] + ([f"the car store {self.store.root}"] if self.store else []))
         stored = sum(1 for m in self.taken if self.taken_from.get(m) == STORE)
         print(
@@ -2566,6 +2589,7 @@ def pack_all(out_dir: Path, media: list[str], folder: Path, isos: list[Path]) ->
 
 
 def gui_isos(args) -> list[Path]:
+    """The disc images the GUI step and the packages read: --iso, else assets/*.iso."""
     return [Path(i) for i in (getattr(args, "iso", None) or forza_roster.default_images())]
 
 
@@ -2701,6 +2725,9 @@ def write_report(
     args,
     results: dict | None = None,
 ) -> None:
+    """batch-report.json (per car its host, lint, fallback, time, LODs, sizes and engine
+    sound; the failures by cause; the reuse record) and the summary printed at the end of
+    a build."""
     from dsfforza.convert import engine_sound
 
     timings["total"] = round(time.time() - started, 1)
@@ -2987,6 +3014,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """port_batch's command line. `_worker JOB` runs one car's worker process (run_workers
+    starts them)."""
     argv = sys.argv[1:] if argv is None else argv
     safe_stdio()  # python -m dsfforza.build.port_batch, and the _worker processes
     with contextlib.suppress(AttributeError, ValueError):
