@@ -1644,10 +1644,33 @@ class Run:
         if sources:
             self.reporter.stage("build", "running", "reusing cars from " + ", ".join(rel(s) for s in sources))
             hint = seconds_per_car(sources[0])
+        argv = self.port_batch_argv(dirs.staging, sources)
+        build_args = port_batch.build_parser().parse_args(argv)
+        build_args.dsf = game_paths.vanilla(build_args.dsf, quiet=True)
+        build_args.progress = self.reporter.event
+        self.reporter.tracker.seconds_hint = hint
+        os.environ["DSF_GAME_DIR"] = str(self.game)
+        log("port_batch " + " ".join(argv))
+        try:
+            port_batch.cmd_build(build_args)
+        except SystemExit as error:
+            raise StageError(
+                f"The build stopped: {error.code}",
+                f"The cars built so far are kept in {dirs.staging} and reused by the next run.",
+            ) from error
+        self.build_dir = promote(dirs)
+        if self.build_dir != dirs.out:
+            self.summary.notes.append(f"{dirs.out} could not be replaced (in use?); this build is in {self.build_dir}")
+        self.read_report(self.build_dir)
+
+    def port_batch_argv(self, staging: Path, sources: list[Path]) -> list[str]:
+        """port_batch build's command line for this run: into `staging`, the cars of the lists
+        (and the FM4 DLC packs' unless --no-fm4-dlc) and --car, reusing `sources`."""
+        args = self.args
         # The ID policy, root limit and wide glyphs are for the merged archive the build also writes
         # (the in-game tests run it: tools/wsb/run-series.ps1 -Archives); the car packages
         # (--packages, <build>/packages/*.dsfcar) get their IDs from the car manager at install.
-        argv = ["build", "--out", str(dirs.staging), "--dsf", str(self.vanilla_archive), "--gui", "--packages"]
+        argv = ["build", "--out", str(staging), "--dsf", str(self.vanilla_archive), "--gui", "--packages"]
         argv += ["--id-policy", "asi", "--root-limit", str(ASI_ROOT_LIMIT), "--wide-glyphs"]
         for path in self.lists():
             argv += ["--list", str(path)]
@@ -1667,23 +1690,7 @@ class Run:
         argv += ["--verify-mismatch", "rebuild"]
         if args.verify_pack:
             argv += ["--verify-pack"]
-        build_args = port_batch.build_parser().parse_args(argv)
-        build_args.dsf = game_paths.vanilla(build_args.dsf, quiet=True)
-        build_args.progress = self.reporter.event
-        self.reporter.tracker.seconds_hint = hint
-        os.environ["DSF_GAME_DIR"] = str(self.game)
-        log("port_batch " + " ".join(argv))
-        try:
-            port_batch.cmd_build(build_args)
-        except SystemExit as error:
-            raise StageError(
-                f"The build stopped: {error.code}",
-                f"The cars built so far are kept in {dirs.staging} and reused by the next run.",
-            ) from error
-        self.build_dir = promote(dirs)
-        if self.build_dir != dirs.out:
-            self.summary.notes.append(f"{dirs.out} could not be replaced (in use?); this build is in {self.build_dir}")
-        self.read_report(self.build_dir)
+        return argv
 
     def read_report(self, build: Path) -> None:
         s = self.summary

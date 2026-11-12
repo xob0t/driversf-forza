@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from dsfforza.build import forza_roster, install, package, thirdparty
+from dsfforza.build import forza_roster, install, package, port_batch, thirdparty
 
 
 def _tmp():
@@ -664,3 +664,27 @@ def test_package_takes_the_player_files_and_refuses_game_data():
         raise AssertionError("missing file not noticed")
     except SystemExit as error:
         assert "uv.lock" in str(error)
+
+
+def test_port_batch_argv():
+    with _tmp() as tmp:
+        root = Path(tmp)
+        args = _args("--no-fm4-dlc", "--car", "AAA_X_01@fm4", "--verify-pack", out=root / "build")
+        run = _run(args)
+        run.isos, run.vanilla_archive = [root / "a.iso"], root / "v.sp"
+        argv = run.port_batch_argv(root / "build.new", [root / "old"])
+        assert argv == [
+            *("build", "--out", str(root / "build.new"), "--dsf", str(root / "v.sp"), "--gui", "--packages"),
+            *("--id-policy", "asi", "--root-limit", "3003", "--wide-glyphs", "--no-fm4-dlc"),
+            *("--car", "AAA_X_01@fm4", "--iso", str(root / "a.iso"), "--reuse", str(root / "old")),
+            *("--jobs", "1", "--verify-reuse", "2", "--verify-mismatch", "rebuild", "--verify-pack"),
+        ]
+        # The default list unless --car names the cars; nothing reused: no reuse check.
+        listed = _run(_args("--no-fm4-dlc", out=root / "build"))
+        listed.isos, listed.vanilla_archive = [], root / "v.sp"
+        argv = listed.port_batch_argv(root / "build.new", [])
+        assert argv[argv.index("--list") + 1] == str(install.DEFAULT_LIST)
+        assert argv[argv.index("--verify-reuse") + 1] == "0"
+        assert "--verify-pack" not in argv
+        # port_batch's own parser takes it
+        port_batch.build_parser().parse_args(argv)
