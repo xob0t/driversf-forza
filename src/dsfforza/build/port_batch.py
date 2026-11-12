@@ -2280,161 +2280,32 @@ def finish(
     """Merge, lint, manifest, Lua, GUI assets and the report. `pack`: a
     pack_reuse.PackReuse, to take from earlier builds what didn't change (the whole
     pack, lint results, garage pictures) and record this pack for later ones."""
-    from dsfforza.build import pack_reuse
-
     archive = out_dir / "dngvehicles.sp"
     progress = getattr(args, "progress", None)
     if not ok:
         write_report(out_dir, archive, [], failed, timings, started, args)
         raise SystemExit("no car was built")
     verify = copy.deepcopy((ok, failed)) if pack is not None and getattr(args, "verify_pack", False) else None
-    reused = None
-    if pack is not None:
-        t = time.time()
-        pack.prepare(ok, work)
-        earlier = pack.whole()
-        timings["pack_check"] = round(time.time() - t, 1)
-        if earlier is not None:
-            print(f"pack: the same cars, settings, inputs and code as {earlier.folder}'s pack; reusing it")
-            emit(progress, "pack_reused", source=str(earlier.folder), cars=len(ok))
-            t = time.time()
-            reused = pack.take_whole(earlier)
-            timings["pack_reuse"] = round(time.time() - t, 1)
-        else:
-            pack.start_recording()
+    reused = take_whole_pack(pack, ok, work, timings, progress)
+    merged: dict = {}
     if reused is not None:
         cars_out, merge_failed = reused
         failed += merge_failed
-        for f in merge_failed:
-            emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
+        emit_failures(progress, merge_failed)
     else:
-        t = time.time()
-        print(f"merging {len(ok)} cars into {archive}")
-        emit(progress, "merge", cars=len(ok))
-        merged: dict = {}
-        cars_out, merge_failed = merge(
-            dsf,
-            archive,
-            ok,
-            work,
-            root_limit=root_limit_of(args),
-            write=not getattr(args, "no_archive", False),
-            info=merged,
-        )
+        cars_out, merge_failed = merge_built(args, dsf, archive, ok, work, merged, timings, progress)
         failed += merge_failed
-        timings["merge"] = round(time.time() - t, 1)
-        for f in merge_failed:
-            emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
+        emit_failures(progress, merge_failed)
         if not cars_out:
             if pack is not None:
                 pack.forget()
             write_report(out_dir, archive, [], failed, timings, started, args, results)
             raise SystemExit("no car could be merged")
-        plan = out_dir / MERGE_PLAN
-        if merged.get("written", True):
-            plan.unlink(missing_ok=True)  # an earlier build's
-            lint_source = archive
-        else:  # too large for one CHNK (or --no-archive): lint merges the cars in memory
-            lint_source = write_plan(plan, dsf, merged["plan"])
-        t = time.time()
-        parallel = lint_jobs(args.jobs)
-        if pack is None:
-            emit(progress, "lint", cars=len(cars_out), total=len(cars_out))
-            lint_all(lint_source, dsf, cars_out, parallel)
-        else:
-
-            def run(cars: list[dict], defined: set[int]) -> dict:
-                print(f"lint: {len(cars)} of {len(cars_out)} cars")
-                emit(progress, "lint", cars=len(cars), total=len(cars_out))
-                return lint_all(
-                    lint_source,
-                    dsf,
-                    cars,
-                    parallel,
-                    facts=True,
-                    defined=defined,
-                    records=pack.records,
-                    record_dir=out_dir / pack_reuse.FOLDER,
-                )
-
-            pack.lint(cars_out, run)
-        timings["lint"] = round(time.time() - t, 1)
-    lint_failed = [c for c in cars_out if c.get("lint") != "ok"]
-    if lint_failed:
-        print(f"{len(lint_failed)} car(s) failed lint; they stay in the archive but are listed as failed")
-    for c in lint_failed:
-        emit(progress, "lint_failed", media=c["media"], text=c.get("lint"))
-
-    from dsfforza.build import port_car
-
-    manifest = {
-        "archive": str(archive),
-        "vanilla": str(dsf),
-        "vanilla_sha256": sha256(dsf),
-        "host": port_args.host,
-        "sound_host": port_args.sound_host,
-        "created": datetime.datetime.now().isoformat(timespec="seconds"),
-        "textures": port_args.textures,
-        "renewed_uids": not port_args.share_host_uids,
-        "cockpit": not port_args.no_cockpit,
-        "cars": cars_out,
-        "probe_ids": [c["spool_id"] for c in cars_out],
-        "batch": {
-            "id_policy": args.id_policy,
-            "port_options": port_options,
-            "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed],
-        },
-    }
-    manifest_path = out_dir / "dngvehicles.json"
-    manifest_path.write_text(json.dumps(manifest, indent=1, default=str) + "\n", encoding="utf-8")
-    (out_dir / "dngvehicles.lua").write_text(port_car.lua_snippet(manifest), encoding="utf-8", newline="\n")
+        lint_merged(args, dsf, out_dir, archive, cars_out, merged, pack, timings)
+    report_lint(cars_out, progress)
+    manifest_path = write_manifest(args, dsf, out_dir, archive, cars_out, failed, port_args, port_options)
     if args.gui and reused is None:
-        t = time.time()
-        from dsfforza.game import gui_assets
-
-        emit(progress, "gui", cars=len(cars_out))
-
-        def gui_log(text=""):
-            print(text)
-            emit(progress, "gui_log", text=str(text))
-
-        # Without the merged archive the renders read archives of some cars each (Shards).
-        shards = None if archive.is_file() else Shards(dsf, merged["plan"], out_dir / SHARDS, log=gui_log)
-        try:
-            gui_assets.build(
-                manifest_path,
-                out_dir / "gui",
-                log=gui_log,
-                archive=archive if shards is None else shards,
-                wide_glyphs=getattr(args, "wide_glyphs", False),
-                # The same CHNK reader limit: with dsfcars.asi [archive] gui.sp gets one
-                # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
-                root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
-                jobs=render_jobs(args.jobs),
-                # The disc images by title (logos, names): any file names, FH1 not needed.
-                isos=gui_isos(args),
-                cache=pack.picture_cache() if pack is not None else None,
-                record=pack.records if pack is not None else None,
-            )
-        except Exception as error:  # noqa: BLE001 - reported; the archive is still usable without pictures
-            print(f"gui assets failed: {type(error).__name__}: {error}")
-            timings["gui_error"] = f"{type(error).__name__}: {error}"
-            emit(progress, "gui_failed", error=timings["gui_error"])
-            # An earlier run's gui/ (or this run's half) doesn't match the new archive's IDs, and
-            # install.ps1 installs whatever gui/ holds: move it aside, nothing is deleted.
-            gui = out_dir / "gui"
-            if gui.exists():
-                stale = out_dir / f"gui-stale-{datetime.datetime.now():%Y%m%d-%H%M%S}"
-                try:
-                    gui.rename(stale)
-                    print(f"moved {gui} to {stale.name}: it doesn't match this archive")
-                    timings["gui_stale"] = str(stale)
-                except OSError as move_error:
-                    print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
-        finally:
-            if shards is not None:
-                shards.close()
-        timings["gui"] = round(time.time() - t, 1)
+        build_gui(args, dsf, out_dir, archive, manifest_path, cars_out, merged, pack, timings)
     if pack is not None:
         t = time.time()
         pack.save(
@@ -2455,6 +2326,197 @@ def finish(
     if getattr(args, "clean_work", False):
         for c in cars_out:
             (work / f"{c['media']}.chnk").unlink(missing_ok=True)
+
+
+def take_whole_pack(pack, ok: list[dict], work: Path, timings: dict, progress) -> tuple[list, list] | None:
+    """(the manifest's cars, the merge's failures) of an earlier pack of the same cars,
+    settings, inputs and code, taken whole (pack_reuse.PackReuse.take_whole); else None,
+    and `pack` (when there is one) starts recording this pack for later builds."""
+    if pack is None:
+        return None
+    t = time.time()
+    pack.prepare(ok, work)
+    earlier = pack.whole()
+    timings["pack_check"] = round(time.time() - t, 1)
+    if earlier is None:
+        pack.start_recording()
+        return None
+    print(f"pack: the same cars, settings, inputs and code as {earlier.folder}'s pack; reusing it")
+    emit(progress, "pack_reused", source=str(earlier.folder), cars=len(ok))
+    t = time.time()
+    reused = pack.take_whole(earlier)
+    timings["pack_reuse"] = round(time.time() - t, 1)
+    return reused
+
+
+def emit_failures(progress, failures: list[dict]) -> None:
+    """A car_failed event for each car the merge left out."""
+    for f in failures:
+        emit(progress, "car_failed", media=f["media"], cause=f.get("cause"), error=f.get("error"))
+
+
+def merge_built(
+    args, dsf: Path, archive: Path, ok: list[dict], work: Path, merged: dict, timings: dict, progress
+) -> tuple[list[dict], list[dict]]:
+    """merge the built cars into `archive` (not written with --no-archive or past a CHNK's
+    size; `merged` gets register_cars' info): (the manifest's cars, the cars left out)."""
+    t = time.time()
+    print(f"merging {len(ok)} cars into {archive}")
+    emit(progress, "merge", cars=len(ok))
+    cars_out, merge_failed = merge(
+        dsf,
+        archive,
+        ok,
+        work,
+        root_limit=root_limit_of(args),
+        write=not getattr(args, "no_archive", False),
+        info=merged,
+    )
+    timings["merge"] = round(time.time() - t, 1)
+    return cars_out, merge_failed
+
+
+def lint_merged(
+    args, dsf: Path, out_dir: Path, archive: Path, cars: list[dict], merged: dict, pack, timings: dict
+) -> None:
+    """upvh lint for the merged cars (lint_all sets each car's "lint"): from the archive, or
+    from its merge plan (MERGE_PLAN) when it wasn't written; with `pack` only the cars
+    whose lint can't be taken from an earlier pack (pack_reuse.PackReuse.lint)."""
+    from dsfforza.build import pack_reuse
+
+    progress = getattr(args, "progress", None)
+    plan = out_dir / MERGE_PLAN
+    if merged.get("written", True):
+        plan.unlink(missing_ok=True)  # an earlier build's
+        lint_source = archive
+    else:  # too large for one CHNK (or --no-archive): lint merges the cars in memory
+        lint_source = write_plan(plan, dsf, merged["plan"])
+    t = time.time()
+    parallel = lint_jobs(args.jobs)
+    if pack is None:
+        emit(progress, "lint", cars=len(cars), total=len(cars))
+        lint_all(lint_source, dsf, cars, parallel)
+    else:
+
+        def run(some: list[dict], defined: set[int]) -> dict:
+            print(f"lint: {len(some)} of {len(cars)} cars")
+            emit(progress, "lint", cars=len(some), total=len(cars))
+            return lint_all(
+                lint_source,
+                dsf,
+                some,
+                parallel,
+                facts=True,
+                defined=defined,
+                records=pack.records,
+                record_dir=out_dir / pack_reuse.FOLDER,
+            )
+
+        pack.lint(cars, run)
+    timings["lint"] = round(time.time() - t, 1)
+
+
+def report_lint(cars: list[dict], progress) -> None:
+    """Name the cars that failed lint (they stay in the archive, listed as failed)."""
+    lint_failed = [c for c in cars if c.get("lint") != "ok"]
+    if lint_failed:
+        print(f"{len(lint_failed)} car(s) failed lint; they stay in the archive but are listed as failed")
+    for c in lint_failed:
+        emit(progress, "lint_failed", media=c["media"], text=c.get("lint"))
+
+
+def write_manifest(
+    args, dsf: Path, out_dir: Path, archive: Path, cars: list[dict], failed: list[dict], port_args, port_options
+) -> Path:
+    """dngvehicles.json (port_car's manifest format, plus "batch": the ID policy, the
+    options and the failures) and dngvehicles.lua (port_car.lua_snippet). Returns the
+    manifest's path."""
+    from dsfforza.build import port_car
+
+    manifest = {
+        "archive": str(archive),
+        "vanilla": str(dsf),
+        "vanilla_sha256": sha256(dsf),
+        "host": port_args.host,
+        "sound_host": port_args.sound_host,
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "textures": port_args.textures,
+        "renewed_uids": not port_args.share_host_uids,
+        "cockpit": not port_args.no_cockpit,
+        "cars": cars,
+        "probe_ids": [c["spool_id"] for c in cars],
+        "batch": {
+            "id_policy": args.id_policy,
+            "port_options": port_options,
+            "failed": [{k: f.get(k) for k in ("media", "spool_id", "cause", "error")} for f in failed],
+        },
+    }
+    manifest_path = out_dir / "dngvehicles.json"
+    manifest_path.write_text(json.dumps(manifest, indent=1, default=str) + "\n", encoding="utf-8")
+    (out_dir / "dngvehicles.lua").write_text(port_car.lua_snippet(manifest), encoding="utf-8", newline="\n")
+    return manifest_path
+
+
+def build_gui(
+    args, dsf: Path, out_dir: Path, archive: Path, manifest: Path, cars: list[dict], merged: dict, pack, timings: dict
+) -> None:
+    """--gui: gui.sp, Fonts.fchunk and hud.lua into out_dir/gui (gui_assets.build), the
+    garage pictures drawn from the merged archive or, without it, from Shards. A failure
+    leaves the build usable: it goes to timings["gui_error"] and an earlier gui/ is moved
+    aside (move_stale_gui)."""
+    from dsfforza.game import gui_assets
+
+    progress = getattr(args, "progress", None)
+    t = time.time()
+    emit(progress, "gui", cars=len(cars))
+
+    def gui_log(text=""):
+        print(text)
+        emit(progress, "gui_log", text=str(text))
+
+    # Without the merged archive the renders read archives of some cars each (Shards).
+    shards = None if archive.is_file() else Shards(dsf, merged["plan"], out_dir / SHARDS, log=gui_log)
+    try:
+        gui_assets.build(
+            manifest,
+            out_dir / "gui",
+            log=gui_log,
+            archive=archive if shards is None else shards,
+            wide_glyphs=getattr(args, "wide_glyphs", False),
+            # The same CHNK reader limit: with dsfcars.asi [archive] gui.sp gets one
+            # SPOI per picture too, not shared SPOIs past 177 (research/gui-assets.md).
+            root_limit=getattr(args, "root_limit", None) or ENTRY_LIMIT,
+            jobs=render_jobs(args.jobs),
+            # The disc images by title (logos, names): any file names, FH1 not needed.
+            isos=gui_isos(args),
+            cache=pack.picture_cache() if pack is not None else None,
+            record=pack.records if pack is not None else None,
+        )
+    except Exception as error:  # noqa: BLE001 - reported; the archive is still usable without pictures
+        print(f"gui assets failed: {type(error).__name__}: {error}")
+        timings["gui_error"] = f"{type(error).__name__}: {error}"
+        emit(progress, "gui_failed", error=timings["gui_error"])
+        move_stale_gui(out_dir, timings)
+    finally:
+        if shards is not None:
+            shards.close()
+    timings["gui"] = round(time.time() - t, 1)
+
+
+def move_stale_gui(out_dir: Path, timings: dict) -> None:
+    """After a failed GUI step: an earlier run's gui/ (or this run's half) doesn't match the
+    new archive's IDs, and install.ps1 installs whatever gui/ holds, so it is moved aside to
+    gui-stale-<time>/ (timings["gui_stale"]); nothing is deleted."""
+    gui = out_dir / "gui"
+    if not gui.exists():
+        return
+    stale = out_dir / f"gui-stale-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    try:
+        gui.rename(stale)
+        print(f"moved {gui} to {stale.name}: it doesn't match this archive")
+        timings["gui_stale"] = str(stale)
+    except OSError as move_error:
+        print(f"warning: {gui} doesn't match this archive and could not be moved: {move_error}")
 
 
 PACKAGES = "packages"  # <build>/packages/<key>.dsfcar (--packages)

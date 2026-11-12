@@ -112,3 +112,17 @@ def test_split_results_keeps_plan_order():
         results["AAA_ONE_01"],
         {"media": "CCC_SKIP_03", "ok": False, "cause": "not selected", "error": "not a car; x"},
     ]
+
+
+def test_a_failed_gui_step_moves_the_old_gui_aside():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        timings: dict = {}
+        port_batch.move_stale_gui(out, timings)  # no gui/: nothing to move
+        assert timings == {} and list(out.iterdir()) == []
+        (out / "gui").mkdir()
+        (out / "gui" / "hud.lua").write_text("other cars", encoding="utf-8")
+        port_batch.move_stale_gui(out, timings)
+        [stale] = list(out.iterdir())
+        assert stale.name.startswith("gui-stale-") and timings == {"gui_stale": str(stale)}
+        assert (stale / "hud.lua").read_text(encoding="utf-8") == "other cars"
