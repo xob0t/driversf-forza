@@ -393,60 +393,73 @@ def read_list(path: Path) -> list[tuple[str, str | None]]:
 
 
 def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
-    explicit = [(m, g.upper() or None) for m, _, g in (c.partition("@") for c in args.car or [])]
-    for path in args.list or []:
-        explicit += read_list(path)
-    if getattr(args, "fm4_dlc_cars", False):
-        explicit += dlc_requests(cars)
-    if explicit:
-        requests = explicit
-    else:
-        requests = [
-            (c.name, args.game.upper() if args.game else None)
-            for c in sorted(cars.values(), key=lambda c: c.name.lower())
-            if not args.game or args.game.upper() in c.games.split(",")
-        ]
+    """The cars a plan/affected/build selection names, described (describe_cars): the
+    named ones in their order, else the roster cars the filters keep; then --exclude,
+    --diverse and --max, each car once."""
+    requests, named = selection_requests(args, cars)
     picks = describe_cars(cars, requests, dsf, dbs, args.cache)
     excluded = {e.lower() for e in args.exclude or []}
+    keep = (lambda _: True) if named else roster_filter(args)  # a named list is taken as given
+    out = [p for p in picks if p.media.lower() not in excluded and keep(p)]
+    if args.diverse:
+        out = diverse(out, args.diverse)
+    if args.max:
+        out = out[: args.max]
+    return unique_cars(out)
+
+
+def selection_requests(args, cars: dict) -> tuple[list[tuple[str, str | None]], bool]:
+    """(the (media, game or None) requests of a selection, whether they were named): --car,
+    --list and --fm4-dlc-cars in that order, else every roster car (of --game) by name."""
+    named = [(m, g.upper() or None) for m, _, g in (c.partition("@") for c in args.car or [])]
+    for path in args.list or []:
+        named += read_list(path)
+    if getattr(args, "fm4_dlc_cars", False):
+        named += dlc_requests(cars)
+    if named:
+        return named, True
+    game = args.game.upper() if args.game else None
+    roster_cars = sorted(cars.values(), key=lambda c: c.name.lower())
+    return [(c.name, game) for c in roster_cars if not game or game in c.games.split(",")], False
+
+
+def roster_filter(args):
+    """A predicate over Picks for a roster selection's filters: no notes, --game, --make (a
+    make code or name), --body (race cars only when named), --year, --counterpart and
+    --no-counterpart."""
+    game = args.game.upper() if args.game else None
     makes = {m.strip().lower() for m in (args.make or "").split(",") if m.strip()}
     bodies = {b.strip().lower() for b in (args.body or "").split(",") if b.strip()}
     years = None
     if args.year:
         lo, _, hi = args.year.partition("-")
         years = (int(lo or 0), int(hi or 9999))
+
+    def keep(p: Pick) -> bool:
+        if p.notes or (game and p.game != game):
+            return False
+        if makes and p.make.lower() not in makes and p.media.split("_")[0].lower() not in makes:
+            return False
+        if (bodies and p.body not in bodies) or (not bodies and p.body == "race"):
+            return False
+        if years and not (p.year and years[0] <= p.year <= years[1]):
+            return False
+        if args.no_counterpart and p.counterpart is not None:
+            return False
+        return not (args.counterpart and p.counterpart is None)
+
+    return keep
+
+
+def unique_cars(picks: list[Pick]) -> list[Pick]:
+    """The picks without repeats of a car (by media name, case-blind), first one kept."""
+    seen = set()
     out = []
     for p in picks:
-        if p.media.lower() in excluded:
-            continue
-        if not explicit:  # filters apply to the roster; a named list is taken as given
-            if p.notes:
-                continue
-            if args.game and p.game != args.game.upper():
-                continue
-            if makes and p.make.lower() not in makes and p.media.split("_")[0].lower() not in makes:
-                continue
-            if bodies and p.body not in bodies:
-                continue
-            if not bodies and p.body == "race":
-                continue
-            if years and not (p.year and years[0] <= p.year <= years[1]):
-                continue
-            if args.no_counterpart and p.counterpart is not None:
-                continue
-            if args.counterpart and p.counterpart is None:
-                continue
-        out.append(p)
-    if args.diverse:
-        out = diverse(out, args.diverse)
-    if args.max:
-        out = out[: args.max]
-    seen = set()
-    unique = []
-    for p in out:
         if p.media.lower() not in seen:
             seen.add(p.media.lower())
-            unique.append(p)
-    return unique
+            out.append(p)
+    return out
 
 
 def diverse(picks: list[Pick], count: int) -> list[Pick]:
