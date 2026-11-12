@@ -58,6 +58,31 @@ def test_no_option_fallback_for_a_dead_worker():
     assert port_batch.cause_of('File "/r/src/dsfforza/cli.py", line 3\nKeyError: k') == "cli.py: KeyError"
 
 
+def test_retry_job_after_a_damage_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        for ext in ("json", "log"):  # no fp.json: a failed car's worker may not write one
+            (work / f"CAR.{ext}").write_text(ext, encoding="utf-8")
+        job = {"media": "CAR", "spool_id": 7, "port_options": ["--damage", "panels", "--no-forza-sound"]}
+        failed = {"ok": False, "cause": "damage.py: ValueError", "error": "ValueError: x", "seconds": 12.5}
+        failed["traceback"] = 'File "src/dsfforza/convert/damage.py", line 1'
+        retry = port_batch.retry_job(job, failed, work)
+        assert retry == {
+            **job,
+            "port_options": ["--no-forza-sound"],
+            "fallback": "without --damage (src/dsfforza/convert/damage.py failed)",
+            "first_error": "ValueError: x",
+            "first_cause": "damage.py: ValueError",
+            "seconds_before": 12.5,
+        }
+        assert sorted(p.name for p in work.iterdir()) == ["CAR.first-try.json", "CAR.first-try.log"]
+        # No second retry, none for a car that built or a --verify-reuse check.
+        assert port_batch.retry_job(retry, failed, work) is None
+        assert port_batch.retry_job({**job, "verify": True}, failed, work) is None
+        assert port_batch.retry_job(job, {**failed, "ok": True}, work) is None
+        assert port_batch.retry_job(job, {**failed, "traceback": "", "error": "lights.py"}, work) is None
+
+
 def test_a_worker_that_dies_is_a_failed_car():
     """A worker that dies before it writes a report (here: a job without the keys it
     needs) is reported as a failed car; the batch carries on."""

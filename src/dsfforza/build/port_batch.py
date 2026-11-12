@@ -850,28 +850,11 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                     break
                 waiting = False
                 job = pending.pop(0)
-                job_path = work / f"{job['media']}.job.json"
-                job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
-                log_file = (work / f"{job['media']}.log").open("w", encoding="utf-8")
                 try:
-                    proc = subprocess.Popen(
-                        [sys.executable, "-m", "dsfforza.build.port_batch", "_worker", str(job_path)],
-                        stdout=log_file,
-                        stderr=subprocess.STDOUT,
-                        creationflags=flags,
-                        cwd=str(REPO),
-                        env={**os.environ, "PYTHONUNBUFFERED": "1", **_fingerprint_worker_env()},
-                    )
+                    proc, log_file = start_worker(job, work, flags)
                 except OSError as error:
-                    log_file.close()
                     slot.release()
-                    results[job["media"]] = {
-                        "media": job["media"],
-                        "spool_id": job["spool_id"],
-                        "ok": False,
-                        "cause": "worker crash",
-                        "error": f"could not start: {error}",
-                    }
+                    results[job["media"]] = start_failure(job, error)
                     log(f"  FAILED to start {job['media']}: {error}")
                     emit(progress, "car_done", media=job["media"], report=results[job["media"]], log=None)
                     continue
@@ -898,41 +881,15 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                 log_file.close()
                 del running[media]
                 slots.pop(media).release()
-                report = worker_report(work, media, code)
-                report.setdefault("spool_id", jobs_by_media[media]["spool_id"])
-                report["seconds"] = round(time.time() - started, 1) + jobs_by_media[media].get("seconds_before", 0)
                 job = jobs_by_media[media]
-                retry = (
-                    None
-                    if report.get("ok") or job.get("fallback") or job.get("verify")
-                    else fallback_for(report, job["port_options"])
-                )
-                if retry:
-                    options, why = retry
-                    for ext in ("json", "log", "fp.json"):  # a crashed worker leaves no report
-                        if (work / f"{media}.{ext}").exists():
-                            (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
-                    job = {
-                        **job,
-                        "port_options": options,
-                        "fallback": why,
-                        "first_error": report.get("error"),
-                        "first_cause": report.get("cause"),
-                        "seconds_before": report["seconds"],
-                    }
-                    jobs_by_media[media] = job
-                    pending.append(job)
-                    log(f"  retry {media} {why}")
-                    emit(progress, "car_retry", media=media, why=why, cause=report.get("cause"))
+                report = finished_report(work, job, code, started)
+                retry = retry_job(job, report, work)
+                if retry is not None:
+                    jobs_by_media[media] = retry
+                    pending.append(retry)
+                    log(f"  retry {media} {retry['fallback']}")
+                    emit(progress, "car_retry", media=media, why=retry["fallback"], cause=report.get("cause"))
                     continue
-                if job.get("fallback"):
-                    report.update(
-                        {
-                            "fallback": job["fallback"],
-                            "first_error": job.get("first_error"),
-                            "first_cause": job.get("first_cause"),
-                        }
-                    )
                 results[media] = report
                 state = "ok" if report.get("ok") else f"FAILED ({report.get('cause')}: {report.get('error', '')[:160]})"
                 log(
@@ -941,14 +898,94 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                 )
                 emit(progress, "car_done", media=media, report=report, log=str(work / f"{media}.log"))
     finally:
-        for proc, _, log_file in running.values():  # only when leaving early
-            proc.kill()
-            proc.wait()
-            log_file.close()
-        for slot in slots.values():
-            slot.release()
+        stop_workers(running, slots)  # only when leaving early: none run on otherwise
         jobpool.leave_queue()
     return results
+
+
+def stop_workers(running: dict, slots: dict) -> None:
+    """Stop run_workers' running workers ({media: (process, start time, log file)}) and give
+    their job pool slots back."""
+    for proc, _, log_file in running.values():
+        proc.kill()
+        proc.wait()
+        log_file.close()
+    for slot in slots.values():
+        slot.release()
+
+
+def start_worker(job: dict, work: Path, flags: int) -> tuple[subprocess.Popen, object]:
+    """Start the worker process of one job: work/<media>.job.json is its job, work/<media>.log
+    its output. Returns (the process, its open log file); OSError when it can't start."""
+    job_path = work / f"{job['media']}.job.json"
+    job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
+    log_file = (work / f"{job['media']}.log").open("w", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "dsfforza.build.port_batch", "_worker", str(job_path)],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            creationflags=flags,
+            cwd=str(REPO),
+            env={**os.environ, "PYTHONUNBUFFERED": "1", **_fingerprint_worker_env()},
+        )
+    except OSError:
+        log_file.close()
+        raise
+    return proc, log_file
+
+
+def start_failure(job: dict, error: OSError) -> dict:
+    """The report of a car whose worker process could not start."""
+    return {
+        "media": job["media"],
+        "spool_id": job["spool_id"],
+        "ok": False,
+        "cause": "worker crash",
+        "error": f"could not start: {error}",
+    }
+
+
+def finished_report(work: Path, job: dict, code: int | None, started: float) -> dict:
+    """The report of a job's worker that ended (code None: stopped at WORKER_TIMEOUT):
+    worker_report, with the job's spool ID when it gives none, the seconds of every try of
+    the car, and for a retry its fallback and the first try's error and cause."""
+    report = worker_report(work, job["media"], code)
+    report.setdefault("spool_id", job["spool_id"])
+    report["seconds"] = round(time.time() - started, 1) + job.get("seconds_before", 0)
+    if job.get("fallback"):  # a retry, which is never retried again (retry_job)
+        report.update(
+            {
+                "fallback": job["fallback"],
+                "first_error": job.get("first_error"),
+                "first_cause": job.get("first_cause"),
+            }
+        )
+    return report
+
+
+def retry_job(job: dict, report: dict, work: Path) -> dict | None:
+    """The job to run again after its car failed, with fallback_for's options, or None: the
+    car built, the job was a retry or a --verify-reuse check already, or no fallback helps.
+    The failed try's work files are kept as work/<media>.first-try.*."""
+    if report.get("ok") or job.get("fallback") or job.get("verify"):
+        return None
+    retry = fallback_for(report, job["port_options"])
+    if not retry:
+        return None
+    options, why = retry
+    media = job["media"]
+    for ext in ("json", "log", "fp.json"):  # a crashed worker leaves no report
+        if (work / f"{media}.{ext}").exists():
+            (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
+    return {
+        **job,
+        "port_options": options,
+        "fallback": why,
+        "first_error": report.get("error"),
+        "first_cause": report.get("cause"),
+        "seconds_before": report["seconds"],
+    }
 
 
 SECONDS_CACHE = REPO / "out" / "cache" / "car-seconds.json"
