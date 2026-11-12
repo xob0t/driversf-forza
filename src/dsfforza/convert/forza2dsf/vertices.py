@@ -60,9 +60,18 @@ def encode_vertex(stride: int, pos, uv0, uv1, normal, s9: bytes = RIGID, sky: fl
 # (needles, with 4096, were the only lit parts). Forza bakes per-vertex
 # ambient occlusion into the first trailing vertex byte (0..~107, FH1 and
 # FM4). We write AO x a hemisphere factor.
+#
+# TODO(fit, #597): SKY_FLOOR and SKY_RANGE were set on the Desanne, and DEFAULT_AO has
+# no source either. Vanilla's body bake is sky visibility at full scale 1: its upper
+# envelope is (1 + n_y) / 2 from n_y -0.6 up (research/wheels.md, "Vanilla's body
+# bake"), and Forza's AO byte holds no ground term (its open envelope is ~1 at every
+# facing: research/wheels.md, "Forza's AO byte against the body bake"). So an open
+# vertex would be (1 + n_y) / 2, not 0.25 + 0.55 (1 + n_y) / 2. What isn't derived yet:
+# whether AO x (1 + n_y) / 2 matches vanilla on occluded vertices, and vanilla's
+# 0.13..0.25 below n_y -0.6, where (1 + n_y) / 2 gives ~0.
 FORZA_AO_FULL = 105  # Forza AO byte for a fully open vertex
-DEFAULT_AO = 0.8  # sections whose AO byte is garbage (FM4 glass: constant 0 or 255)
-SKY_FLOOR, SKY_RANGE = 0.25, 0.55
+DEFAULT_AO = 0.8  # TODO(fit, #597): sections whose AO byte is garbage (FM4 glass: constant 0 or 255)
+SKY_FLOOR, SKY_RANGE = 0.25, 0.55  # TODO(fit, #597): set on the Desanne
 _ao_valid: dict[int, tuple[list, bool]] = {}  # id(pool) -> (the pool, so its id stays its own; valid)
 AO_VALID_KEEP = 1024  # pools remembered (a car has a few hundred)
 
