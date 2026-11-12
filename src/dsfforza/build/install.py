@@ -152,6 +152,8 @@ def missing_plugin_error(repo: Path) -> StageError:
 
 
 def sha256(path: Path) -> str:
+    """A file's SHA-256 as upper-case hex (the form of VANILLA_ARCHIVE_SHA256 and
+    VANILLA_FILES)."""
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         while block := handle.read(1 << 22):
@@ -339,6 +341,7 @@ def documents_dir() -> Path:
 
 
 def default_save_dir() -> Path:
+    """The game's save folder: Documents/Ubisoft/Driver San Francisco/reloaded/savegames."""
     return documents_dir() / "Ubisoft" / "Driver San Francisco" / "reloaded" / "savegames"
 
 
@@ -351,6 +354,8 @@ def free_bytes(path: Path) -> int:
 
 
 def drive_of(path: Path) -> str:
+    """The drive a path is on (its anchor, lower case), to add up the space needed per
+    drive."""
     return Path(path).resolve().anchor.lower()
 
 
@@ -405,6 +410,8 @@ def count_cars(lists: list[Path], cars: list[str]) -> int:
 
 
 def fingerprinted_cars(build: Path) -> int:
+    """How many cars of a build have a fingerprint (work/*.fp.json), so --reuse can take
+    them."""
     work = Path(build) / "work"
     return sum(1 for _ in work.glob("*.fp.json")) if work.is_dir() else 0
 
@@ -429,12 +436,17 @@ def earlier_build(out_root: Path, exclude: list[Path]) -> Path | None:
 
 @dataclass
 class BuildDirs:
+    """A dsff install build's folders: the finished build, this run's staging folder and an
+    interrupted run's."""
+
     out: Path  # the finished build (out/build)
     staging: Path  # this run's (out/build.new)
     partial: Path  # an interrupted run's (out/build.partial)
 
     @classmethod
     def of(cls, out: Path) -> BuildDirs:
+        """The folders around the finished build `out` (out/build: out/build.new,
+        out/build.partial)."""
         out = Path(out)
         return cls(out, out.with_name(out.name + ".new"), out.with_name(out.name + ".partial"))
 
@@ -538,6 +550,8 @@ def asi_sources_digest(source: Path = ASI_SOURCE) -> str:
 
 
 def stamp_path(asi: Path) -> Path:
+    """dsfcars.build.json beside a plugin: the sources digest and the file hash it was built
+    from."""
     return Path(asi).with_name("dsfcars.build.json")
 
 
@@ -612,6 +626,8 @@ def hook_source(path: Path) -> bool:
 
 
 def installed(record: dict | None) -> bool:
+    """Whether an install record is of a dsfforza install that is still in place (not
+    uninstalled)."""
     return bool(record) and record.get("state") != "uninstalled"
 
 
@@ -702,6 +718,8 @@ def gui_problem(build: Path) -> str | None:
 
 @dataclass
 class CarFailure:
+    """A car the build failed or left out, as the display and the summary show it."""
+
     media: str
     cause: str
     error: str = ""
@@ -739,10 +757,13 @@ class Tracker:
 
     @property
     def stage(self) -> str:
+        """The install stage the build's phase is in: build (plan, convert, verify), else
+        pack."""
         return "build" if self.phase in ("plan", "convert", "verify") else "pack"
 
     @property
     def done(self) -> int:
+        """The cars ready so far: reused and converted."""
         return self.reused + self.converted
 
     def rate(self) -> float | None:
@@ -884,6 +905,7 @@ class Tracker:
         return []
 
     def pack_detail(self) -> str:
+        """The pack stage's detail line for the current phase ("" outside the pack)."""
         if self.phase == "packages":
             return f"writing {self.packages_total} car packages"
         if self.phase == "merge":
@@ -931,6 +953,7 @@ def reason_kind(why: str) -> str:
 
 
 def clock_text(seconds: float | None) -> str:
+    """Seconds as m:ss or h:mm:ss, "--:--" when unknown."""
     if seconds is None:
         return "--:--"
     seconds = int(seconds)
@@ -939,6 +962,7 @@ def clock_text(seconds: float | None) -> str:
 
 
 def size_text(n: int | None) -> str:
+    """Bytes as GiB (from 1 GiB on) or MiB, "?" when unknown."""
     if n is None:
         return "?"
     return f"{n / GIB:.2f} GiB" if n >= GIB else f"{n / MIB:.0f} MiB"
@@ -958,6 +982,9 @@ def archive_text(s) -> str:
 
 @dataclass
 class Summary:
+    """What the closing summary of a run shows: the build's cars and archive, the install,
+    notes, the log."""
+
     elapsed: float = 0.0
     build_dir: Path | None = None
     in_archive: int = 0
@@ -991,18 +1018,21 @@ class Reporter:
         return False
 
     def stage(self, key: str, state: str, detail: str = "") -> None:
+        """Set a stage's state and detail ("running" starts its clock) and show the change."""
         if state == "running" and self.states[key][0] != "running":
             self.started[key] = time.monotonic()
         self.states[key] = (state, detail)
         self.show_stage(key)
 
     def show_stage(self, key: str) -> None:
-        pass
+        """Show a stage's new state (each display draws it its own way)."""
 
     def note(self, text: str, level: str = "info") -> None:
-        pass
+        """Show a line above the display; level: info, warn or error."""
 
     def event(self, event: str, **data) -> None:
+        """A port_batch progress event (port_batch.emit): fold it into the tracker, move the
+        build and pack stages on, and show it."""
         before = self.tracker.stage
         for level, text in self.tracker.handle(event, **data):
             self.note(text, level)
@@ -1031,10 +1061,10 @@ class Reporter:
         self.show_event(event, data)
 
     def show_event(self, event: str, data: dict) -> None:
-        pass
+        """Show one build event (each display draws it its own way)."""
 
     def summary(self, summary: Summary) -> None:
-        pass
+        """Show the closing summary."""
 
 
 class PlainReporter(Reporter):
@@ -1046,6 +1076,7 @@ class PlainReporter(Reporter):
         self.shown: dict[str, tuple[str, str]] = {}
 
     def line(self, text: str) -> None:
+        """Write one line to the terminal, ASCII only."""
         self.stream.write(text.encode("ascii", "replace").decode("ascii") + "\n")
         self.stream.flush()
 
@@ -1092,6 +1123,7 @@ class PlainReporter(Reporter):
 
 
 def summary_lines(s: Summary) -> list[str]:
+    """The closing summary as plain text lines (PlainReporter)."""
     lines = ["", f"Finished in {clock_text(s.elapsed)}."]
     if s.build_dir is not None:
         lines.append(
@@ -1159,6 +1191,8 @@ class LiveReporter(Reporter):
         self.console.print(Text(mark + text, style=style))
 
     def render(self):
+        """The live display: the stages, and while cars convert the progress bar and the
+        running workers."""
         from rich.console import Group
         from rich.progress_bar import ProgressBar
         from rich.table import Table
@@ -1301,6 +1335,8 @@ def to_log(log_path: Path):
 
 
 def make_reporter(term, term_fd: int, *, plain: bool) -> Reporter:
+    """The live display (rich) on a terminal that takes ANSI escape sequences, else plain
+    lines (also with --plain)."""
     if plain or not term.isatty() or not enable_vt(term_fd):
         return PlainReporter(term)
     from rich.console import Console
@@ -1322,6 +1358,10 @@ def log(text: str) -> None:
 
 @dataclass
 class Run:
+    """One dsff install run: its arguments, display and probes, what preflight found (the
+    game, the disc images, the vanilla archive, the install record) and what the stages
+    made."""
+
     args: argparse.Namespace
     reporter: Reporter
     probes: Probes = field(default_factory=Probes)
@@ -1335,10 +1375,12 @@ class Run:
 
     @property
     def building(self) -> bool:
+        """Whether this run builds (not --install-only)."""
         return not self.args.install_only
 
     @property
     def installing(self) -> bool:
+        """Whether this run installs (not --build-only)."""
         return not self.args.build_only
 
     # 1. preflight ------------------------------------------------------------------------------
@@ -1472,6 +1514,8 @@ class Run:
         return problems, info
 
     def lists(self) -> list[Path]:
+        """The car lists the build gets: --list, else the default list unless --car names
+        the cars."""
         if self.args.list:
             return list(self.args.list)
         return [] if self.args.car else [DEFAULT_LIST]
@@ -1490,6 +1534,8 @@ class Run:
         return self.dlc_use() == "build" and bool(fm4_dlc.packages())
 
     def installed_cars(self) -> list:
+        """The cars of the build that would be installed (its manifest's), [] when there is
+        none."""
         try:
             build = self.args.build or self.args.out
             return json.loads((Path(build) / "dngvehicles.json").read_text(encoding="utf-8"))["cars"]
@@ -1573,6 +1619,8 @@ class Run:
     # 3. plugin ----------------------------------------------------------------------------------------
 
     def plugin_stage(self) -> tuple[str, str]:
+        """Stage 3: the dsfcars.asi to install: --asi, the release's, or out/asi's, kept,
+        used as it is or built (plugin_action)."""
         args = self.args
         if args.asi:
             if not Path(args.asi).is_file():
@@ -1614,6 +1662,8 @@ class Run:
         return "done", f"built {rel(ASI_OUT)} and tested it against Driver.exe"
 
     def build_plugin(self, vcvars: Path) -> None:
+        """Build and test dsfcars.asi (tools/asi/build.ps1 -Test with vcvars32.bat), then
+        stamp what it was built from."""
         env = {**os.environ, "DSF_GAME_DIR": str(self.game)}
         env["PATH"] = str(VS_INSTALLER) + os.pathsep + env.get("PATH", "")
         command = powershell_script(ASI_SOURCE / "build.ps1", "-VcVars", str(vcvars), "-Test")
@@ -1631,6 +1681,8 @@ class Run:
     # 4-5. build and pack -------------------------------------------------------------------------------
 
     def build(self) -> None:
+        """Stages 4 and 5: port_batch build into out/build.new with the install's settings,
+        reusing the earlier builds' cars, then out/build.new becomes out/build."""
         from dsfforza.build import port_batch
         from dsfforza.game import game_paths
 
@@ -1693,6 +1745,7 @@ class Run:
         return argv
 
     def read_report(self, build: Path) -> None:
+        """The summary's cars, failures and notes from a build's batch-report.json."""
         s = self.summary
         s.build_dir = build
         try:
@@ -1742,10 +1795,14 @@ class Run:
         }
 
     def game_has_hook(self) -> bool:
+        """DriverNGHook is in the game folder, and not as a file our earlier install put
+        there."""
         hook = self.game / "plugins" / "DriverNGHook.asi"
         return hook.is_file() and "plugins\\DriverNGHook.asi".lower() not in self.ours()
 
     def game_has_loader(self) -> bool:
+        """An ASI loader is in the game folder, and not as a file our earlier install put
+        there."""
         name = self.probes.loader(self.game)
         return bool(name) and name.lower() not in self.ours()
 
@@ -1775,6 +1832,8 @@ class Run:
         return hook, loader
 
     def backup_save(self) -> Path | None:
+        """Copy the save folder (--save-dir, else the game's) to out/save-backups/<time>/;
+        None when there is none."""
         save = Path(self.args.save_dir) if self.args.save_dir else default_save_dir()
         if not save.is_dir():
             log(f"no save folder at {save}; nothing to back up")
@@ -1802,6 +1861,8 @@ class Run:
         return flags
 
     def install(self) -> str:
+        """Stage 6: tools/install.ps1 installs the build's car packages, the plugin, the
+        hook and the loader; the summary gets what it replaced and added."""
         args, game = self.args, self.game
         build = Path(args.build) if args.build else (self.build_dir or args.out)
         # The car packages, through the car manager: none of the build's archive, Lua or GUI files.
@@ -1857,6 +1918,7 @@ def uninstall_command(game: Path | None) -> str:
 
 
 def rel(path: Path) -> str:
+    """A path relative to the repo when it is inside it, else as given."""
     try:
         return str(Path(path).resolve().relative_to(REPO))
     except ValueError:
@@ -1875,6 +1937,7 @@ def seconds_per_car(build: Path) -> float | None:
 
 
 def powershell() -> str:
+    """Windows PowerShell: the one on PATH, else its usual place."""
     found = shutil.which("powershell")
     if found:
         return found
@@ -1965,6 +2028,7 @@ def execute(run: Run) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """dsff install's command line."""
     parser = argparse.ArgumentParser(
         prog=command_name(),  # the usage line as the user types it
         description=__doc__.splitlines()[0],
@@ -2072,6 +2136,9 @@ def passthrough(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """dsff install: the stages, with a display on the terminal and everything the tools
+    print in the log; --status, --uninstall, --migrate and --report run their own tools.
+    Returns the exit code."""
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.status or args.uninstall or args.migrate:
         return passthrough(args)
