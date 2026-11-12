@@ -179,7 +179,7 @@ def test_dsff_install_hands_install_ps1_a_folder():
     folder holding plugins/DriverNGHook.asi is passed on as it is (and passes preflight)."""
     import io
 
-    from dsfforza.build import install
+    from dsfforza.build import install, install_display
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -193,7 +193,7 @@ def test_dsff_install_hands_install_ps1_a_folder():
 
         def hook_files(given: Path):
             args = install.build_parser().parse_args(["--hook-archive", str(given), "--out", str(root / "b")])
-            run = install.Run(args, install.PlainReporter(io.StringIO()), probes)
+            run = install.Run(args, install_display.PlainReporter(io.StringIO()), probes)
             run.game, run.record = root / "game", None
             return run.hook_files()
 
