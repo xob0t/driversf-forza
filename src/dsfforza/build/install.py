@@ -765,95 +765,123 @@ class Tracker:
         return None
 
     def handle(self, event: str, **data) -> list[tuple[str, str]]:
-        """Update from one event; returns (level, text) lines to show above the display."""
-        notes: list[tuple[str, str]] = []
+        """Update from one event; returns (level, text) lines to show above the display.
+        Event `x` is handled by `_on_x(now, data)`; an event without one changes nothing."""
         now = self.clock()
-        if event == "plan":
-            self.total = len(data.get("cars", []))
-            for s in data.get("skipped", []):
-                failure = CarFailure(s["media"], "not selected", s.get("error", ""))
-                self.failures.append(failure)
-                notes.append(("error", f"{failure.media}: {failure.error or failure.cause}"))
-        elif event == "convert":
-            self.phase = "convert"
-            self.todo = len(data.get("todo", []))
-            self.reused = len(data.get("reused", []))
-            self.jobs = data.get("jobs", self.jobs)
-            self.gentle = data.get("gentle", False)
-            self.convert_started = now
-            for why in (data.get("rebuilt") or {}).values():
-                key = reason_kind(why)
-                self.rebuilt[key] = self.rebuilt.get(key, 0) + 1
-        elif event == "car_start":
-            note = "verify" if data.get("verify") else (data.get("fallback") or "")
-            self.running[data["media"]] = {"started": now, "note": note, "verify": bool(data.get("verify"))}
-        elif event == "car_retry":
-            notes.append(("warn", f"{data['media']}: {data.get('cause') or 'failed'}; building again {data['why']}"))
-        elif event == "car_done":
-            media, report = data["media"], data.get("report") or {}
-            info = self.running.pop(media, {})
-            if info.get("verify") or media in self.verify:
-                self.verify_done += 1
-                if not report.get("ok"):
-                    notes.append(("error", f"{media} (reuse check): {report.get('cause')}"))
-            else:
-                self.converted += 1
-                if not report.get("ok"):
-                    failure = CarFailure(
-                        media, report.get("cause") or "error", str(report.get("error") or "")[:300], data.get("log")
-                    )
-                    self.failures.append(failure)
-                    notes.append(
-                        ("error", f"{media}: {failure.cause}" + (f" (log {failure.log})" if failure.log else ""))
-                    )
-        elif event == "verify":
-            self.phase = "verify"
-            self.verify = set(data.get("cars", []))
-        elif event == "verify_mismatch":  # port_batch --verify-mismatch rebuild
-            bad, redo = data.get("cars", []), data.get("redo", [])
-            notes.append(
-                (
-                    "warn",
-                    f"{', '.join(bad)}: came out different when converted again; using the new copy and "
-                    f"converting the {len(redo)} other reused cars again",
-                )
-            )
-            self.reused = max(0, self.reused - len(redo))
-            self.todo += len(redo)
-            self.phase = "convert"
-        elif event == "merge":
-            self.phase = "merge"
-            self.merge_cars = data.get("cars", 0)
-        elif event == "car_failed":
-            failure = CarFailure(data["media"], data.get("cause") or "merge", str(data.get("error") or "")[:300])
+        handler = getattr(self, f"_on_{event}", None)
+        return handler(now, data) if handler is not None else []
+
+    def _on_plan(self, _now, data) -> list[tuple[str, str]]:
+        self.total = len(data.get("cars", []))
+        notes = []
+        for s in data.get("skipped", []):
+            failure = CarFailure(s["media"], "not selected", s.get("error", ""))
             self.failures.append(failure)
-            notes.append(("error", f"{failure.media}: {failure.cause} ({failure.error[:120]})"))
-        elif event == "pack_reused":
-            self.phase = "pack_reused"
-            self.pack_source = data.get("source", "")
-        elif event == "lint":
-            self.phase = "lint"
-            self.lint_cars = data.get("cars", 0)
-            self.lint_total = data.get("total", self.lint_cars)
-        elif event == "lint_failed":
-            self.lint_failed += 1
-            notes.append(("warn", f"{data['media']}: lint found problems (kept in the archive; see the log)"))
-        elif event == "gui":
-            self.phase = "gui"
-            self.gui_total = data.get("cars", 0)
-        elif event == "gui_log":
-            self.gui_done = min(self.gui_total, self.gui_done + 1) if self.gui_total else self.gui_done + 1
-            self.gui_last = " ".join(str(data.get("text", "")).split()[:2]).rstrip(":")
-        elif event == "gui_failed":
-            notes.append(("warn", f"garage pictures and badges failed: {data.get('error')} (the cars still work)"))
-        elif event == "packages":
-            self.phase = "packages"
-            self.packages_total = data.get("cars", 0)
-        elif event == "packages_failed":
-            notes.append(("warn", f"car packages failed: {data.get('error')} (the build itself is usable)"))
-        elif event == "done":
-            self.phase = "done"
+            notes.append(("error", f"{failure.media}: {failure.error or failure.cause}"))
         return notes
+
+    def _on_convert(self, now, data) -> list[tuple[str, str]]:
+        self.phase = "convert"
+        self.todo = len(data.get("todo", []))
+        self.reused = len(data.get("reused", []))
+        self.jobs = data.get("jobs", self.jobs)
+        self.gentle = data.get("gentle", False)
+        self.convert_started = now
+        for why in (data.get("rebuilt") or {}).values():
+            key = reason_kind(why)
+            self.rebuilt[key] = self.rebuilt.get(key, 0) + 1
+        return []
+
+    def _on_car_start(self, now, data) -> list[tuple[str, str]]:
+        note = "verify" if data.get("verify") else (data.get("fallback") or "")
+        self.running[data["media"]] = {"started": now, "note": note, "verify": bool(data.get("verify"))}
+        return []
+
+    def _on_car_retry(self, _now, data) -> list[tuple[str, str]]:
+        return [("warn", f"{data['media']}: {data.get('cause') or 'failed'}; building again {data['why']}")]
+
+    def _on_car_done(self, _now, data) -> list[tuple[str, str]]:
+        media, report = data["media"], data.get("report") or {}
+        info = self.running.pop(media, {})
+        if info.get("verify") or media in self.verify:
+            self.verify_done += 1
+            return [] if report.get("ok") else [("error", f"{media} (reuse check): {report.get('cause')}")]
+        self.converted += 1
+        if report.get("ok"):
+            return []
+        failure = CarFailure(
+            media, report.get("cause") or "error", str(report.get("error") or "")[:300], data.get("log")
+        )
+        self.failures.append(failure)
+        return [("error", f"{media}: {failure.cause}" + (f" (log {failure.log})" if failure.log else ""))]
+
+    def _on_verify(self, _now, data) -> list[tuple[str, str]]:
+        self.phase = "verify"
+        self.verify = set(data.get("cars", []))
+        return []
+
+    def _on_verify_mismatch(self, _now, data) -> list[tuple[str, str]]:  # port_batch --verify-mismatch rebuild
+        bad, redo = data.get("cars", []), data.get("redo", [])
+        self.reused = max(0, self.reused - len(redo))
+        self.todo += len(redo)
+        self.phase = "convert"
+        return [
+            (
+                "warn",
+                f"{', '.join(bad)}: came out different when converted again; using the new copy and "
+                f"converting the {len(redo)} other reused cars again",
+            )
+        ]
+
+    def _on_merge(self, _now, data) -> list[tuple[str, str]]:
+        self.phase = "merge"
+        self.merge_cars = data.get("cars", 0)
+        return []
+
+    def _on_car_failed(self, _now, data) -> list[tuple[str, str]]:
+        failure = CarFailure(data["media"], data.get("cause") or "merge", str(data.get("error") or "")[:300])
+        self.failures.append(failure)
+        return [("error", f"{failure.media}: {failure.cause} ({failure.error[:120]})")]
+
+    def _on_pack_reused(self, _now, data) -> list[tuple[str, str]]:
+        self.phase = "pack_reused"
+        self.pack_source = data.get("source", "")
+        return []
+
+    def _on_lint(self, _now, data) -> list[tuple[str, str]]:
+        self.phase = "lint"
+        self.lint_cars = data.get("cars", 0)
+        self.lint_total = data.get("total", self.lint_cars)
+        return []
+
+    def _on_lint_failed(self, _now, data) -> list[tuple[str, str]]:
+        self.lint_failed += 1
+        return [("warn", f"{data['media']}: lint found problems (kept in the archive; see the log)")]
+
+    def _on_gui(self, _now, data) -> list[tuple[str, str]]:
+        self.phase = "gui"
+        self.gui_total = data.get("cars", 0)
+        return []
+
+    def _on_gui_log(self, _now, data) -> list[tuple[str, str]]:
+        self.gui_done = min(self.gui_total, self.gui_done + 1) if self.gui_total else self.gui_done + 1
+        self.gui_last = " ".join(str(data.get("text", "")).split()[:2]).rstrip(":")
+        return []
+
+    def _on_gui_failed(self, _now, data) -> list[tuple[str, str]]:
+        return [("warn", f"garage pictures and badges failed: {data.get('error')} (the cars still work)")]
+
+    def _on_packages(self, _now, data) -> list[tuple[str, str]]:
+        self.phase = "packages"
+        self.packages_total = data.get("cars", 0)
+        return []
+
+    def _on_packages_failed(self, _now, data) -> list[tuple[str, str]]:
+        return [("warn", f"car packages failed: {data.get('error')} (the build itself is usable)")]
+
+    def _on_done(self, _now, _data) -> list[tuple[str, str]]:
+        self.phase = "done"
+        return []
 
     def pack_detail(self) -> str:
         if self.phase == "packages":
