@@ -224,7 +224,8 @@ def roster(build: Path) -> list[dict]:
     return out
 
 
-def _cache_dir(build: Path, media: str, report: dict | None) -> Path:
+def _cache_dir(media: str, report: dict | None) -> Path:
+    """The car's Forza extraction: the one its report names, else out/cache/<game>/<media>."""
     if report and report.get("entry", {}).get("cache"):
         p = Path(report["entry"]["cache"])
         if p.exists():
@@ -294,7 +295,7 @@ def build_pair(archive: Path, roots, spool_id: int, media: str, report: dict, en
         ours.lamp[ours.inside] = -1  # the cabin's own light bytes are no lamps of the outside
     placement = rep["placement"]
     daytime = any(lp.type == 0x1D for lp in ours.lamps or [])
-    folder = _cache_dir(archive.parent, media, report)
+    folder = _cache_dir(media, report)
     ref = fr.body_scene(folder, media, placement, lod, ours.info["paint"], ours.info["hubs"], daytime)
     wheel_part = ours.info["wheel"]
     cabin = ours.inside if ours.inside is not None else np.zeros(len(ours.mat), bool)
@@ -364,7 +365,7 @@ def build_cockpit_pair(archive: Path, roots, spool_id: int, media: str, report: 
     ours.lamp = np.full(len(ours.mat), -1, np.int32)
     # The reference's shell at the finest LOD: the converter's coarser one can close the
     # cockpit (the Audi R10's lid, #157), which is what this view should find.
-    folder = _cache_dir(archive.parent, media, report)
+    folder = _cache_dir(media, report)
     ref, _ = fr.cockpit_scene(folder, media, rep["placement"], ours.info["paint"], 1)
     src, dist = rm.match(ours.pos, ref.scene.pos)
     ref_region = np.array([RID[o.region] for o in ref.origins], np.uint8)[ref.scene.tag]
@@ -401,7 +402,7 @@ def _view_box(view: View, box) -> tuple:
     return lo, hi
 
 
-def region_map(scene: cr.Scene, frame: cr.Frame, region: np.ndarray) -> np.ndarray:
+def region_map(frame: cr.Frame, region: np.ndarray) -> np.ndarray:
     """(h, w) region id per pixel: the nearest surface, seeing through window glass
     (lamp glass and the other see-through parts label their pixels)."""
     size = frame.view.width * frame.view.height
@@ -445,7 +446,7 @@ def render_view(pair: Pair, view: View, size=SIZE, box=None) -> dict:
     for side, scene, region in (("ours", pair.ours, pair.ours_region), ("ref", pair.ref, pair.ref_region)):
         v = cr._View(scene, view.camera, w, h, box=box)
         frame = cr.rasterize(scene, v)
-        out["regions"][side] = region_map(scene, frame, region)
+        out["regions"][side] = region_map(frame, region)
         if side == "ours":
             # What draws each pixel; under DSF window glass (plain glass kept over the lamps,
             # #379) the surface behind it, not the glass.
@@ -911,7 +912,7 @@ def pair_image(r: dict, mode: str, outline_regions=()) -> np.ndarray:
 THUMB_CAMERA = cr.Camera(-62.0, 6.0, 1.45)  # FM4's thumbnails: front left, near eye level
 
 
-def forza_thumbnail(media: str, game: str | None) -> np.ndarray | None:
+def forza_thumbnail(media: str) -> np.ndarray | None:
     """Forza's own picture of the car (RGBA): FM4's Thumbnails/Thumbnail_<id>.xds by its
     gamedb id (out/db/fm4_gamedb.slt), else FH1's (gui_assets.forza_car_id); the car part
     (left two thirds; the right third is a top view)."""
@@ -949,7 +950,7 @@ def thumbnail_check(build: Path, media: str, out: Path, size=(640, 300)) -> Path
     report = car_report(build, media)
     if report is None:
         return None
-    thumb = forza_thumbnail(media, report.get("game"))
+    thumb = forza_thumbnail(media)
     if thumb is None:
         return None
     rgb = thumb[..., :3].astype(np.float32)
