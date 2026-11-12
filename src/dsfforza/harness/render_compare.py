@@ -78,6 +78,9 @@ PID = {name: i for i, name in enumerate(PROGRAMS)}
 
 @dataclass(frozen=True)
 class View:
+    """A view of the comparison: its name, the camera, the end of the car it frames (zoom:
+    "front", "rear" or the whole car) and the lighting modes it renders."""
+
     name: str
     camera: cr.Camera
     zoom: str = ""  # "front" / "rear": frame that end of the car only (ZOOM_DEPTH)
@@ -187,6 +190,7 @@ class BuildArchives:
         return self.shards([{"spool_id": sid} for sid in spool_ids])
 
     def close(self) -> None:
+        """Remove the shard archives made for a build without its own."""
         if self.shards is not None:
             self.shards.close()
 
@@ -195,6 +199,7 @@ _ROOTS: dict = {}  # a process's root entries by archive (gui_assets._root_entri
 
 
 def roots_of(archive: Path) -> list:
+    """The root entries of an archive, read once per process."""
     from dsfforza.formats import chnk
 
     key = str(Path(archive).resolve())
@@ -897,6 +902,7 @@ def _glow_flags(flags: list, view: str, mode: str, region: str, g: dict) -> None
 
 
 def car_score(flags: list[dict]) -> float:
+    """A car's score: its flags' severities added up (higher is worse)."""
     return round(sum(f["severity"] for f in flags), 3)
 
 
@@ -906,6 +912,8 @@ BACKDROP = 58  # sRGB grey behind the cars
 
 
 def to_srgb8(rgb_linear: np.ndarray, alpha: np.ndarray, mode: str = "day") -> np.ndarray:
+    """8-bit sRGB of a linear render as the mode displays it, over the BACKDROP grey by its
+    alpha."""
     srgb = cr._linear_to_srgb(cr.display(rgb_linear, cr.LIGHTINGS[mode])) * 255
     a = alpha[..., None]
     return np.clip(srgb * a + BACKDROP * (1 - a) + 0.5, 0, 255).astype(np.uint8)
@@ -918,6 +926,7 @@ def outline(img: np.ndarray, mask: np.ndarray, colour=(255, 60, 200)) -> None:
 
 
 def save_jpeg(path: Path, img: np.ndarray, quality: int = 85) -> None:
+    """Write an image as a JPEG, making its folder."""
     from PIL import Image
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1045,6 +1054,7 @@ def save_renders(path: Path, r: dict) -> None:
 
 
 def load_renders(path: Path) -> dict:
+    """A view's renders and ID maps as save_renders stored them, in render_view's form."""
     z = np.load(path)
     r = {
         "regions": {"ours": z["regions_ours"], "ref": z["regions_ref"]},
@@ -1211,6 +1221,9 @@ def run(
     *,
     keep: bool = False,
 ) -> list[dict]:
+    """render_compare run: compare each of `cars` (compare_car) in up to `jobs` processes,
+    from the build's archive or, for a build without one, its shards. Writes
+    out/roster.json with every car --out has and returns the ranking, worst first."""
     out.mkdir(parents=True, exist_ok=True)
     archives = BuildArchives(build, out / "shards")
     try:
