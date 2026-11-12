@@ -1616,17 +1616,7 @@ class Run:
     def build_plugin(self, vcvars: Path) -> None:
         env = {**os.environ, "DSF_GAME_DIR": str(self.game)}
         env["PATH"] = str(VS_INSTALLER) + os.pathsep + env.get("PATH", "")
-        command = [
-            powershell(),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(ASI_SOURCE / "build.ps1"),
-            "-VcVars",
-            str(vcvars),
-            "-Test",
-        ]
+        command = powershell_script(ASI_SOURCE / "build.ps1", "-VcVars", str(vcvars), "-Test")
         log("plugin: " + " ".join(command))
         result = subprocess.run(command, env=env, cwd=str(REPO), check=False)
         if result.returncode != 0 or not ASI_OUT.is_file():
@@ -1828,18 +1818,7 @@ class Run:
         self.summary.save_backup = None if args.no_save_backup else self.backup_save()
         hook, loader = self.hook_files()
         self.reporter.stage("install", "running", "tools/install.ps1: the plugin, the Lua and the car packages")
-        command = [
-            powershell(),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(INSTALL_PS1),
-            "-GamePath",
-            str(game),
-            "-Build",
-            str(build),
-        ]
+        command = powershell_script(INSTALL_PS1, "-GamePath", str(game), "-Build", str(build))
         command += self.install_flags(hook, loader)
         log("install: " + " ".join(command))
         result = subprocess.run(command, cwd=str(REPO), capture_output=True, text=True, check=False)
@@ -1897,6 +1876,12 @@ def powershell() -> str:
     )
 
 
+def powershell_script(script: Path, *args: str) -> list[str]:
+    """The command line that runs a PowerShell script with its arguments (no profile, any
+    execution policy)."""
+    return [powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *args]
+
+
 def run_stage(run: Run, key: str, step) -> None:
     """Run one stage: its function returns a detail text, or (state, detail)."""
     reporter = run.reporter
@@ -1914,7 +1899,6 @@ def execute(run: Run) -> int:
     started = time.monotonic()
     current = "preflight"
     try:
-        current = "preflight"
         run_stage(run, "preflight", run.preflight)
         current = "prepare"
         if run.building:
@@ -2062,16 +2046,7 @@ def passthrough(args) -> int:
     if not game:
         print("Set DSF_GAME_DIR to the game folder, or pass --game.", file=sys.stderr)
         return 2
-    command = [
-        powershell(),
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(INSTALL_PS1),
-        "-GamePath",
-        str(game),
-    ]
+    command = powershell_script(INSTALL_PS1, "-GamePath", str(game))
     if args.status:
         command.append("-Status")
     else:
