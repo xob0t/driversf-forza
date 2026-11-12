@@ -538,7 +538,7 @@ def car_groups(picks: list[Pick], group_of: dict[str, str], isos: list[Path] | N
 OVERFLOW_GROUP = "ADDED CARS"
 
 
-def garage_group(make: str, group: str, counts: dict[str, int], cap: int, groups_cap: int) -> str | None:
+def garage_group(group: str, counts: dict[str, int], cap: int, groups_cap: int) -> str | None:
     """The garage maker group a car joins, or None: its own group while it has room (a new
     make opens one while fewer than groups_cap exist), else a shared ADDED CARS, ADDED
     CARS 2 ... group (the same rule as register.lua's garageGroup). One group slot is kept for it."""
@@ -586,7 +586,7 @@ def assign_ids(
     next_id = first_high
     for p in picks:
         own = groups.get(p.media)
-        group = garage_group(own, own, counts, GARAGE_GROUP_CAP, GARAGE_GROUPS_CAP) if low else None
+        group = garage_group(own, counts, GARAGE_GROUP_CAP, GARAGE_GROUPS_CAP) if low else None
         if group is not None:
             p.spool_id = low.pop(0)
             counts[group] = counts.get(group, 0) + 1
@@ -596,7 +596,7 @@ def assign_ids(
         if low:
             p.notes_soft = "no garage group left"
         if policy == "asi" and own is not None:
-            group = garage_group(own, own, counts, ASI_GROUP_CAP, ASI_GROUPS_CAP)
+            group = garage_group(own, counts, ASI_GROUP_CAP, ASI_GROUPS_CAP)
             if group is None:
                 p.notes_soft = "no garage group left (dsfcars.asi)"
             else:
