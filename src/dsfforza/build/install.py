@@ -367,7 +367,7 @@ class Probes:
 # --- selection, jobs, reuse ---------------------------------------------------------------------
 
 
-def default_jobs(cpus: int | None, gentle_on: bool, ram: int | None = None) -> int:
+def default_jobs(cpus: int | None, *, gentle_on: bool, ram: int | None = None) -> int:
     """port_batch.default_jobs (a worker per logical CPU, 1.9 GB of RAM each), and at most
     gentle.CORES while out/gentle is there."""
     from dsfforza.build import port_batch
@@ -439,7 +439,7 @@ class BuildDirs:
         return cls(out, out.with_name(out.name + ".new"), out.with_name(out.name + ".partial"))
 
 
-def reuse_sources(dirs: BuildDirs, extra: list[Path], no_reuse: bool, discover: bool = True) -> list[Path]:
+def reuse_sources(dirs: BuildDirs, extra: list[Path], *, no_reuse: bool, discover: bool = True) -> list[Path]:
     """The builds port_batch --reuse may copy cars from, in order: the last finished build,
     an interrupted one, the ones named with --reuse, else the biggest earlier build under out/."""
     if no_reuse:
@@ -488,7 +488,7 @@ def promote(dirs: BuildDirs) -> Path:
     return dirs.out
 
 
-def space_needed(cars: int, reusing: bool) -> tuple[int, int]:
+def space_needed(cars: int, *, reusing: bool) -> tuple[int, int]:
     """(bytes on the build drive, bytes on the game drive), roughly: the archive is about
     0.5 GiB plus 4.2 MiB a car, the garage assets 0.4 MiB a car; a converted car takes about
     25 MiB more (work/ chunk, sound previews, the extraction cache); the install copies
@@ -555,7 +555,7 @@ def plugin_state(asi: Path, digest: str) -> str:
     return "stale"
 
 
-def plugin_action(state: str, vs: bool, rebuild: bool = False) -> str:
+def plugin_action(state: str, *, vs: bool, rebuild: bool = False) -> str:
     """keep (current), build, use (as it is, unverified), or missing (nothing to install)."""
     if rebuild:
         return "build" if vs else "missing"
@@ -1272,7 +1272,7 @@ def to_log(log_path: Path):
         log.close()
 
 
-def make_reporter(term, term_fd: int, plain: bool) -> Reporter:
+def make_reporter(term, term_fd: int, *, plain: bool) -> Reporter:
     if plain or not term.isatty() or not enable_vt(term_fd):
         return PlainReporter(term)
     from rich.console import Console
@@ -1389,8 +1389,8 @@ class Run:
             problems += self.install_checks()
         # disk space: the build folder's drive and the game's
         cars = cars if cars is not None else len(self.installed_cars())
-        reusing = bool(reuse_sources(BuildDirs.of(args.out), args.reuse or [], args.no_reuse))
-        need_build, need_game = space_needed(cars, reusing)
+        reusing = bool(reuse_sources(BuildDirs.of(args.out), args.reuse or [], no_reuse=args.no_reuse))
+        need_build, need_game = space_needed(cars, reusing=reusing)
         needs: dict[str, tuple[Path, int]] = {}
         if self.building:
             needs[drive_of(args.out)] = (args.out, need_build)
@@ -1528,7 +1528,7 @@ class Run:
         digest = asi_sources_digest()
         state = plugin_state(ASI_OUT, digest)
         vcvars = find_vcvars()
-        action = plugin_action(state, vcvars is not None, args.rebuild_plugin)
+        action = plugin_action(state, vs=vcvars is not None, rebuild=args.rebuild_plugin)
         log(f"plugin: {state}, Visual Studio {'found' if vcvars else 'not found'} -> {action}")
         if action == "keep":
             self.plugin = ASI_OUT
@@ -1588,7 +1588,7 @@ class Run:
         note = start_staging(dirs)
         if note:
             self.reporter.note(note)
-        sources = reuse_sources(dirs, args.reuse or [], args.no_reuse)
+        sources = reuse_sources(dirs, args.reuse or [], no_reuse=args.no_reuse)
         hint = None
         if sources:
             self.reporter.stage("build", "running", "reusing cars from " + ", ".join(rel(s) for s in sources))
@@ -1952,7 +1952,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="cars converted at a time (default: one per logical CPU, as many as 1.9 GB of RAM each fits: "
-        f"{default_jobs(os.cpu_count(), False)} here; out/gentle caps it at 2)",
+        f"{default_jobs(os.cpu_count(), gentle_on=False)} here; out/gentle caps it at 2)",
     )
     build.add_argument("--out", type=Path, default=DEFAULT_OUT, help="the build folder (default: out/build)")
     build.add_argument("--reuse", type=Path, action="append", metavar="DIR", help="an earlier build to reuse cars from")
@@ -2037,11 +2037,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return report.main(["--game", str(args.game)] if args.game else [])
     if args.jobs is None:
-        args.jobs = default_jobs(os.cpu_count(), gentle.enabled())
+        args.jobs = default_jobs(os.cpu_count(), gentle_on=gentle.enabled())
     args.out = Path(args.out).resolve()
     log_path = args.log or LOG_DIR / f"install-{datetime.datetime.now():%Y%m%d-%H%M%S}.log"
     with to_log(log_path) as (term, term_fd):
-        reporter = make_reporter(term, term_fd, args.plain)
+        reporter = make_reporter(term, term_fd, plain=args.plain)
         run = Run(args, reporter)
         run.summary.log = log_path
         log(f"dsff install {' '.join(sys.argv[1:] if argv is None else argv)}")
