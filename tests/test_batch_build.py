@@ -126,3 +126,48 @@ def test_a_failed_gui_step_moves_the_old_gui_aside():
         [stale] = list(out.iterdir())
         assert stale.name.startswith("gui-stale-") and timings == {"gui_stale": str(stale)}
         assert (stale / "hud.lua").read_text(encoding="utf-8") == "other cars"
+
+
+def test_build_resume_keeps_the_before_flag():
+    """cmd_build --resume with an earlier car in work/: the earlier car is taken, the other
+    one converted. On master before #599, the earlier job's JSON overwrote the --before flag
+    (a shadowed local), so a resume that found a car converted nothing."""
+    from unittest import mock
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        work = out / "work"
+        work.mkdir()
+        picks = _picks()
+        first, _ = port_batch.build_jobs(picks, Path("v.sp"), [], Path("c"), ["--damage"], out)
+        ok = {"media": "AAA_ONE_01", "ok": True}
+        _earlier(work, first, ok)
+        converted, finished = [], []
+
+        def run_workers(todo, work, parallel, *, progress):
+            converted.extend(j["media"] for j in todo)
+            return {j["media"]: {"media": j["media"], "ok": True} for j in todo}
+
+        def finish(args, dsf, out_dir, work, ok, failed, *rest):
+            finished.append(([r["media"] for r in ok], failed))
+
+        args = SimpleNamespace(
+            out=out, port="--damage", progress=None, cache=Path("c"), resume=True, jobs=1, before=False
+        )
+        with mock.patch.multiple(
+            port_batch,
+            common=lambda args: (Path("v.sp"), [], {}, {}),
+            port_car_args=lambda argv: argv,
+            plan_build=lambda *a: (picks, [], 0),
+            warm_caches=lambda *a: None,
+            open_reuse=lambda args, work: (None, None, False),
+            remembered_attempts=lambda job: None,
+            remember_seconds=lambda reports: None,
+            remember_attempts=lambda reports: None,
+            run_workers=run_workers,
+            open_pack_reuse=lambda *a: None,
+            finish=finish,
+        ):
+            port_batch.cmd_build(args)
+        assert converted == ["BBB_TWO_02"]
+        assert finished == [(["AAA_ONE_01", "BBB_TWO_02"], [])]
