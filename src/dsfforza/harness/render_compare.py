@@ -34,6 +34,8 @@ from pathlib import Path
 
 import numpy as np
 
+from dsfforza.build import port_batch
+from dsfforza.build.port_batch import MERGE_PLAN
 from dsfforza.game import car_render as cr
 from dsfforza.harness import forza_render as fr
 
@@ -113,9 +115,6 @@ def car_report(build: Path, media: str) -> dict | None:
         return None
 
 
-MERGE_PLAN = "dngvehicles.plan.json"  # port_batch.MERGE_PLAN
-
-
 def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
     """(the vanilla archive, the merge plan) of a build that wrote no dngvehicles.sp
     (port_batch: past 4 GiB, or --no-archive; research/batch.md, "Builds past 4 GiB"), or
@@ -125,8 +124,6 @@ def merge_plan(build: Path) -> tuple[Path, list[dict]] | None:
     output) gets it from its manifest: plan_from_manifest."""
     path = Path(build) / MERGE_PLAN
     if path.is_file():
-        from dsfforza.build import port_batch
-
         dsf, plan = port_batch.read_plan(path)
     else:
         found = plan_from_manifest(build)
@@ -181,8 +178,6 @@ class BuildArchives:
             found = merge_plan(build)
             if found is None:
                 raise SystemExit(f"{build}: neither dngvehicles.sp nor {MERGE_PLAN}")
-            from dsfforza.build import port_batch
-
             self.shards = port_batch.Shards(found[0], found[1], Path(folder), log=log)
 
     def of(self, spool_ids) -> dict[int, Path]:
@@ -605,10 +600,6 @@ def _local_std(a: np.ndarray, mask: np.ndarray, r: int = DETAIL_RADIUS) -> np.nd
     s2 = _box_blur(np.where(mask, a * a, 0).astype(np.float32), r)
     mean = s1 / np.maximum(w, 1e-6)
     return np.sqrt(np.maximum(s2 / np.maximum(w, 1e-6) - mean * mean, 0))
-
-
-def _lum(rgb: np.ndarray) -> np.ndarray:
-    return rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)
 
 
 def _glow(r: dict, side: str, mode: str) -> np.ndarray:
@@ -1176,9 +1167,7 @@ def _worker(args):
         archive = Path(car["archive"])  # the build's, or a shard of it (BuildArchives)
         r = compare_car(archive, roots_of(archive), car, Path(out), views, size, entries, keep)
         print(f"{car['media']}: score {r.get('score')} {r.get('error', '')} ({r.get('seconds')} s)", flush=True)
-        results.append(
-            {k: r.get(k) for k in ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")}
-        )
+        results.append({k: r.get(k) for k in RESULT_KEYS})
     return results
 
 
@@ -1212,17 +1201,15 @@ def _run(build, out, cars, jobs, views, size, entries, keep) -> list[dict]:
         results = _worker((cars, str(out), views, size, entries, keep))
     else:
         from dsfforza.build import jobpool
-        from dsfforza.build.port_batch import RENDER_RAM
 
         os.environ.setdefault("OMP_NUM_THREADS", "1")
-        with jobpool.executor(jobs, "render_compare", RENDER_RAM) as pool:
+        with jobpool.executor(jobs, "render_compare", port_batch.RENDER_RAM) as pool:
             results = [
                 r
                 for part in pool.map(_worker, [(c, str(out), views, size, entries, keep) for c in chunks])
                 for r in part
             ]
     # Every car --out has (a --resume run's earlier ones too).
-    keys = ("media", "spool_id", "game", "score", "flags", "error", "seconds", "match")
     done = {r["media"]: r for r in results}
     for path in (out / "cars").glob("*.json"):
         if path.stem not in done:
@@ -1230,7 +1217,7 @@ def _run(build, out, cars, jobs, views, size, entries, keep) -> list[dict]:
                 r = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            done[path.stem] = {k: r.get(k) for k in keys}
+            done[path.stem] = {k: r.get(k) for k in RESULT_KEYS}
     results = list(done.values())
     ranking = sorted(results, key=lambda r: -(r.get("score") or 0))
     summary = {
