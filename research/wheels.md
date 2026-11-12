@@ -1476,6 +1476,62 @@ so an open side panel gets 0.525 x AO and a roof 0.8 x AO, against vanilla's 0.5
 floor and range were set on the Desanne (`vertices.py`). The body rule would be Forza AO x (1 + n_y) / 2
 (#597; it isn't #525's).
 
+### Forza's AO byte against the body bake (2026-11-12, issue #597; measured on 3 cars, roster pending CPU)
+
+Does Forza AO x (1 + n_y) / 2 give vanilla's bake? That needs to know what Forza's AO byte
+(`carbin.Vertex.extra[0]`, `forza-materials.md`) holds. If it already counts the ground below the
+horizon, (1 + n_y) / 2 counts it a second time.
+
+**Measured.** For each vertex of a car's exterior body carbin (both vertex pools of every section, pools
+that pass `vertices._pool_has_ao`), the byte / `FORZA_AO_FULL` (105) per 0.1 bin of the normal's
+n_y. No build, only the cached carbins:
+
+| n_y | (1 + n_y) / 2 | FER_F151_11 (FH1) p50 / p90 | MER_S65AMG_12 (FH1) p50 / p90 | NIS_370Z_10 (FM4) p50 / p90 |
+| --- | --- | --- | --- | --- |
+| +0.95 | 0.975 | 0.93 / 1.01 | 0.97 / 1.00 | 0.98 / 1.00 |
+| +0.55 | 0.775 | 1.00 / 1.01 | 0.98 / 1.00 | 1.00 / 1.01 |
+| +0.15 | 0.575 | 0.96 / 1.01 | 0.96 / 1.00 | 0.97 / 1.00 |
+| -0.05 | 0.475 | 0.83 / 0.99 | 0.91 / 0.98 | 0.92 / 0.99 |
+| -0.25 | 0.375 | 0.80 / 0.95 | 0.85 / 0.97 | 0.83 / 0.97 |
+| -0.55 | 0.225 | 0.66 / 0.91 | 0.71 / 0.95 | 0.81 / 0.99 |
+| -0.95 | 0.025 | 0.50 / 0.91 | 0.64 / 0.97 | 0.51 / 0.97 |
+
+Correlation of the byte with n_y over the body: 0.36, 0.33, 0.43 (`forza-materials.md`'s 0.4..0.9 is
+per section). That comes from the median, not the envelope.
+
+**What follows.**
+
+- **The byte has no ground term.** An open vertex holds ~1 whatever way it faces: p90 is 0.91..0.97
+  facing straight down and 1.0 facing up, where vanilla's envelope has 0.13 and 0.99. So the byte
+  is occlusion over the hemisphere about the normal, by the car only. (1 + n_y) / 2 doesn't
+  count the ground twice, and an open port vertex under AO x (1 + n_y) / 2 lands on vanilla's
+  envelope from n_y -0.6 up by construction. The median falls towards n_y = -1 because undersides
+  are occluded by the car (sills, floor, wheel wells), not by the ground.
+- **The occluded vertices aren't derived.** Vanilla's bake is one integral, sky visibility =
+  share of the cosine-weighted hemisphere that is both unblocked and above the horizon. AO x
+  (1 + n_y) / 2 is the product of two such shares. It equals the integral only where the car's
+  occluders block as much of the hemisphere above the horizon as below it. Under a sill or a
+  bumper lip, most of the car lies on one side of the horizon, so the product is off there. Two
+  ways to settle it:
+  (a) on vanilla's own geometry, compute the hemisphere occlusion without the ground and the full
+  sky visibility (rays marched through the vehicle's triangles, like `wheel_sky`), and see which
+  one vanilla's s0.w follows below the envelope, i.e. whether the separable product is what
+  Reflections' bake gives;
+  (b) march the port's own sky visibility (body triangles plus the ground plane) instead of
+  using Forza's byte at all.
+  Both are roster surveys (CPU).
+- **Vanilla's floor below n_y -0.6 is still unexplained.** It is 0.13..0.25 there, and AO x
+  (1 + n_y) / 2 gives 0.01..0.2. Until its cause is known (ground bounce in the bake, or bake
+  normals other than the drawn ones; `sky_bake.py body` can split it by part and by height), a
+  rule with no floor would knowingly differ from vanilla on every underside.
+- `DEFAULT_AO` 0.8 (pools whose byte is a constant, FM4 glass) has no source either. Under the
+  derived rule it would be the open level, 1, unless the occlusion of those panes is marched.
+
+So the code keeps the fit, marked `TODO(fit, #597)` in `vertices.py`, until (a) or (b) and the floor
+are settled and a `render_compare` of every port plus an in-game shot next to a vanilla car
+(roof and side panels in the same light) check the prediction: roofs +25% (0.80 -> 1.0 x AO),
+side panels -5% (0.525 -> 0.5 x AO), undersides 0.25 -> ~0.02 x AO.
+
 ### Vanilla's wheel bake: the same shape, a scale per vehicle (confirmed-static, 140 vehicles)
 
 - **No up/down term.** The tread holds one value all round the axle. On the Scirocco (274) it is
