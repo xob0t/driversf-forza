@@ -1467,6 +1467,10 @@ ground below the horizon counting as blocked, at full scale 1 (the body's maximu
 vehicles). Below n_y = -0.6 the envelope stays near 0.13..0.25, not 0. That part isn't
 explained (ground bounce, or bake normals other than the drawn ones). It doesn't touch wheels.
 
+The table was measured with the top bin half-open, so normals with n_y = 1 exactly (flat roofs)
+were left out of the +0.95 row; `sky_bake.py` now counts them. That row is to be re-measured
+when CPU is free; the other rows don't change.
+
 The ports' bodies don't follow this rule: `vertex_sky` writes Forza AO x (0.25 + 0.55 (1 + n_y) / 2),
 so an open side panel gets 0.525 x AO and a roof 0.8 x AO, against vanilla's 0.5 and 1.0. The
 floor and range were set on the Desanne (`vertices.py`). The body rule would be Forza AO x (1 + n_y) / 2
@@ -1482,6 +1486,11 @@ floor and range were set on the Desanne (`vertices.py`). The body rule would be 
   of 1. That is the wheel's own triangles as occluders with the inboard half-space closed, which
   for an open face is (1 + n_x) / 2. Vanilla's s0.w correlates with it at a median r = 0.83
   (IQR 0.61..0.91; rays past the tyre's radius counting 1; 0.80 counting 0).
+  These figures were measured with all of a vehicle's wheel parts joined into one occluder set.
+  On the 33 hosts with a front and a rear part, both models sit in the same wheel-local frame,
+  so each occluded the other. `sky_bake.py wheel` now marches each part alone (PR #598's review).
+  The r and k figures for those 33 hosts are to be re-measured when CPU is free. The other
+  107 hosts have one part and don't change.
 - **The scale is the vehicle's.** The least-squares scale k (vanilla s0.w / visibility) is
   0.45 / 0.55 / 0.64 / 0.77 / 0.90 (p5 / p25 / median / p75 / p95). The vanilla 370Z (227) has
   0.46, the R8 (139) 0.71, the Scirocco (274) 0.69, the GT-R (228) 0.76. The per-vehicle maximum

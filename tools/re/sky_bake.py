@@ -7,9 +7,12 @@ Reads the clean exterior entry (kind 2) of every four-wheeled vanilla vehicle an
   vehicle's 90th, 97th and 99th percentile of s0.w on the body (the envelope: the bake's
   value for an unoccluded vertex facing that way), next to (1 + n_y) / 2;
 - `wheel`: per vehicle, s0.w of the wheel parts against `forza2dsf.wheel_sky`'s visibility
-  (the wheel's own triangles as occluders, the inboard half-space closed) at an open level
-  of 1: the least-squares scale k (the vehicle's open level) and the correlation r, for
-  rays leaving past the tyre's radius counting 0 and 1.
+  (each wheel model's own triangles as occluders, the inboard half-space closed) at an open
+  level of 1: the least-squares scale k (the vehicle's open level) and the correlation r over
+  the samples of all its wheel models, for rays leaving past the tyre's radius counting 0
+  and 1. Each MODL wheel part is one wheel model in its own frame (hub at the origin;
+  research/wheels.md, "Vanilla DSF wheels"), so the 33 hosts with a front and a rear part
+  march each part alone: joined, the two models would overlap and occlude each other.
 
 Statistics only; no game data is written.
 
@@ -43,7 +46,8 @@ def _join(recs):
 
 
 def load(archive: Path, sid: int, stream, entries):
-    """Body and wheel-part corners of the clean exterior entry, each (pos, nrm, s0.w) or None.
+    """Corners of the clean exterior entry: the body as (pos, nrm, s0.w) or None, and the
+    wheels as one such tuple per MODL part (one wheel model each, rim and tyre together).
     The blur disc (s9 byte 3 = 2, drawn only at speed) is left out."""
     from dsfforza.convert import forza2dsf
     from dsfforza.formats import upvh as uv
@@ -60,7 +64,8 @@ def load(archive: Path, sid: int, stream, entries):
     )
     _, mesh = vm.load(archive, entries.index(ext), entries)
     cache: dict = {}
-    body, wheel = [], []
+    body: list = []
+    wheel: dict[int, list] = {}
     for n, part in enumerate(mesh.parts):
         if not part.lods:
             continue
@@ -72,8 +77,11 @@ def load(archive: Path, sid: int, stream, entries):
                 continue
             rec = (pos.reshape(-1, 3), _unit(nrm.reshape(-1, 3)), ao.reshape(-1))
             is_wheel = n in hw.exterior_parts or sub.material in car_render.TYRE_UIDS
-            (wheel if is_wheel else body).append(rec)
-    return _join(body), _join(wheel)
+            if is_wheel:
+                wheel.setdefault(n, []).append(rec)
+            else:
+                body.append(rec)
+    return _join(body), [_join(recs) for recs in wheel.values()]
 
 
 def vehicles(archive: Path, ids):
@@ -99,7 +107,7 @@ def cmd_body(args) -> None:
         _, nrm, ao = body
         row = []
         for lo, hi in itertools.pairwise(EDGES):
-            sel = (nrm[:, 1] >= lo) & (nrm[:, 1] < hi)
+            sel = (nrm[:, 1] >= lo) & ((nrm[:, 1] < hi) | (hi == EDGES[-1]))  # the last bin holds n_y = 1
             row.append(np.percentile(ao[sel], [90, 97, 99]) if sel.sum() >= MIN_BIN else [np.nan] * 3)
         per.append(row)
     p = np.array(per)
@@ -111,21 +119,28 @@ def cmd_body(args) -> None:
         print(f"{m:+.2f}  {(1 + m) / 2:.3f}      {q[0]:.3f}  {q[1]:.3f}  {q[2]:.3f}")
 
 
-def wheel_fit(wheel, sides=(0.0, 1.0)) -> dict[float, tuple[float, float]]:
-    """{side share: (k, r)}: s0.w of the wheel against wheel_sky's visibility at open level 1."""
+def wheel_fit(wheels, sides=(0.0, 1.0)) -> dict[float, tuple[float, float]]:
+    """{side share: (k, r)}: s0.w of the wheel models against wheel_sky's visibility at open
+    level 1. Each model (pos, nrm, s0.w) is marched with its own triangles as the occluders;
+    k and r are fitted over the samples of all of them (WHEEL_SAMPLE split by corner count)."""
     from dsfforza.convert.forza2dsf import wheels as w
 
-    pos, nrm, ao = wheel
-    _, idx = np.unique(np.round(np.concatenate([pos, nrm], 1), 4), axis=0, return_index=True)
-    if len(idx) > WHEEL_SAMPLE:
-        idx = np.random.default_rng(0).choice(idx, WHEEL_SAMPLE, replace=False)
-    pts, nn, a = pos[idx], nrm[idx], ao[idx]
+    total = sum(len(m[0]) for m in wheels)
+    rng = np.random.default_rng(0)
+    samples = []
+    for pos, nrm, ao in wheels:
+        _, idx = np.unique(np.round(np.concatenate([pos, nrm], 1), 4), axis=0, return_index=True)
+        quota = max(1, round(WHEEL_SAMPLE * len(pos) / total))
+        if len(idx) > quota:
+            idx = rng.choice(idx, quota, replace=False)
+        samples.append((pos[idx], nrm[idx], ao[idx], pos.reshape(-1, 3, 3)))
+    a = np.concatenate([s[2] for s in samples])
     saved = w.WHEEL_SKY_OPEN, w.WHEEL_SKY_SIDE
     out = {}
     try:
         for side in sides:
             w.WHEEL_SKY_OPEN, w.WHEEL_SKY_SIDE = 1.0, side
-            v = np.array(w.wheel_sky(pts, nn, pos.reshape(-1, 3, 3)))
+            v = np.concatenate([np.array(w.wheel_sky(pts, nn, tri)) for pts, nn, _, tri in samples])
             out[side] = (float(v @ a / (v @ v)), float(np.corrcoef(v, a)[0, 1]))
     finally:
         w.WHEEL_SKY_OPEN, w.WHEEL_SKY_SIDE = saved
@@ -135,10 +150,10 @@ def wheel_fit(wheel, sides=(0.0, 1.0)) -> dict[float, tuple[float, float]]:
 def cmd_wheel(args) -> None:
     rows = []
     for sid, _, wheel in vehicles(args.archive, args.ids):
-        if wheel is None:
+        if not wheel:
             continue
         fit = wheel_fit(wheel)
-        rows.append((sid, float(wheel[2].max()), *fit[0.0], *fit[1.0]))
+        rows.append((sid, float(max(m[2].max() for m in wheel)), *fit[0.0], *fit[1.0]))
         print(
             f"{sid}\tmax {rows[-1][1]:.3f}\tside 0: k {fit[0.0][0]:.3f} r {fit[0.0][1]:.3f}"
             f"\tside 1: k {fit[1.0][0]:.3f} r {fit[1.0][1]:.3f}",

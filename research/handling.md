@@ -578,16 +578,17 @@ code, the issue saying what its derivation needs.
 
 A static RE round on rule CY's 0.052 m (`handling_dsf.COG_HEIGHT_OFFSET`). No build or game run.
 Tool: `tools/re/cog_offset.py`. Result: **ruled out statically**. No reference that the DSF code
-or the data defines accounts for the offset. The pairs can't give one either, because
-Reflections' p30 is hand-set.
+or the data defines accounts for the offset. The pairs can't give one either if p30 is
+hand-set, as its rounding suggests; a value calculated and then rounded to 5 cm steps would show
+the same pattern, so the static evidence doesn't prove it.
 
-**p30 is a hand-entered value (confirmed-static, 140 vanilla vehicles).** All 140 four-wheeled
+**p30 is probably hand-entered (static evidence, 140 vanilla vehicles).** All 140 four-wheeled
 vehicles' p30 are whole centimetres, and 54% are multiples of 5 cm (the pairs: 100% and 50%).
 Examples: the Mito 0.30, the F-350 0.40, the Countach -0.25, the GT-R -0.17, the Scirocco 0.20.
 The engine takes it as it is: `FUN_008902C0` stores (0, -p30, -p32) at spec+0x35F0, and
-`FUN_0088E310` adds that to every hierarchy position ("Mass, inertia, geometry"). So p30 is
-Reflections' rounded estimate of each car's CoG, and the pairs' residual against Forza's
-`CMHeight` is the spread of those estimates.
+`FUN_0088E310` adds that to every hierarchy position ("Mass, inertia, geometry"). So p30 is most
+likely Reflections' rounded estimate of each car's CoG, and the pairs' residual against Forza's
+`CMHeight` the spread of those estimates.
 
 **The residual against candidate references (48 pairs).** The residual is
 `p30 - (hub + CMHeight - drive tyre radius)`: median 0.050 m, IQR 0.031..0.076, sd 0.048. A
@@ -625,9 +626,10 @@ height reference.
   against p30.
 
 Prediction if both answers are "the ground at rest": p30 = hub + `CMHeight` - drive radius.
-The CoG then drops by 0.052 m on every port not on its own model's host. For example the 370Z
-(host 227) goes from -0.126 to -0.178 (Reflections: -0.110), the GT-R (228) from -0.164 to
--0.216 (-0.170), and the Scirocco (275) from 0.248 to 0.196 (0.200). Round 3 found the CoG the
+The CoG then drops by 0.052 m on every port not on its own model's host. For example the GT-R
+(228) goes from -0.164 to -0.216 (Reflections: -0.170), and the Scirocco (275) from 0.248 to
+0.196 (0.200). The Forza 370Z on its own model's host 227 keeps the host's p30: the same-model
+path skips rule CY (`handling_dsf.py`, `not ctx.same_model`). Round 3 found the CoG the
 strongest handbrake-rotation predictor, so this needs the in-game handbrake check before it
 ships.
 
