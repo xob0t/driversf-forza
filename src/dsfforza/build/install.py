@@ -1344,7 +1344,29 @@ class Run:
     # 1. preflight ------------------------------------------------------------------------------
 
     def preflight(self) -> str:
-        args, problems, info = self.args, [], []
+        """Stage 1: what the run needs is there (the game, its vanilla archive, the disc
+        images and car lists for a build, the install's prerequisites, disk space). Returns
+        the stage's detail; a StageError lists every problem found."""
+        game = self.find_game()
+        self.game = game
+        problems, info = self.check_game(game)
+        cars = None
+        if self.building:
+            found, notes, cars = self.check_build_inputs()
+            problems += found
+            info += notes
+        if self.installing:
+            problems += self.install_checks()
+        found, notes = self.check_space(cars if cars is not None else len(self.installed_cars()))
+        problems += found
+        info += notes
+        if problems:
+            raise StageError("\n".join(f"- {p}" for p in problems))
+        return ", ".join(info)
+
+    def find_game(self) -> Path:
+        """The game folder: --game, else DSF_GAME_DIR; a StageError when unset or without Driver.exe."""
+        args = self.args
         game = args.game or (Path(os.environ["DSF_GAME_DIR"]) if os.environ.get("DSF_GAME_DIR") else None)
         if game is None:
             raise StageError(
@@ -1355,7 +1377,14 @@ class Run:
         game = Path(game)
         if not (game / "Driver.exe").is_file():
             raise StageError(f"No Driver.exe in {game}.", "DSF_GAME_DIR (or --game) must be the game folder.")
-        self.game = game
+        return game
+
+    def check_game(self, game: Path) -> tuple[list[str], list[str]]:
+        """(problems, info) of the game folder: Driver.exe is the 1.04 release dsfcars.asi
+        patches, and the vehicle archive is vanilla when building (the build reads it).
+        Reads the install record and finds the vanilla archive (self.record,
+        self.vanilla_archive)."""
+        problems, info = [], []
         if problem := exe_problem(game / "Driver.exe"):
             problems.append(
                 f"{game / 'Driver.exe'} is {problem}. dsfcars.asi patches only the 1.04 release's "
@@ -1378,53 +1407,59 @@ class Run:
                 )
         else:
             info.append("DSF 1.04")
-        cars = None
-        if self.building:
-            from dsfforza.build import forza_roster
+        return problems, info
 
-            self.isos = [Path(p) for p in (args.iso or forza_roster.default_images())]
-            missing = [p for p in self.isos if not p.is_file()]
-            if not self.isos:
+    def check_build_inputs(self) -> tuple[list[str], list[str], int]:
+        """(problems, info, how many cars the build names at most) of a build's inputs: the
+        Forza disc images (self.isos; each identified by its content), the FM4 DLC packs and
+        the car lists."""
+        from dsfforza.build import forza_roster
+
+        args, problems, info = self.args, [], []
+        self.isos = [Path(p) for p in (args.iso or forza_roster.default_images())]
+        missing = [p for p in self.isos if not p.is_file()]
+        if not self.isos:
+            problems.append(
+                "No Forza disc images: put the FH1 and FM4 (disc 1 and 2) .iso files in "
+                f"{REPO / 'assets'}, or pass --iso FILE for each."
+            )
+        elif missing:
+            problems.append(f"Disc image not found: {', '.join(map(str, missing))}")
+        else:
+            # Each image by its content (default.xex), whatever it is called.
+            discs = forza_roster.identify_all(self.isos)
+            found, notes = forza_roster.disc_summary(discs)
+            if not found:
                 problems.append(
-                    "No Forza disc images: put the FH1 and FM4 (disc 1 and 2) .iso files in "
-                    f"{REPO / 'assets'}, or pass --iso FILE for each."
+                    "None of the disc images is a Forza Horizon or Forza Motorsport 4 disc: "
+                    + "; ".join(f"{d.path.name}: {d.error}" for d in discs)
                 )
-            elif missing:
-                problems.append(f"Disc image not found: {', '.join(map(str, missing))}")
             else:
-                # Each image by its content (default.xex), whatever it is called.
-                discs = forza_roster.identify_all(self.isos)
-                found, notes = forza_roster.disc_summary(discs)
-                if not found:
-                    problems.append(
-                        "None of the disc images is a Forza Horizon or Forza Motorsport 4 disc: "
-                        + "; ".join(f"{d.path.name}: {d.error}" for d in discs)
-                    )
-                else:
-                    info.append("discs " + " + ".join(found))
-                    info += notes
-            info += dlc_preflight(forza_roster.dlc_packages(), self.dlc_use())
-            lists = self.lists()
-            gone = [p for p in lists if not Path(p).is_file()]
-            if gone:
-                problems.append(f"Car list not found: {', '.join(map(str, gone))}")
-            # the DLC list in full: an upper bound when some packs are missing (for the disk space)
-            from dsfforza.build.port_batch import DLC_LIST
+                info.append("discs " + " + ".join(found))
+                info += notes
+        info += dlc_preflight(forza_roster.dlc_packages(), self.dlc_use())
+        lists = self.lists()
+        gone = [p for p in lists if not Path(p).is_file()]
+        if gone:
+            problems.append(f"Car list not found: {', '.join(map(str, gone))}")
+        # the DLC list in full: an upper bound when some packs are missing (for the disk space)
+        from dsfforza.build.port_batch import DLC_LIST
 
-            dlc = [DLC_LIST] if self.dlc_cars() else []
-            cars = count_cars([p for p in lists if p not in gone] + dlc, args.car or [])
-        if self.installing:
-            problems += self.install_checks()
-        # disk space: the build folder's drive and the game's
-        cars = cars if cars is not None else len(self.installed_cars())
+        dlc = [DLC_LIST] if self.dlc_cars() else []
+        return problems, info, count_cars([p for p in lists if p not in gone] + dlc, args.car or [])
+
+    def check_space(self, cars: int) -> tuple[list[str], list[str]]:
+        """(problems, info) of the disk space for `cars` cars (space_needed): the build
+        folder's drive and the game's, added up when they are one drive."""
+        args, problems, info = self.args, [], []
         reusing = bool(reuse_sources(BuildDirs.of(args.out), args.reuse or [], no_reuse=args.no_reuse))
         need_build, need_game = space_needed(cars, reusing=reusing)
         needs: dict[str, tuple[Path, int]] = {}
         if self.building:
             needs[drive_of(args.out)] = (args.out, need_build)
         if self.installing:
-            path, n = needs.get(drive_of(game), (game, 0))
-            needs[drive_of(game)] = (path, n + need_game)
+            path, n = needs.get(drive_of(self.game), (self.game, 0))
+            needs[drive_of(self.game)] = (path, n + need_game)
         for path, need in needs.values():
             free = self.probes.free(path)
             if free < need:
@@ -1434,9 +1469,7 @@ class Run:
                 )
             else:
                 info.append(f"{size_text(free)} free on {Path(path).resolve().anchor.rstrip(chr(92))}")
-        if problems:
-            raise StageError("\n".join(f"- {p}" for p in problems))
-        return ", ".join(info)
+        return problems, info
 
     def lists(self) -> list[Path]:
         if self.args.list:

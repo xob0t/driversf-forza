@@ -4,7 +4,6 @@
   "src/dsfforza/build/handling.py": {"FBT001": 1, "FBT002": 1},
   "src/dsfforza/build/handling_dsf.py": {"ARG001": 1, "C901": 2, "FBT001": 5, "FBT002": 5, "PLR0912": 2, "PLR0915": 2},
   "src/dsfforza/build/host_select.py": {"ARG001": 3, "C901": 2, "FBT001": 3, "FBT002": 3, "PLR0912": 1, "PLR0915": 1},
-  "src/dsfforza/build/install.py": {"C901": 1, "PLR0912": 1, "PLR0915": 1},
   "src/dsfforza/build/pack_reuse.py": {"ARG002": 1},
   "src/dsfforza/build/port_car.py": {"C901": 2, "FBT001": 1, "FBT002": 1, "PLR0912": 2, "PLR0915": 2},
   "src/dsfforza/build/report.py": {"C901": 2, "PLR0912": 2, "PLR0915": 1},
