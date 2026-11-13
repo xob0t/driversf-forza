@@ -125,6 +125,25 @@ def test_deeper_than_the_window_reaches():
     assert {r for _, r in g.triangles()} == {"surface"}
 
 
+def test_cockpit_glass_takes_the_lexan_binding():
+    """The MC12's cockpit carbin names its windscreen glassF where the main carbin says
+    lexanF: the cockpit pane takes lexanF's panel, not the chassis (#459)."""
+    from types import SimpleNamespace
+
+    from dsfforza.convert.forza2dsf.vertices import interior_glass_skin
+
+    sub = SimpleNamespace(lod=1)
+    lexan = SimpleNamespace(name="lexanF", subsections=[sub])
+    glass_own = SimpleNamespace(name="glassR", subsections=[SimpleNamespace(lod=1)])
+    lexan_r = SimpleNamespace(name="lexanR", subsections=[SimpleNamespace(lod=1)])
+    car = SimpleNamespace(body=[lexan, glass_own, lexan_r])
+    pairs = {id(sub): (0, 4), id(glass_own.subsections[0]): (0, 20), id(lexan_r.subsections[0]): (0, 21)}
+    dmg = SimpleNamespace(assignment=lambda body, lod: {(k, 0): v for k, v in pairs.items()}, bound=lambda pair: pair)
+    skin = interior_glass_skin(dmg, car, SimpleNamespace(lods={"full": 1}))
+    assert skin["glassF"] == skin["lexanF"] == bytes((0, 4, 0, 1))
+    assert skin["glassR"] == bytes((0, 20, 0, 1))  # a glass section of its own keeps its own
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
