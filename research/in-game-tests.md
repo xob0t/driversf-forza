@@ -468,6 +468,17 @@ probe line comes for `-PauseQuietSeconds` (20 s; the probe logs every 4 ticks in
 blind `-MenuKeys 'Esc:3'` did in 3-press runs). run-series prints a warning
 when a run's GPU memory reached the VM's graphics memory.
 
+**Checked** (2026-11-13, plain `run-series.ps1 -Vm`, no `-Override`; vanilla
+archive, ID 170, `-Traffic -DriveSeconds 200 -WaitSeconds 420`): 4 of 4
+traffic drives finished with the probe done, no black shot, the window
+borderless (1600x922) and the GPU memory at most 375 MB: `vm2-20261113-195623`
+(204 of 204 cockpit samples above 5 mph), `vm2-20261113-200101` (105; it left
+the road and stopped, still drawn), both after VM 2 was provisioned again;
+`vm1-20261113-201754` (204) and `-202237` (199) on VM 1's old copy, where
+run-test left out `d3d9.dll`, the backups and seven folders itself. A plain
+short probe (ID 304, `vm2-20261113-200607`) finished too. No run needed the
+Esc. Then VM 1 was provisioned again as well.
+
 ### VM results (2026-10-24)
 
 - Vanilla smoke test `vm-20261024-015247` (vanilla archive, ID 147): finished in
