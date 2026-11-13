@@ -20,8 +20,11 @@ How to work:
    cause over a per-car fix. Compare against Forza (its assets under `out/cache`) and against
    a vanilla DSF car (on the same host where it matters): change only what differs from them.
    Every conversion rule you write comes from Forza's or DSF's data and maths, never from fitting
-   (AGENTS.md, "Rules come from data, never from fitting"). If the maths is unknown, decode
-   it or stop and say so in your report; don't tune a constant until the output looks right.
+   (AGENTS.md, "Rules come from data, never from fitting"). In a decodable domain, if the
+   maths is unknown, decode it or stop and say so in your report; don't tune a constant
+   until the output looks right. In the authored domains listed there (handling values,
+   HUD stat bars, the garage pictures' look), a rule fitted to vanilla ships only with a
+   held-out validation.
 3. Measure the roster (`--roster`: `tools/batches/all.txt` and the FM4 DLC cars) before and
    after: how many cars change, and the numbers that show it. Survey offline where you can.
    `uv run dsff port_batch affected --roster` lists the cars your change touches without

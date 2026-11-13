@@ -399,8 +399,10 @@ def torque_power_rule(car: H.ForzaCar) -> float:
 
 # vehicleStats stat bars (the HUD's Speed / Strength / Drift, Reflections' summary of a
 # car), fitted over the 137 vanilla cars that have them. Leave-one-out mean absolute
-# error 0.042, 0.041 and 0.127 (bar spread 0.24, 0.18, 0.28). P/W in kW per kg.
-BAR_FITS = {  # TODO(fit, #521)
+# error 0.042, 0.041 and 0.127 (bar spread 0.24, 0.18, 0.28). P/W in kW per kg. The bars
+# are an authored domain (AGENTS.md, "Authored domains"; research/handling.md, "DSF-first
+# mapping"): this held-out-validated fit is their source.
+BAR_FITS = {
     "Speed": (-0.6525, 0.0101, 0.0587),  # + p160 (mph), + ln(P/W)
     "Strength": (-2.1427, 0.3429),  # + ln(p0)
     "Drift": (1.2138, 0.2739, -0.3692, -0.1497),  # + ln(P/W), FWD, AWD

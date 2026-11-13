@@ -19,6 +19,15 @@ DSF supplies how it behaves, as for its vanilla cars: when lamps light,
 damage, cameras, the garage, the HUD. Study Forza's behaviour only to read
 its data correctly, never to copy it.
 
+The rules depend on the domain. Most domains are decodable: the maths is in
+Forza's or DSF's data or code. A few are authored: Reflections set DSF's
+values there by hand, and no maths in either game produces them.
+
+### Decodable domains
+
+Formats, materials and shaders, lamps, geometry, engine behaviour, and
+anything else with maths in Forza's or DSF's data or code:
+
 - Fitting is not a fix. Don't choose a constant, threshold, gain, curve or
   floor because the output then looks right or lands in a target range. That
   includes matching means or quantiles to a reference, and per-car exceptions.
@@ -46,8 +55,56 @@ its data correctly, never to copy it.
 - For behaviour, vanilla is the target. For values (a colour, a level, a
   size), vanilla is a check: compare with vanilla cars to find what's wrong,
   but don't calibrate onto vanilla's distribution unless the game itself
-  defines the value that way.
+  defines the value that way (the authored domains below).
 - The PR says, for each new or changed rule, where it comes from.
+
+### Authored domains
+
+In these domains, DSF's vanilla cars define the value, and a rule fitted to
+them is a source. What each value does in the engine is still decodable and
+stays under the rules above. Only the per-car value is authored.
+
+- **Handling values**: the per-car VO3D numbers (torque, inertia, drag,
+  resistances, grip, tyre stiffness, axle balance, CoG, the feel sets). Over
+  the 48 vanilla/Forza pairs, Forza's own values in DSF's units move ports
+  away from DSF's cars: torque on all 48 (DSF's are 1.8x, spread 25% per
+  car), engine inertia on 40, box inertia on 47, the CoG on 37; all together
+  make 0-60 2 to 5x slower in game. DSF's rolling resistance is about 12x
+  real, yet its cars' 60-100 mph pace is Forza's. Vanilla CoG heights are
+  whole centimetres, half of them multiples of 5 (`research/handling.md`,
+  "Forza-derived parameters against DSF's own cars", #570; "CoG height
+  offset: static round").
+- **HUD stat bars** (vehicleStats Speed, Strength, Drift): display-only data
+  in `vehiclestats.lua` that no game code computes. Every Drift bar and 125
+  of 146 Speed bars are fifteenths, hand ratings. Strength is on no such
+  scale, but no game code computes it either (`research/handling.md`,
+  "DSF-first mapping").
+- **Garage-picture look**: the studio light, tone and framing of the garage
+  pictures. They are offline renders shipped as textures; neither game's data
+  or code holds their light. Their framing follows no rule: camera distance
+  1.07 to 2.0 car lengths, and no box predicts most of the 142 car heights
+  (`research/gui-assets.md`, "Camera and render", "Framing"). The backdrop
+  photo, the glyph cells, the camera angle, the car's materials and the
+  renderer's own maths stay decodable.
+
+A rule fitted to vanilla in an authored domain ships when:
+
+- it is validated held out: fitted on part of the vanilla/Forza pairs (or
+  vanilla cars), measured on the rest (leave-one-out counts), with the error
+  reported;
+- its criteria are roster-wide, with no per-car exceptions or per-car
+  calibration;
+- its comment cites the validation: the research note's section and the
+  numbers.
+
+Such a rule is not marked `TODO(fit, ...)`. Until it is validated, it keeps
+the marker. A domain joins this list only with positive evidence, recorded
+in `research/`, that DSF's values are set by hand: a pair study where Forza's
+converted values move ports away from DSF's cars, values on a hand scale
+(round numbers, rating steps), or values that are only displayed, with no
+game code computing them. Not having decoded the maths yet is not evidence: that domain
+stays decodable. Everything else in this section still holds: no per-car
+exceptions, and the PR says where each rule comes from.
 
 ## Agent workflow
 
@@ -209,8 +266,9 @@ For the session that hands tasks to worker agents (`.claude/agents/dsff-worker.m
   `Fixes #N` or `Part of #N` for each issue it touches, with what is left
   for every `Part of #N`.
 - Before merging, check each rule against "Rules come from data, never from
-  fitting". A fitted rule goes back, or waits on an RE round; a PR can ship
-  its derived part alone.
+  fitting". In a decodable domain a fitted rule goes back, or waits on an RE
+  round; a PR can ship its derived part alone. In an authored domain a fit
+  ships only with its held-out validation in the PR.
 - Merge with `.\tools\merge-pr.ps1 <number>` (squash-merges, cleans up, and
   pulls master unless a build runs from the main checkout). It leaves the PR's
   worktree alone, because its worker may still be using it: the worker removes
