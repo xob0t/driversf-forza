@@ -1,5 +1,5 @@
-"""plates.depth_map (all triangles' box cells at once) and lod_depths' triangle
-filter give exactly what the loops before them gave. The reference below is the
+"""plates.depth_map (all triangles' box cells at once) gives exactly what the loop
+before it gave, and lod_depths' triangle filter changes no map. The reference below is the
 original per-triangle z-buffer, kept here only to compare against, on random
 scenes with ties, slivers, triangles off the map and chunk boundaries.
 
@@ -98,17 +98,19 @@ def test_depth_map_matches_the_loop():
         pm.DEPTH_CHUNK = chunk
 
 
-def test_lod_depths_filter_matches_the_loop():
+def test_lod_depths_filter_drops_nothing_the_map_draws():
+    # lod_depths rasterises only window_triangles' triangles; the map must be the one of
+    # every triangle (#595: the corner test it replaced dropped triangles spanning the plate)
     rng = random.Random(5)
     for _ in range(30):
         tris = _scene(rng, 200)
         corners = np.array([t[0] for t in tris], float).reshape(-1, 3, 3)
         end = rng.choice(["rear", "front"])
         s, y, w, h = rng.uniform(-0.5, 0.5), rng.uniform(0, 1.2), rng.uniform(0.1, 0.5), rng.uniform(0.05, 0.3)
-        want = [t for t in tris if any(abs(pm.view_coords(end, p)[0] - s) < w and abs(p[1] - y) < h for p in t[0])]
-        across = -corners[:, :, 0] if end == "rear" else corners[:, :, 0]
-        near = ((np.abs(across - s) < w) & (np.abs(corners[:, :, 1] - y) < h)).any(1)
-        assert [tris[i] for i in np.flatnonzero(near).tolist()] == want
+        window = (s - w / 2, s + w / 2), (y - h / 2, y + h / 2)
+        kept = [tris[i] for i in pm.window_triangles(corners, end, *window)]
+        assert len(kept) < len(tris)
+        _same(pm.depth_map(kept, end, *window), pm.depth_map(tris, end, *window))
 
 
 if __name__ == "__main__":

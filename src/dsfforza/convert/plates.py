@@ -1051,22 +1051,33 @@ def plan_end(
     )
 
 
+def window_triangles(corners: np.ndarray, end: str, s_range, y_range) -> list[int]:
+    """Indices, in order, of the triangles (DSF corners, n x 3 x 3) whose bounding box
+    seen from `end` overlaps s_range x y_range: every triangle that can cover a cell
+    centre of depth_map over that window, whose centres lie inside it (#595). A
+    triangle spanning the window with all its corners outside it is kept."""
+    across = -corners[:, :, 0] if end == "rear" else corners[:, :, 0]
+    up = corners[:, :, 1]
+    (s0, s1), (y0, y1) = s_range, y_range
+    hit = (across.max(1) >= s0) & (across.min(1) <= s1) & (up.max(1) >= y0) & (up.min(1) <= y1)
+    return np.flatnonzero(hit).tolist()
+
+
 def lod_depths(plate: Plate, sections, lods, place, cache: dict | None = None) -> None:
     """Per LOD: the plate's d, moved out if that LOD's surface is nearer than
     the plate anywhere under it. `cache` keeps each LOD's body triangles (and
     their corners as an array) for the other end's plate."""
     s, y = plate.centre
     w, h = plate.size
+    window = (s - w / 2, s + w / 2), (y - h / 2, y + h / 2)  # the plate's rectangle
     cache = {} if cache is None else cache
     for lod in lods:
         if lod not in cache:
             all_tris = body_triangles(sections, lod, place)
             cache[lod] = (all_tris, np.array([t[0] for t in all_tris], float).reshape(-1, 3, 3))
         all_tris, corners = cache[lod]
-        across = -corners[:, :, 0] if plate.end == "rear" else corners[:, :, 0]
-        near = ((np.abs(across - s) < w) & (np.abs(corners[:, :, 1] - y) < h)).any(1)
-        tris = [all_tris[i] for i in np.flatnonzero(near).tolist()]
-        dm = depth_map(tris, plate.end, (s - w / 2, s + w / 2), (y - h / 2, y + h / 2))
+        tris = [all_tris[i] for i in window_triangles(corners, plate.end, *window)]
+        dm = depth_map(tris, plate.end, *window)
         ok = np.isfinite(dm.depth)
         d = plate.depth
         if ok.any():

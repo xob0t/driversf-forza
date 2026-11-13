@@ -152,6 +152,28 @@ def test_plate_rests_flat_and_upright_on_a_flat_face():
     assert (tilt, bend) == (0.0, 0.0) and abs(d + 2.0) < 1e-6 and gaps.max() < 1e-6
 
 
+def _lod_depth(tris) -> float:
+    """lod_depths of a flat rear plate at (s, y) = (0, 0.5), d -2.0, over LOD 4's `tris`."""
+    import numpy as np
+
+    plate = P.Plate("rear", (0.0, 0.5), SIZE, 0.0, -2.0, "pocket", "bumperRa")
+    corners = np.array([t[0] for t in tris], float).reshape(-1, 3, 3)
+    P.lod_depths(plate, None, [4], None, cache={4: (tris, corners)})
+    return plate.lod_depth[4]
+
+
+def test_coarse_lod_triangle_spanning_the_plate_moves_it_out():
+    # #595: one LOD-4 panel triangle 3 cm nearer than the plate covers it with every corner
+    # far from it, (s, y) (-0.4, 0.3), (0.4, 0.3), (0, 0.8); DSF x = -s at the rear
+    z = -2.03
+    panel = [((0.4, 0.3, z), (-0.4, 0.3, z), (0.0, 0.8, z)), 1, "bumperRa", 0]
+    assert abs(_lod_depth([tuple(panel)]) - (z - P.PROUD)) < 1e-9
+    # control: the same surface split at the plate's centre, a corner on the plate
+    c = (0.0, 0.5, z)
+    split = [((a, b, c), 1, "bumperRa", 0) for a, b in itertools.pairwise(panel[0] + (panel[0][0],))]
+    assert abs(_lod_depth(split) - (z - P.PROUD)) < 1e-9
+
+
 def test_bent_plate_section():
     # Two panels with the plate's UV split at its centre line, wound outwards.
     plate = P.Plate("rear", (0.0, 0.3), SIZE, 0.1, -2.0, "host", "bumperRa", bend=0.15)
