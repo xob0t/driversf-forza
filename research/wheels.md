@@ -1467,9 +1467,10 @@ ground below the horizon counting as blocked, at full scale 1 (the body's maximu
 vehicles). Below n_y = -0.6 the envelope stays near 0.13..0.25, not 0. That part isn't
 explained (ground bounce, or bake normals other than the drawn ones). It doesn't touch wheels.
 
-The table was measured with the top bin half-open, so normals with n_y = 1 exactly (flat roofs)
-were left out of the +0.95 row; `sky_bake.py` now counts them. That row is to be re-measured
-when CPU is free; the other rows don't change.
+The table was first measured with the top bin half-open, so normals with n_y = 1 exactly (flat
+roofs) were left out of the +0.95 row. Re-measured on 2026-11-13 with that bin closed at +1 (and
+the tyre-material body pieces below counted as body): every row is unchanged, +0.95 included
+(p90 0.986, p97 0.996, p99 0.998).
 
 The ports' bodies don't follow this rule: `vertex_sky` writes Forza AO x (0.25 + 0.55 (1 + n_y) / 2),
 so an open side panel gets 0.525 x AO and a roof 0.8 x AO, against vanilla's 0.5 and 1.0. The
@@ -1540,17 +1541,25 @@ side panels -5% (0.525 -> 0.5 x AO), undersides 0.25 -> ~0.02 x AO.
 - **The shape is the converter's own visibility.** `sky_bake.py wheel` runs
   `forza2dsf.wheel_sky` on each vanilla wheel part's own vertices and triangles at an open level
   of 1. That is the wheel's own triangles as occluders with the inboard half-space closed, which
-  for an open face is (1 + n_x) / 2. Vanilla's s0.w correlates with it at a median r = 0.83
-  (IQR 0.61..0.91; rays past the tyre's radius counting 1; 0.80 counting 0).
-  These figures were measured with all of a vehicle's wheel parts joined into one occluder set.
-  On the 33 hosts with a front and a rear part, both models sit in the same wheel-local frame,
-  so each occluded the other. `sky_bake.py wheel` now marches each part alone (PR #598's review).
-  The r and k figures for those 33 hosts are to be re-measured when CPU is free. The other
-  107 hosts have one part and don't change.
-- **The scale is the vehicle's.** The least-squares scale k (vanilla s0.w / visibility) is
-  0.45 / 0.55 / 0.64 / 0.77 / 0.90 (p5 / p25 / median / p75 / p95). The vanilla 370Z (227) has
-  0.46, the R8 (139) 0.71, the Scirocco (274) 0.69, the GT-R (228) 0.76. The per-vehicle maximum
-  of a wheel's s0.w runs 0.59..0.98.
+  for an open face is (1 + n_x) / 2. Vanilla's s0.w correlates with it at a median r = 0.87
+  (IQR 0.79..0.92; rays past the tyre's radius counting 1; 0.84, IQR 0.78..0.89, counting 0).
+  By host: the 107 with one wheel part 0.88 (IQR 0.80..0.92), the 33 with a front and a rear
+  part 0.84 (0.76..0.89).
+  Measured 2026-11-13 (`out/re/sky_wheel.tsv` from `sky_bake.py wheel`). It differs from the
+  first measurement (r 0.83, IQR 0.61..0.91) in two ways. First, that one joined all of a
+  vehicle's wheel parts into one occluder set. Each part is one wheel model in its own frame
+  with the hub at the origin, so on the 33 two-part hosts the front and rear models overlapped
+  and occluded each other; each part is now marched alone (PR #598's review). Second, that one
+  also took every tyre-material submodel as wheel. 8 parts on 4 hosts (119, 208, 215, 217) hold
+  one outside the wheel parts. Each of those parts is a whole body in the car's frame (1.8 to
+  2.0 m wide, 3.7 to 4.6 m long), and the tyre piece in it is body geometry: a spare wheel on
+  208's tailgate (z -1.95..-1.73 m), a rubber strip across 119. They now count as body. The first
+  per-vehicle table wasn't kept, so the change can't be split between the two fixes.
+- **The scale is the vehicle's.** The least-squares scale k (vanilla s0.w / visibility, rays past
+  the tyre counting 1) is 0.46 / 0.55 / 0.64 / 0.75 / 0.85 (p5 / p25 / median / p75 / p95; first
+  measured 0.45 / 0.55 / 0.64 / 0.77 / 0.90). The vanilla 370Z (227) has 0.46, the R8 (139) 0.71,
+  the Scirocco (274) 0.68, the GT-R (228) 0.76. The per-vehicle maximum of a wheel's s0.w runs
+  0.59..0.98.
 
 So `WHEEL_SKY_OPEN` 0.64 is this per-vehicle scale's fleet median. Reflections set it per asset,
 so vanilla defines no one wheel level that a port could take. That rules out a "vanilla's
