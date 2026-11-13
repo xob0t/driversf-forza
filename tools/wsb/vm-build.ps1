@@ -16,7 +16,8 @@ Steps (default: all, in order; each can be run alone):
              first-logon.ps1 and VMware Tools; then powers off, detaches the CDs and adds
              the sound card (muted in the guest by setup-vm.ps1 Session).
   Provision  boots, runs guest\setup-vm.ps1 -Phase Provision (links, C:\Game, profile,
-             display, mute), powers off.
+             display, mute), powers off. -Step Provision first waits for the VM's series
+             (its run mutex, queued like a series).
   Snapshot   snapshot "clean" of the powered-off VM (vm.ps1 Revert goes back to it).
   Clone      (not part of All) another pool VM (-Vm 2: C:\VMs\dsfforza-test2) as a linked
              clone of VM 1's snapshot "clean": its disk is a child of VM 1's base disk,
@@ -257,9 +258,20 @@ function Step-Clone {
     Step-Snapshot
 }
 
-$lifecycle = Enter-VmLifecycle
+# -Step Provision of a VM in the pool: its run mutexes first (a series takes them before the lifecycle
+# mutex too), so no series runs while C:\Game is rewritten and the VM powered off; queued behind the
+# series already waiting (vm-common.ps1 Enter-VmPool).
+$held = $null
+if ($Step -eq 'Provision') {
+    $got = Enter-VmPool -Pool @($VmInfo) -Timeout ([TimeSpan]::FromHours(3)) -Label 'vm-build.ps1 Provision' -Say { param($t) Say "${VmName}: $t" | Out-Host }
+    if (-not $got) { throw "$VmName is still in use after 3 hours" }
+    $held = $got.Mutexes
+}
 try {
-    foreach ($s in 'Iso', 'Create', 'Install', 'Provision', 'Snapshot', 'Clone') {
-        if (($Step -eq 'All' -and $s -ne 'Clone') -or $Step -eq $s) { & "Step-$s" }
-    }
-} finally { $lifecycle.ReleaseMutex() }
+    $lifecycle = Enter-VmLifecycle
+    try {
+        foreach ($s in 'Iso', 'Create', 'Install', 'Provision', 'Snapshot', 'Clone') {
+            if (($Step -eq 'All' -and $s -ne 'Clone') -or $Step -eq $s) { & "Step-$s" }
+        }
+    } finally { $lifecycle.ReleaseMutex() }
+} finally { if ($held) { Exit-VmMutexes $held } }

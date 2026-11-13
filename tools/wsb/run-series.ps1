@@ -315,8 +315,8 @@ function Show-GameFiles($r) {
         Where-Object { $_ -notin $hostRootFiles -and $hostHashes[$_] -ne $guest[$_] })
     if ($differ) {
         $script:driftSaid = $true
-        "  WARNING: the guest's C:\Game differs from the host game folder in $($differ -join ', '); refresh it:" +
-            " vm.ps1 Exec -Vm $($vmTarget.Id) -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -Arguments '-Phase','Game'"
+        "  WARNING: the guest's C:\Game differs from the host game folder in $($differ -join ', '); refresh it" +
+            " (waits for the VM's series): tools\wsb\vm-build.ps1 -Step Provision -Vm $($vmTarget.Id)"
     }
 }
 
