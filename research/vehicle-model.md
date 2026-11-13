@@ -324,17 +324,21 @@ its vertices: interior glass has s12 = position on vanilla 212, 176, 147,
 
 Rule (`glass.InteriorGlass`): each converted window takes the crack and
 shard triangles (crack, shard_dull and shard_bright blocks) of the host
-interior's matching window. A pair faces the same way (sideways, when
-most of the window's area projects onto the y-z plane, or to the front or
-rear) and, for side glass, sits on the same side of the car. Nearest centres pair
-first, and each host window goes to one window only (the cockpit's sections
+interior's matching window. A pair is of one kind: side glass (most of the
+window's area projects onto the y-z plane) on the same side of the car; the
+windscreen with the host's windscreen (its frontmost other window by centre z;
+vanilla interiors don't put it on a fixed side of z = 0: +1.0 on the 212, -0.04
+on the 248); the rear window with the host's rear glass. Roof glass takes none.
+Nearest centres pair first, and each host window goes to one window only (the cockpit's sections
 first, then the shell's): vanilla windows carry their own, and the vanilla
 212's quarter lights have none. Each triangle keeps its shape, UVs and sky
 terms. Its centroid goes in the same direction from the window's box centre,
 in units of the box's half extents (so corners go to corners), and the same
 depth inside the rim, in metres, along that direction (the rim per 2°
 direction, `_Rim`). The triangle turns with the direction and is lifted onto
-the converted glass, on the window's own s9. Windows the host has no crack
+the converted glass, on the window's own s9. A triangle is left out when that
+depth is past the centre of a smaller window, or when a corner lands more than
+one grid cell (1 cm) outside the window. Windows the host has no crack
 and shard triangles for keep the surface only, as on the host (the vanilla
 Challenger 172's cockpit has no side glass; the Charger 176's rear side
 glass is smear only).
