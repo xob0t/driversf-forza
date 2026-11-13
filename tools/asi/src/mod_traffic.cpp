@@ -286,37 +286,103 @@ __declspec(naked) void primary_pick()
     }
 }
 
-// Diagnostic: every vehicle construction (008D1475), from this picker or any native one,
-// summed per model every 30 s, so a road full of one model shows which picker made it.
-uint16_t g_births[kModels], g_births_picked[kModels];
+// Diagnostic: every vehicle construction (008D1475) and model change (008D8A9C), from
+// this picker or any native spawner, summed per model and spawner every 30 s, so a road
+// full of one model shows which system made it. The spawner is the return address of
+// the vehicle-creation call 008C5C80 (0077AE65 = ambient traffic, 007EBBED = IVs, ...).
+constexpr uint32_t kSites = 16;
+uint32_t g_site_va[kSites], g_site_count; // 0 = unknown
+volatile uint32_t g_spawn_site;
+void* g_create_original;
+uint16_t g_births[kModels][kSites], g_births_picked[kModels];
 ULONGLONG g_births_since;
-void count_birth(uint32_t id, bool picked)
+uint32_t g_birth_lines;
+uint32_t site_index(uint32_t va)
+{
+    for (uint32_t i = 0; i < g_site_count; ++i) if (g_site_va[i] == va) return i;
+    if (g_site_count < kSites) { g_site_va[g_site_count] = va; return g_site_count++; }
+    return kSites - 1;
+}
+// Vehicle spec pointer (vehicle +5B4, set at 008D1418 before the model request at 008D1475)
+// per model: two models born with one spec means an ID lookup aliases them.
+void* g_spec_of[kModels];
+uint32_t g_alias_lines;
+uint32_t player_model() { uint8_t* s = spooler(); return s ? *(uint32_t*)(s + 0xDB4) : 0xFFFFFFFF; }
+void count_birth(uint32_t id, bool picked, uint32_t site_va, void* spec = nullptr)
 {
     if (id >= kModels) return;
-    ++g_births[id]; if (picked) ++g_births_picked[id];
+    if (spec) {
+        if (g_spec_of[id] != spec) {
+            for (uint32_t m = 0; m < kModels && g_alias_lines < 100; ++m)
+                if (m != id && g_spec_of[m] == spec) {
+                    ++g_alias_lines;
+                    dsf_log("live-pool: spec alias: model %u born with spec %p, last seen on model %u", id, spec, m);
+                }
+            g_spec_of[id] = spec;
+        }
+    }
+    uint32_t site = site_index(site_va);
+    ++g_births[id][site]; if (picked) ++g_births_picked[id];
+    if (!picked && g_packages[id] && g_birth_lines < 600) {
+        ++g_birth_lines;
+        uint8_t* s = spooler();
+        dsf_log("live-pool: birth %u via %08X (not this picker%s), refs %u, player model %d", id, site_va,
+                g_retiring[id] ? ", retiring" : "", s ? ((RefCount)0x005A6B00)(s, id) : 0, (int)player_model());
+    }
     ULONGLONG now = GetTickCount64();
     if (!g_births_since) g_births_since = now;
     if (now - g_births_since < 30000) return;
-    uint32_t total = 0, picked_total = 0, top[5] = {}, n = 0;
-    for (uint32_t m = 0; m < kModels; ++m) { total += g_births[m]; picked_total += g_births_picked[m]; }
-    for (uint32_t k = 0; k < 5; ++k) {
+    uint32_t total = 0, picked_total = 0, per_site[kSites] = {}, top[6] = {}, n = 0, sum[kModels];
+    for (uint32_t m = 0; m < kModels; ++m) {
+        sum[m] = 0;
+        for (uint32_t k = 0; k < kSites; ++k) { sum[m] += g_births[m][k]; per_site[k] += g_births[m][k]; }
+        total += sum[m]; picked_total += g_births_picked[m];
+    }
+    for (uint32_t k = 0; k < 6; ++k) {
         uint32_t best = kModels;
         for (uint32_t m = 0; m < kModels; ++m)
-            if (g_births[m] && (best == kModels || g_births[m] > g_births[best])) {
+            if (sum[m] && (best == kModels || sum[m] > sum[best])) {
                 bool used = false; for (uint32_t j = 0; j < n; ++j) used |= top[j] == m;
                 if (!used) best = m;
             }
         if (best == kModels) break;
         top[n++] = best;
     }
-    char text[256] = ""; size_t len = 0;
-    for (uint32_t k = 0; k < n; ++k)
-        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %u x%u (%u picked%s)", top[k],
-                           g_births[top[k]], g_births_picked[top[k]], g_retiring[top[k]] ? ", retiring" : "");
-    dsf_log("live-pool: births %llus: %u vehicles, %u from this picker; top:%s", (now - g_births_since) / 1000,
-            total, picked_total, text);
+    char text[900] = ""; size_t len = 0;
+    for (uint32_t k = 0; k < g_site_count; ++k) if (per_site[k])
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %08X:%u", g_site_va[k], per_site[k]);
+    len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, "; top:");
+    for (uint32_t k = 0; k < n; ++k) {
+        uint32_t m = top[k];
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %u x%u (%u picked%s%s", m, sum[m],
+                           g_births_picked[m], g_retiring[m] ? ", retiring" : "", g_packages[m] ? ", package" : "");
+        for (uint32_t j = 0; j < g_site_count; ++j) if (g_births[m][j])
+            len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, ", %08X:%u", g_site_va[j], g_births[m][j]);
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, ")");
+    }
+    dsf_log("live-pool: births %llus: %u vehicles, %u from this picker, player model %d; by spawner:%s",
+            (now - g_births_since) / 1000, total, picked_total, (int)player_model(), text);
     memset(g_births, 0, sizeof g_births); memset(g_births_picked, 0, sizeof g_births_picked);
     g_births_since = now;
+}
+
+// 008C5C80 entry (two 4-byte movs, no stack change): remember the caller, then run it.
+__declspec(naked) void create_entry()
+{
+    __asm {
+        mov eax, dword ptr [esp]
+        mov g_spawn_site, eax
+        jmp dword ptr [g_create_original]
+    }
+}
+
+// 008D88E0 changes a live vehicle's model (zap/car swap: target takes a source vehicle's
+// model). Its new reference is the call at 008D8A9C; count it as a birth of that model.
+bool __fastcall remodel(void* s, void*, uint32_t id)
+{
+    bool result = ((Request)0x005A7860)(s, id);
+    if (result) count_birth(id, false, 0x008D8A9C);
+    return result;
 }
 
 bool __fastcall retain(void* s, void*, uint32_t id)
@@ -324,7 +390,12 @@ bool __fastcall retain(void* s, void*, uint32_t id)
     bool picked_here = GetCurrentThreadId() == g_thread && g_decided == (int)id;
     if (picked_here) g_decided = -1;
     bool result = ((Request)0x005A7860)(s, id);
-    if (result) count_birth(id, picked_here);
+    // 008D1390 mov ebp,ecx: the caller's ebp is the vehicle being constructed (saved at [ebp], /Oy-).
+    uint8_t* vehicle;
+    __asm { mov eax, [ebp] }
+    __asm { mov vehicle, eax }
+    if (result) count_birth(id, picked_here, g_spawn_site, vehicle ? *(void**)(vehicle + 0x5B4) : nullptr);
+    g_spawn_site = 0;
     if (GetCurrentThreadId() == g_thread && result && id < kModels && g_pending[id] && g_owner == s) {
         unsigned before = ((RefCount)0x005A6B00)(s, id);
         g_pending[id] = 0;
@@ -427,6 +498,8 @@ Site g_sites[] = {
     {0x0076FDF0,{0x81,0xEC,0xA0,0x00,0x00,0x00},6,(void*)set,false,(void**)&g_set},
     {0x0074B8B6,{0xE8,0x45,0xB2,0xE5,0xFF},5,(void*)capture_refs,true,nullptr},
     {0x0074BA20,{0x81,0xEC,0x74,0x02,0x00,0x00},6,(void*)restore,false,(void**)&g_restore},
+    {0x008C5C80,{0x8B,0x44,0x24,0x5C,0x8B,0x54,0x24,0x54},8,(void*)create_entry,false,&g_create_original},
+    {0x008D8A9C,{0xE8,0xBF,0xED,0xCC,0xFF},5,(void*)remodel,true,nullptr},
 };
 
 void* trampoline(const Site& site)
