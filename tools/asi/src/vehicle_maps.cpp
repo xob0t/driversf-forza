@@ -261,6 +261,13 @@ int vehicle_maps_selftest()
     int failures = 0;
 #define MAP_CHECK(x) do { if (!(x)) { printf("FAIL vehicle maps:%d %s\n", __LINE__, #x); failures++; } } while (0)
     const bool installed = g_installed, audio_installed = g_audio_installed;
+    // A hook the capacity checks rely on: without it their inserts run past the 45-node fixture
+    // (a stack buffer), so stop there instead of corrupting the test's own stack.
+#define MAP_REQUIRE(x) do { if (!(x)) { \
+        printf("FAIL vehicle maps:%d %s (stopped before the capacity checks)\n", __LINE__, #x); \
+        restore_sites(); \
+        if (installed) vehicle_maps_install(audio_installed); \
+        return failures + 1; } } while (0)
     if (installed) restore_sites();
     const Index index = (Index)0x00556F60;
     using Ctor = void*(__thiscall*)(void*);
@@ -294,7 +301,7 @@ int vehicle_maps_selftest()
     *(uint8_t*)0x00556EBB ^= 1;
 
     // slots_trace (audio=false): ED/EF still continue past 45, model audio keeps vanilla's gate.
-    MAP_CHECK(vehicle_maps_install(false) && bytes_equal(0x00556E30, kRegister, 6));
+    MAP_REQUIRE(vehicle_maps_install(false) && bytes_equal(0x00556E30, kRegister, 6));
     {
         reset(0xEF);
         for (int key = 0; key < 50; key++) *index(pool, &key) = key;
@@ -309,7 +316,7 @@ int vehicle_maps_selftest()
     vehicle_maps_remove();
     for (int i = 0; i < 3; i++) MAP_CHECK(bytes_equal(kSites[i], kCalls[i], 5));
     MAP_CHECK(bytes_equal(0x00556E30, kRegister, 6) && !g_installed && !g_audio_installed);
-    MAP_CHECK(vehicle_maps_install(true));
+    MAP_REQUIRE(vehicle_maps_install(true));
 
     for (uint32_t kind : {0xEDu, 0xEFu}) {
         reset(kind);
@@ -413,6 +420,7 @@ int vehicle_maps_selftest()
     if (installed) MAP_CHECK(vehicle_maps_install(audio_installed));
     printf("vehicle maps selftest: %d failures\n", failures);
 #undef MAP_CHECK
+#undef MAP_REQUIRE
     return failures;
 }
 
