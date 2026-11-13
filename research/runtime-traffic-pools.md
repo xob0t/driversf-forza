@@ -262,3 +262,65 @@ errors still reach the worker's error log. Regression tests exercise every
 handler with each failure type, deferred mutation, dictionary identity,
 successful IV persistence, and the reported old-plugin failure followed by an
 unrelated car save. The installed native DLL and pool data do not change.
+
+## One-model roads report (2026-11-13), open
+
+The owner's host log (Epilogue free roam, 721 packages, 60 slots, a copy in
+the coordinator's temp folder) ends with roads "almost all Mazda RX-7". The
+RX-7 is ID 3. The pool requested about 45 distinct models a minute to the
+end and never repeated its own requests.
+
+**What the logs show.** In both host reports the model that filled the roads
+is the player's car. A shift reads a car's interior and exterior entries
+(`id + 1000`, `id + 2000`), which no traffic request does. Those unrequested
+reads are ID 3 at 18:19:36 on 2026-11-13, and ID 668 at 16:35:20 in
+`user-20261110-235909` (the earlier "initially identical road population"
+was 668). ID 3 was served once at 18:19:17 and never retired: the player
+drove it until the log ends.
+
+**What `decide()` can and cannot do (confirmed-static).** A served added
+model is marked retiring at its first construction (`retain`, call
+`008D1475`). Fallback draws skip retiring models, and only an observed native
+unload clears the flag. So the picker gives an added model one birth per
+residency. `forget()` used to clear every retiring flag. That let each
+resident served model take one more birth: a real defect, but bounded, and
+not a flood. Now `forget()` keeps the flags. The native fixture's lifecycle
+case reproduces the reuse with the old code (4 failures) and passes with the
+fix.
+
+**Other spawners (confirmed-static).** `00916870` has two callers: `0077ADCB`
+(hooked) and the attached-vehicle draw `0077AF4B` (native weights, vanilla
+models only). The spawn `0077ADA0` creates the picked model. Construction
+`008D1380` requests that model's own reference (`008D1475`), so native code
+never substitutes a resident model. Vehicles made outside the picker:
+
+| Creator | Model source |
+| --- | --- |
+| `007EBB20` (call `007EBBED`) | interesting vehicles: region lists, at most 3 cars per model |
+| `00801A80` via `008018B0` | a Lua-weighted list (`00685040` adds entries) |
+| `0082FF20` (call `00830092`) | its own model `+0xC8`, or the player's selected car `[[engine+754]+78]` |
+| `008D88E0` (request `008D8A9C`) | model change of a live vehicle (car swap, `008DA680`) |
+| `0074E010`, `006547A0`, `007A6090`, `007BEE90`, `007F4C70`, `007EEA00`, `0081ABD0`, `008DA2F0` | not decoded |
+
+So the copies of the player's model come from one of these, or nearby
+traffic is drawn with the player's data. The second is untested: the
+player's interior and exterior entries are the only resident kind-1 and
+kind-2 entries.
+
+**Runtime so far.** The diagnostic plugin (branch `diag/live-pool-spawners`)
+logs the following:
+
+- every added-model birth not made by the picker, with the return address of
+  the vehicle-creation call `008C5C80`;
+- the model's reference count and the player's model at that birth;
+- model changes;
+- a births-by-spawner summary every 30 s;
+- vehicle spec pointers (`vehicle + 5B4`) shared by two models.
+
+`vm1-20261113-200311` (probe ID 3, traffic on, full roster) recorded 292
+births in its first 35 s: 279 from this picker through `0077AE6A`, 3
+interesting vehicles (`007EBBF2`), 5 from the Lua list (`00801B58`), 5
+outside `008C5C80`, and no spec alias. It then stalled on the pause menu
+(#589) before the player drove, so the one-model case is not reproduced
+yet. The host run with that plugin decides between a spawner and a drawing
+fault.
