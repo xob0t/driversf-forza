@@ -139,5 +139,42 @@ class Loading(unittest.TestCase):
             self.assertEqual(forza2dsf.load_rotors(Path(folder)), {})
 
 
+class BlurRamp(unittest.TestCase):
+    """The wheel blur ramp's rotor (dsf_materials.Texturing._front_rotor) is the one the build
+    draws: brake_rotor_section with the wheel part's fit, in the unscaled wheel model's frame
+    (#596)."""
+
+    @staticmethod
+    def _ramp_rotor(rotors: dict, rotor_fits: dict | None):
+        from dsfforza.convert import dsf_materials as dm
+
+        t = dm.Texturing(Path(), rotor_fits=rotor_fits or {})  # as prepare(rotor_fits=...) makes it
+        with mock.patch("dsfforza.convert.forza2dsf.car.load_rotors", return_value=rotors):
+            return t._front_rotor(1)
+
+    def test_front_rotor_takes_the_front_fit(self):
+        front = (1.0, 0.865, 0.0, 0.0, 0.0)  # FER_F151_11's front part: radial fit 0.865
+        rear = (1.1, 1.2, 0.0, 0.0, 0.0)
+        section = self._ramp_rotor({"front": _rotor(), "rear": _rotor()}, {"front": front, "rear": rear})
+        built = forza2dsf.brake_rotor_section(_rotor(), 1, front)
+        self.assertEqual([v.position for v in section.lod_vertices], [v.position for v in built.lod_vertices])
+        # Against the unscaled rim the rotor is 1 / 0.865 of its own 0.14 m, so that the wheel
+        # model scaled by 0.865 draws it at 0.14 m.
+        outer = max(math.hypot(v.position[1], v.position[2]) for v in section.lod_vertices)
+        self.assertAlmostEqual(outer, 0.14 / 0.865, places=6)
+
+    def test_rear_rotor_takes_the_rear_fit(self):
+        rear = (1.0, 1.2, 0.0, 0.0, 0.0)
+        section = self._ramp_rotor({"rear": _rotor()}, {"front": (1.0, 0.9), "rear": rear})
+        outer = max(math.hypot(v.position[1], v.position[2]) for v in section.lod_vertices)
+        self.assertAlmostEqual(outer, 0.14 / 1.2, places=6)
+
+    def test_without_fits_the_wheel_model_size(self):
+        section = self._ramp_rotor({"front": _rotor()}, None)
+        outer = max(math.hypot(v.position[1], v.position[2]) for v in section.lod_vertices)
+        self.assertAlmostEqual(outer, 0.14, places=6)
+        self.assertIsNone(self._ramp_rotor({}, {"front": (1.0, 0.9)}))
+
+
 if __name__ == "__main__":
     unittest.main()
