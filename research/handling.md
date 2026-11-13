@@ -716,6 +716,15 @@ drivetrain, not the drift parameters, and it doesn't track the handbrake
 rotation measured in game (the CTS-V and the 1969 Charger have Drift 1.0 and
 rotate least; the Mito, Drift 0.26, rotates like the 370Z).
 
+The bars are hand ratings (confirmed-static, 2026-11-14): `vehiclestats.lua`
+holds them as plain numbers (146 entries), and no game code computes them. All 146
+Drift values are fifteenths written to two decimals, rounded or cut (0.13, 0.2, 0.26,
+0.33 ... 0.93, 1: 14 values), and so are 125 of the 146 Speed values (26 values).
+Strength takes 55 values, mostly off that grid (27 on it), and follows the weight
+only at r 0.82. So the bars are an authored
+domain (AGENTS.md, "Authored domains"), and the regressions above, with their
+leave-one-out errors, are their source.
+
 ### Leave-one-out check (offline-checked)
 
 `uv run dsff handling_dsf loo`: for each of the 48 vanilla cars that also
