@@ -76,8 +76,10 @@ def load(archive: Path, sid: int, stream, entries):
             if nrm is None or not len(pos) or car_render._fades_in(mesh, sub, cache):
                 continue
             rec = (pos.reshape(-1, 3), _unit(nrm.reshape(-1, 3)), ao.reshape(-1))
-            is_wheel = n in hw.exterior_parts or sub.material in car_render.TYRE_UIDS
-            if is_wheel:
+            # A wheel model is an exterior part the wheel records link to. Tyre-material
+            # submodels elsewhere (8 parts on 119, 208, 215, 217) sit in body parts, in the
+            # car's frame: a spare wheel on 208's tailgate, rubber trim. They are body.
+            if n in hw.exterior_parts:
                 wheel.setdefault(n, []).append(rec)
             else:
                 body.append(rec)
