@@ -31,6 +31,7 @@ uint8_t g_packages[kModels], g_valid[kModels], g_seen[kModels];
 uint32_t g_unique;
 uint8_t g_pending[kModels], g_retiring[kModels];
 int g_selected = -1;
+int g_decided = -1;  // diagnostic: decide()'s last answer, vanilla or package
 bool g_rotate_selected;
 uint8_t* g_owner;
 DWORD g_thread;
@@ -63,6 +64,11 @@ void forget(const char* reason, bool release)
 {
     uint8_t* owner = g_owner;
     g_owner = nullptr; g_selected = -1; g_rotate_selected = false;
+    uint32_t retiring = 0, first = kModels;
+    for (uint32_t id = 0; id < kModels; ++id) if (g_retiring[id]) { ++retiring; if (first == kModels) first = id; }
+    // Diagnostic (the one-model roads after 18:19, 2026-11-13): a forget that clears retiring
+    // flags lets those still-resident models fill every fallback draw.
+    if (retiring) dsf_log("live-pool: forget (%s) clears %u retiring flags (first %u)", reason, retiring, first);
     memset(g_retiring, 0, sizeof g_retiring);
     for (uint32_t id = 0; id < kModels; ++id) if (g_pending[id]) {
         g_pending[id] = 0;
@@ -253,6 +259,7 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     if (fallback && fallback->package) {
         g_selected = fallback->id; g_rotate_selected = rotate;
     }
+    g_decided = fallback ? (int)fallback->id : -1;
     return fallback ? (int)fallback->id : -1;
 }
 
@@ -279,9 +286,45 @@ __declspec(naked) void primary_pick()
     }
 }
 
+// Diagnostic: every vehicle construction (008D1475), from this picker or any native one,
+// summed per model every 30 s, so a road full of one model shows which picker made it.
+uint16_t g_births[kModels], g_births_picked[kModels];
+ULONGLONG g_births_since;
+void count_birth(uint32_t id, bool picked)
+{
+    if (id >= kModels) return;
+    ++g_births[id]; if (picked) ++g_births_picked[id];
+    ULONGLONG now = GetTickCount64();
+    if (!g_births_since) g_births_since = now;
+    if (now - g_births_since < 30000) return;
+    uint32_t total = 0, picked_total = 0, top[5] = {}, n = 0;
+    for (uint32_t m = 0; m < kModels; ++m) { total += g_births[m]; picked_total += g_births_picked[m]; }
+    for (uint32_t k = 0; k < 5; ++k) {
+        uint32_t best = kModels;
+        for (uint32_t m = 0; m < kModels; ++m)
+            if (g_births[m] && (best == kModels || g_births[m] > g_births[best])) {
+                bool used = false; for (uint32_t j = 0; j < n; ++j) used |= top[j] == m;
+                if (!used) best = m;
+            }
+        if (best == kModels) break;
+        top[n++] = best;
+    }
+    char text[256] = ""; size_t len = 0;
+    for (uint32_t k = 0; k < n; ++k)
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %u x%u (%u picked%s)", top[k],
+                           g_births[top[k]], g_births_picked[top[k]], g_retiring[top[k]] ? ", retiring" : "");
+    dsf_log("live-pool: births %llus: %u vehicles, %u from this picker; top:%s", (now - g_births_since) / 1000,
+            total, picked_total, text);
+    memset(g_births, 0, sizeof g_births); memset(g_births_picked, 0, sizeof g_births_picked);
+    g_births_since = now;
+}
+
 bool __fastcall retain(void* s, void*, uint32_t id)
 {
+    bool picked_here = GetCurrentThreadId() == g_thread && g_decided == (int)id;
+    if (picked_here) g_decided = -1;
     bool result = ((Request)0x005A7860)(s, id);
+    if (result) count_birth(id, picked_here);
     if (GetCurrentThreadId() == g_thread && result && id < kModels && g_pending[id] && g_owner == s) {
         unsigned before = ((RefCount)0x005A6B00)(s, id);
         g_pending[id] = 0;
