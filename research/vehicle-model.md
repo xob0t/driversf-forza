@@ -343,6 +343,25 @@ and shard triangles for keep the surface only, as on the host (the vanilla
 Challenger 172's cockpit has no side glass; the Charger 176's rear side
 glass is smear only).
 
+A cockpit carbin can name a window glass<suffix> where the main carbin says
+lexan<suffix> (the MC12: cockpit glassF/LF/RF, body lexanF/LF/RF).
+`interior_glass_skin` gives the cockpit pane the lexan section's panel binding
+(the same window, #411), so its layers follow the windscreen's crack state,
+not the chassis'.
+
+Survey (293 of the 721 roster cars, the rest not built; `out/i459/survey.txt`
+in the #459 worktree): 899 windows take host layers, against 1,103 with
+generated ones on master. The 479 without are rear doors and quarter lights
+whose host side glass has none or went to the front door (348); lexan wraps and
+small panes beside a window that took the layers (94); rear windows whose host has
+no rear layers, or whose layers all fall out of the driver's sight (34); and three windscreens
+(hosts 161 and 217 have none; the MC12's coincident cockpit pane takes them).
+No interior needed decimation; `glass.check` passes on all 293. In game
+(`vm1-20261113-191025` master, `vm1-20261113-195620` this rule): the M5 on 176
+shows small clusters at the windscreen's top left after the glass ladder,
+where master showed teeth along the A-pillar; vanilla 176 shows clusters at
+its left and bottom edges.
+
 The rear
 window now shows the vanilla defroster lines when clean. Rebuilt M5, S65, Supra and Jeep (`out/glassfix/`, IDs
 304–307): all glass inside one slot (`glass check`); state 3 renders as an
