@@ -66,10 +66,11 @@ void forget(const char* reason, bool release)
     g_owner = nullptr; g_selected = -1; g_rotate_selected = false;
     uint32_t retiring = 0, first = kModels;
     for (uint32_t id = 0; id < kModels; ++id) if (g_retiring[id]) { ++retiring; if (first == kModels) first = id; }
-    // Diagnostic (the one-model roads after 18:19, 2026-11-13): a forget that clears retiring
-    // flags lets those still-resident models fill every fallback draw.
-    if (retiring) dsf_log("live-pool: forget (%s) clears %u retiring flags (first %u)", reason, retiring, first);
-    memset(g_retiring, 0, sizeof g_retiring);
+    if (retiring) dsf_log("live-pool: forget (%s) keeps %u retiring flags (first %u)", reason, retiring, first);
+    // Retiring flags stay: they track served models' native owners (vehicles
+    // that release through 008D4F8A -> 005A78D0), which none of these
+    // transitions cancels. decide() clears a flag only when the model has left
+    // the resident lists (005A6EA0's tests), as after a native reset.
     for (uint32_t id = 0; id < kModels; ++id) if (g_pending[id]) {
         g_pending[id] = 0;
         if (release && owner && owner == spooler() && *(uint32_t*)(owner + 0xDAC) != 5) {
@@ -680,6 +681,24 @@ int mod_traffic_selftest()
     }
     LIVE_CHECK(g_retiring[700] && g_retiring[701] && node[4]==1 && node2[4]==1);
     LIVE_CHECK(!g_pending[700] && !g_pending[701]);
+    // A lifecycle transition (replay restore, set change, owner change) drops
+    // only our leases. Served models keep their vehicles' references, so they
+    // must stay out of fallback draws: with their flags cleared, every added-
+    // group draw fell back to the resident served models (#592 host report).
+    uint32_t queuedBefore=*(uint32_t*)(s+0x9A8);
+    forget("lifecycle fixture",false);
+    LIVE_CHECK(g_retiring[700] && g_retiring[701]);
+    {
+        uint32_t added=0, reused=0;
+        for(uint32_t seed=0;seed<10000;++seed) {
+            added += ((Pick)0x00916870)(&range,seed)>=700;
+            reused += decide(&range,nullptr,seed)>=700;
+        }
+        LIVE_CHECK(added>0 && reused==0 && *(uint32_t*)(s+0x9A8)==queuedBefore);
+    }
+    // A flag clears once its model has left the resident lists.
+    g_retiring[702]=1; decide(&range,nullptr,0);
+    LIVE_CHECK(!g_retiring[702] && g_retiring[700] && g_retiring[701]);
     // Compare actual replay capture before/after the hook for both leases.
     // No transient model reference may survive restoration.
     trafficHead[0]=trafficHead[1]=(uint32_t)trafficHead;
@@ -709,8 +728,10 @@ int mod_traffic_selftest()
     g_force_skip=false;
     g_pending[700]=g_pending[701]=1; g_owner=s; ((Clear)0x005A7360)(s);
     LIVE_CHECK(!g_pending[700] && !g_pending[701] && *(uint32_t*)(s+0xDAC)==5);
+    // Native reset unloads the models; the flags clear once decide() sees them gone.
     g_retiring[700]=g_retiring[701]=1; ((Clear)0x005A7360)(s);
-    LIVE_CHECK(!g_retiring[700] && !g_retiring[701]);
+    LIVE_CHECK(g_retiring[700] && g_retiring[701]);
+    memset(g_retiring,0,sizeof g_retiring);
     for(const Site& site:g_sites) LIVE_CHECK(patch_bytes(site.address,site.bytes,site.size));
     LIVE_CHECK(patch_bytes(0x0059C620,existsBytes,5));
     LIVE_CHECK(patch_bytes(0x0059C5C0,capacityBytes,5));
