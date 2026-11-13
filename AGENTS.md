@@ -76,8 +76,9 @@ stays under the rules above. Only the per-car value is authored.
   offset: static round").
 - **HUD stat bars** (vehicleStats Speed, Strength, Drift): display-only data
   in `vehiclestats.lua` that no game code computes. Every Drift bar and 125
-  of 146 Speed bars are fifteenths, hand ratings; Strength follows no rule
-  found (`research/handling.md`, "DSF-first mapping").
+  of 146 Speed bars are fifteenths, hand ratings. Strength is on no such
+  scale, but no game code computes it either (`research/handling.md`,
+  "DSF-first mapping").
 - **Garage-picture look**: the studio light, tone and framing of the garage
   pictures. They are offline renders shipped as textures; neither game's data
   or code holds their light. Their framing follows no rule: camera distance
@@ -97,11 +98,13 @@ A rule fitted to vanilla in an authored domain ships when:
   numbers.
 
 Such a rule is not marked `TODO(fit, ...)`. Until it is validated, it keeps
-the marker. A domain joins this list only with the same kind of evidence,
-recorded in `research/`: DSF's values shown to be set by hand (a pair study
-where Forza's converted values move ports away from DSF's cars, or values
-that follow no rule found). Everything else in this section still holds:
-no per-car exceptions, and the PR says where each rule comes from.
+the marker. A domain joins this list only with positive evidence, recorded
+in `research/`, that DSF's values are set by hand: a pair study where Forza's
+converted values move ports away from DSF's cars, values on a hand scale
+(round numbers, rating steps), or values that are only displayed, with no
+game code computing them. Not having decoded the maths yet is not evidence: that domain
+stays decodable. Everything else in this section still holds: no per-car
+exceptions, and the PR says where each rule comes from.
 
 ## Agent workflow
 
