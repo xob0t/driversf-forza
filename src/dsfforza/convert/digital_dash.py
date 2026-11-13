@@ -47,6 +47,9 @@ DIGIT_PITCH = 23 / 256  # v between digit cells (blank, 0..9)
 GEAR_PITCH = 1 / 7  # v between gear cells (R, 1..6)
 BAR_LIT_FROM = 0.505  # bar columns: lit from this v up, transparent below
 BAR_MAX = 0.49  # largest threshold (rpm at the redline gives 0.5)
+# km per mile: the international mile is 1609.344 m exactly (1959 international yard
+# and pound agreement); dsfcars.asi's km/h digits use the same (mod_dash.cpp kKmhPerMph).
+KMH_PER_MPH = 1.609344
 
 
 @dataclass
@@ -818,11 +821,23 @@ def _set_meter(dash, family: str, value: float, tach_max: float, speed_max: floa
         dash.progress("METER_SPEED", value / speed_max)
 
 
+def gauge_scale(family: str, per_unit: float, top: float, units: str) -> tuple[float, float]:
+    """(degrees per gauge unit, top in gauge units) for a needle fitted in the scene's
+    units. DSF's gauges count rpm and mph (cockpit.geometry.GAUGE_UNITS: gauge 2's input
+    is mph x 0.0125, FUN_00891670), so a speed needle on a km/h scene (speed_units) turns
+    KMH_PER_MPH times as far per mph as per km/h, and its top in mph is the km/h top over
+    KMH_PER_MPH. The sweep over the face (per_unit x top) stays the scene's."""
+    if family == "speed" and units == "kmh":
+        return per_unit * KMH_PER_MPH, top / KMH_PER_MPH
+    return per_unit, top
+
+
 def _needles(dash, view, patches, tach_max: float, top_rpm: float) -> tuple[list, set]:
     """Needles the scene turns with the rpm or the speed, as DSF needles: a flat quad
     over the needle's rest pose, turned by the engine (gauge id 1 or 2) about the pivot
-    the scene turns it about, at the scene's degrees per rpm or mph. Returns
-    ([needle dicts], the elements they are made of)."""
+    the scene turns it about, at the scene's degrees per rpm or speed unit (mph or km/h:
+    build_plan turns them into the gauge's, gauge_scale). Returns ([needle dicts], the
+    elements they are made of)."""
     speed_max = dash.number("SPEED_MAX") or 200.0
     found, elements = [], set()
     for element, family in _turning(dash).items():
@@ -911,7 +926,7 @@ def _needles(dash, view, patches, tach_max: float, top_rpm: float) -> tuple[list
                 "rt": [tuple(float(c) for c in e) for e in ends],
                 "corners": corners,
                 "colour": colour,
-                "per_unit": float(abs(math.degrees(rate))),  # degrees per rpm or mph
+                "per_unit": float(abs(math.degrees(rate))),  # degrees per rpm or scene speed unit
                 "rest_deg": float(math.degrees(rest)),
                 "reverse": bool(full > 0),  # counter-clockwise as the driver sees it
                 "top": float(top),
@@ -953,6 +968,8 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
     view = (ux0, ux1, uy0, uy1)
     # Needles become DSF needles and leave the artwork.
     found, needles = _needles(dash, view, patches, tach_max, min(tach_max, redline))
+    for n in found:  # from the scene's speed units into the gauge's mph (#593)
+        n["per_unit"], n["top"] = gauge_scale(n["family"], n["per_unit"], n["top"], units)
     report["needles"] = [n["family"] for n in found]
 
     def keep_static(i):
@@ -1283,7 +1300,7 @@ def build_plan(dash, patches: list, redline: float) -> DigitalPlan | None:
 def digi_data(mph: float, rpm: float, gear: int, redline: float) -> dict:
     """g_fDigiData as FUN_00891670 fills it: (id, comp) -> v offset."""
     out = {RPM: 0.5 * min(rpm, redline) / max(1.0, redline), GEAR: gear / 7.0, (7, 0): 0.5 if gear else 0.0}
-    for slots, value in ((SPEED_DIGITS, mph), (KMH_DIGITS, mph * 1.609344)):  # km/h: dsfcars.asi
+    for slots, value in ((SPEED_DIGITS, mph), (KMH_DIGITS, mph * KMH_PER_MPH)):  # km/h: dsfcars.asi
         digits = str(int(round(abs(value))))
         for k, slot in enumerate(slots):
             out[slot] = (int(digits[-1 - k]) + 1) * DIGIT_PITCH if k < len(digits) else 0.0
