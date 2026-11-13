@@ -457,8 +457,8 @@ class GlassSight:
     """Which points the driver sees: a depth cube (`resolution` per face) of the
     opaque LOD-0 cockpit triangles from `eye` (Forza space). Called with a DSF
     point (`place` maps Forza to DSF), True if nothing opaque is nearer the
-    eye. glass.InteriorGlass starts crack lines and places rim shards where
-    the driver can see them; a Forza windscreen runs well below the dash."""
+    eye. glass.InteriorGlass leaves out the crack lines and rim shards the
+    driver can't see; a Forza windscreen runs well below the dash."""
 
     def __init__(self, sections: list[carbin.Section], eye, place, resolution: int = 128, triangles=None):
         """`triangles` (Forza-space point triples) instead of `sections`: any opaque mesh."""

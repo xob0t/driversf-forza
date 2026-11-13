@@ -33,13 +33,13 @@ hole slots fell).
 from __future__ import annotations
 
 import argparse
-import itertools
 import math
-import random
 import re
 import struct
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 from dsfforza import REPO
@@ -208,51 +208,50 @@ class SlotMapper:
 #
 # GLOBAL_Glass_LOD5, the interior's glass material, samples the same texture
 # with the same crack-state shift (programs 61 and 63: v += 0.25 * floor(
-# c96[s9.y].y); 60 and 62 have no shift), but vanilla interiors (147, 227, 229,
-# 266; out/cockpitglass/vanillaparts.py, vanillacracks.py) use the left strip
-# u 0-0.12 only, where the four bands give each window three layers:
+# c96[s9.y].y); 60 and 62 have no shift), but vanilla interiors use the left
+# strip u 0-0.125 only (64 texels of the 512-wide texture), cut into four
+# blocks whose texels show in different states (blue >= 0.01 survives the
+# texkill; share of each block's texels per state 0/1/2/3, measured on the
+# texture, research/vehicle-model.md "Interior glass"):
 #
-#   surface  the smear rows (u 0-0.12, v 0-0.06): a faint reflective layer in
-#            states 0-2, a hole in 3. Side and rear windows are covered; the
-#            windscreen only along its top and pillars, its centre is open.
-#   cracks   3 mm slivers in 2-6 cm segments on the red block (u 0-0.06,
-#            v 0.125-0.25): discarded in states 0 and 3; rows v 0.18-0.25 show
-#            in states 1 and 2, rows 0.125-0.18 in state 2 only. Vanilla
-#            windscreens carry 0.75-1.7 m of state-1 cracks plus 0.6-1.2 m more
-#            for state 2, rear windows 0.3-0.4 m each, front doors about 0.1 m.
-#   shards   jagged slivers round the rim on the black blocks (u 0-0.12,
-#            v 0.06-0.125: smear-coloured; u 0.06-0.12, v 0.125-0.25: bright):
-#            state 3 only, so a shattered window is an empty frame with shards.
+#   surface      u 0-0.125,      v 0-0.0625      1.00 1.00 1.00 0.01  smear: a faint
+#                reflective layer in states 0-2. Side and rear windows are covered;
+#                the windscreen only along its top and pillars, its centre is open.
+#   crack        u 0-0.0625,     v 0.125-0.25    0.01 0.55 1.00 0.00  crack lines:
+#                rows v 0.18-0.25 from state 1, the rest in state 2.
+#   shard_dull   u 0-0.125,      v 0.0625-0.125  0.04 0.03 0.04 0.96  rim shards,
+#   shard_bright u 0.0625-0.125, v 0.125-0.25    0.01 0.03 0.09 0.94  state 3 only.
 #
-# InteriorGlass rebuilds that layout on each converted window, so cracks show from
-# inside too.
-SMEAR_RECT = (0.012, 0.108, 0.008, 0.052)  # surface, inset from the strip edges (bilinear and wrap bleed)
-CRACK_LIGHT = (0.008, 0.052, 0.190, 0.244)  # visible in states 1 and 2
-CRACK_HEAVY = (0.008, 0.052, 0.131, 0.174)  # visible in state 2 only
-SHARD_DULL = (0.015, 0.115, 0.070, 0.118)  # visible in state 3 only, smear-coloured
-SHARD_BRIGHT = (0.075, 0.110, 0.132, 0.245)  # visible in state 3 only, bright shards
-INTERIOR_REGIONS = {
-    "surface": SMEAR_RECT,
-    "crack_light": CRACK_LIGHT,
-    "crack_heavy": CRACK_HEAVY,
-    "shard_dull": SHARD_DULL,
-    "shard_bright": SHARD_BRIGHT,
+# Every vanilla interior window carries its own crack and shard geometry, made by
+# DSF's artists (#459: on the vanilla Gallardo 212 and Charger 176 the shattered
+# windscreen keeps a few irregular clusters of slivers at its corners and edges,
+# 354 and 659 shard triangles, 3 mm wide at the median). InteriorGlass builds the
+# surface from the converted window's shape and takes the cracks and shards of the
+# host interior's matching window (host_windows), placed on the converted window's
+# rim where the host has them on its own.
+INTERIOR_BLOCKS = {
+    "surface": (0.0, 0.125, 0.0, 0.0625),
+    "crack": (0.0, 0.0625, 0.125, 0.25),
+    "shard_dull": (0.0, 0.125, 0.0625, 0.125),
+    "shard_bright": (0.0625, 0.125, 0.125, 0.25),
 }
+SMEAR_RECT = (0.012, 0.108, 0.008, 0.052)  # surface, inset from the strip edges (bilinear and wrap bleed)
 # The windscreen surface is kept only outside this box (normalised s across,
 # t down the glass from the top): the vanilla frame of smear, open centre.
 WINDSCREEN_OPEN = (0.06, 0.94, 0.22)
 WINDSCREEN_OPEN_AREA = 0.3  # m2: smaller windscreens keep their whole surface
-CRACK_BUDGET = {
-    "windscreen": (1.0, 0.8),
-    "rear": (0.5, 0.4),  # m of crack per sqrt(m2) of window:
-    "side_front": (0.3, 0.25),
-    "side_rear": (0.3, 0.25),
-}  # (state 1, added in state 2)
-CRACK_LENGTH = {"windscreen": (0.15, 0.40), "rear": (0.10, 0.25), "side_front": (0.06, 0.16), "side_rear": (0.06, 0.16)}
-SHARD_CLUSTERS = {"windscreen": 4, "rear": 3, "side_front": 2, "side_rear": 2}
 CELL = 0.01  # occupancy grid of a window in its own plane (m)
 LIFT = 0.002  # cracks and shards sit this far inside the glass (m)
 MIN_WINDOW_AREA = 0.02  # smaller panes (and lamp covers) get the surface only
+RIM_BINS = 180  # directions round a window's centre in which its rim is measured (2 degrees each)
+
+
+def interior_block(uvs, tol: float = 0.001) -> str | None:
+    """The INTERIOR_BLOCKS key all of a triangle's UVs fall in, else None."""
+    for name, (u0, u1, v0, v1) in INTERIOR_BLOCKS.items():
+        if all(u0 - tol <= u <= u1 + tol and v0 - tol <= v <= v1 + tol for u, v in uvs):
+            return name
+    return None
 
 
 def _lerp(a, b, w):
@@ -400,24 +399,124 @@ def _rotate(d, angle):
     return (d[0] * c - d[1] * s, d[0] * s + d[1] * c)
 
 
+class _Rim:
+    """A pane's rim seen from the centre of its box: in each of RIM_BINS
+    directions, how far out the glass reaches, in units of the box's half
+    extents (1 on the box's edges)."""
+
+    def __init__(self, pane: _Pane):
+        cells = [pane._centre(i, j) for i, j in pane.filled]
+        s = [c[0] for c in cells]
+        t = [c[1] for c in cells]
+        half = CELL / 2  # cell centres: the glass reaches half a cell further
+        self.centre = ((min(s) + max(s)) / 2, (min(t) + max(t)) / 2)
+        self.half = ((max(s) - min(s)) / 2 + half, (max(t) - min(t)) / 2 + half)
+        reach = [None] * RIM_BINS
+        for c in cells:
+            theta, rho = self.polar(c)
+            k = self.bin(theta)
+            reach[k] = max(rho, reach[k] or 0.0)
+        known = [k for k in range(RIM_BINS) if reach[k] is not None]
+        for k in range(RIM_BINS):  # directions with no cell (a notch, a gap): the nearest measured one
+            if reach[k] is None:
+                reach[k] = reach[min(known, key=lambda n: min(abs(n - k), RIM_BINS - abs(n - k)))]
+        self.reach = reach
+
+    def polar(self, p) -> tuple[float, float]:
+        x = (p[0] - self.centre[0]) / self.half[0]
+        y = (p[1] - self.centre[1]) / self.half[1]
+        return math.atan2(y, x), math.hypot(x, y)
+
+    @staticmethod
+    def bin(theta: float) -> int:
+        return int((theta + math.pi) / (2 * math.pi) * RIM_BINS) % RIM_BINS
+
+    def ray(self, theta: float) -> tuple[float, float]:
+        """Metres per unit of reach in direction theta."""
+        return (math.cos(theta) * self.half[0], math.sin(theta) * self.half[1])
+
+
+@dataclass
+class HostWindow:
+    """One window of the host's vanilla interior (an s9 group of its glass):
+    every triangle as (points, UVs, sky terms), and which of them are its crack
+    and shard layers (interior_block crack, shard_dull, shard_bright)."""
+
+    s9: tuple[int, int]
+    tris: list
+    overlay: list
+
+    @cached_property
+    def centre(self) -> tuple:
+        pts = [p for t in self.tris for p in t[0]]
+        return tuple(sum(p[a] for p in pts) / len(pts) for a in range(3))
+
+    @cached_property
+    def sideways(self) -> bool:
+        return _sideways([t[0] for t in self.tris])
+
+
+def _sideways(tris) -> bool:
+    """A side window (facing along x) rather than a windscreen, rear window or
+    roof glass: the larger part of its area projects onto the car's y-z plane."""
+    area = [0.0, 0.0, 0.0]
+    for p in tris:
+        c = _cross(_sub(p[1], p[0]), _sub(p[2], p[0]))
+        for a in range(3):
+            area[a] += abs(c[a])
+    return area[0] >= max(area[1], area[2])
+
+
+def host_windows(stream, vehc) -> list[HostWindow]:
+    """The vanilla interior's glass (GLOBAL_Glass_LOD5 in part 0, mask 64) as
+    windows, one per s9 group: vanilla binds each window to its own panel
+    record (windscreen (0, 5) on the Desanne, rear (0, 20), doors)."""
+    from dsfforza.convert.damage import load_mesh
+    from dsfforza.formats import vehicle_mesh as vm
+
+    mesh = load_mesh(stream, vehc)
+    chosen = {k for lod in mesh.parts[0].lods if lod.mask == 64 for k in lod.submodels}
+    groups: dict[tuple, list] = defaultdict(list)
+    for k in sorted(chosen):
+        sub = mesh.submodels[k]
+        vb = mesh.vertex_buffers.get(sub.vertex_buffer)
+        if sub.material != INTERIOR_GLASS or vb is None:
+            continue
+        ib = mesh.index_buffers[sub.index_buffer]
+        e0, e8, e9 = vb.elements[0], vb.element(8), vb.element(9)
+        for t in range(sub.first_index, sub.first_index + sub.index_count, 3):
+            idx = [sub.base_vertex + struct.unpack_from("<H", ib, (t + j) * 2)[0] for j in range(3)]
+            pts = tuple(vm.position(vb, i) for i in idx)
+            uvs = tuple(tuple(vb.read(e8, i)[:2]) for i in idx)
+            skies = tuple(vb.read(e0, i)[3] / 4096 for i in idx)
+            groups[tuple(vb.read(e9, idx[0])[:2])].append((pts, uvs, skies))
+    return [
+        HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")])
+        for s9, tris in sorted(groups.items())
+    ]
+
+
 class InteriorGlass:
     """Interior (cockpit) glass laid out like vanilla interiors (see above).
 
     Feed every glass triangle of the entry with `add` (DSF positions, normals,
     sky terms, s9 bytes); `triangles()` then gives, per window (SlotMapper
     group): the surface (smear rows, planar per window; the windscreen's
-    centre cut out), crack lines and rim shards on the glass, all bound to the
-    window's own s9 so they follow its panel's crack state. With `sight`,
-    cracks start and shards sit on the part of the rim the driver sees (a
-    Forza windscreen runs well below the dash); windows the driver cannot see
-    get the surface only. Deterministic for the same input."""
+    centre cut out), and the crack and shard layers of the host window it
+    matches (`host`: host_windows of the host's interior), all bound to the
+    window's own s9 so they follow its panel's crack state. Host windows a
+    window takes are removed from `host`, so a list shared by several
+    InteriorGlass (the cockpit's sections, then the shell's) gives each host
+    window to one window. With `sight`, crack and shard triangles the driver
+    can't see are left out."""
 
-    def __init__(self, seed: str = "", sight=None):
+    def __init__(self, host: list[HostWindow] | None = None, sight=None):
         self.frames = SlotMapper()
         self.items: dict[str, list] = defaultdict(list)
-        self.seed = seed
+        self.host = host if host is not None else []
         self.sight = sight  # DSF point -> seen by the driver (cockpit.GlassSight); None: all
         self.report: dict[str, dict] = {}
+        self._host_panes: dict[tuple, tuple] = {}
 
     def add(self, section: str, pts, normals, skies, s9: bytes, material: str | None = None) -> str:
         group = self.frames.add(section, pts, material)
@@ -426,18 +525,25 @@ class InteriorGlass:
 
     def triangles(self) -> list[tuple[list, str]]:
         """[(three (position, uv, normal, sky, s9) vertices, region)], region a
-        key of INTERIOR_REGIONS."""
+        key of INTERIOR_BLOCKS."""
+        panes = {}
+        for group in sorted(self.items):
+            _, a_axis, b_axis, *_ = self.frames._frame(group)
+            panes[group] = _Pane(self.items[group], a_axis, b_axis, self.frames.normal(group))
+        hosts = self._match(
+            [g for g, pane in panes.items() if "/lamp/" not in g and pane.area >= MIN_WINDOW_AREA and pane.rim]
+        )
         out = []
         for group in sorted(self.items):
-            out += self._window(group)
+            out += self._window(group, panes[group], hosts.get(group))
         return out
 
-    def _window(self, group: str) -> list:
+    def _window(self, group: str, pane: _Pane, host: HostWindow | None) -> list:
         from collections import Counter
 
         items = self.items[group]
         _, a_axis, b_axis, s0, s1, t0, t1 = self.frames._frame(group)
-        slot, outward = self.frames.slot(group), self.frames.normal(group)
+        slot = self.frames.slot(group)
         ws, wt = max(s1 - s0, 1e-6), max(t1 - t0, 1e-6)
         u0, u1, v0, v1 = SMEAR_RECT
         k = min((u1 - u0) / ws, (v1 - v0) / wt)  # isotropic: the smear's clouds keep their shape
@@ -448,7 +554,6 @@ class InteriorGlass:
             return (min(u1, max(u0, uc + (s - sc) * k)), min(v1, max(v0, vc + (t - tc) * k)))
 
         lamp = "/lamp/" in group
-        pane = _Pane(items, a_axis, b_axis, outward)
         s9 = Counter(it[3] for it in items).most_common(1)[0][0]
         cut = slot == "windscreen" and not lamp and pane.area >= WINDSCREEN_OPEN_AREA
         lo, hi, top = WINDSCREEN_OPEN
@@ -483,164 +588,102 @@ class InteriorGlass:
             "triangles_in": len(items),
         }
         self.report[group] = info
-        if lamp or pane.area < MIN_WINDOW_AREA or not pane.rim or slot not in CRACK_BUDGET:
+        if host is None:
             return out
-        rim = pane.rim
-        if self.sight is not None:
-            rim = [r for r in rim if (hit := pane.lift(r[0])) is not None and self.sight(hit[0])]
-            info["rim_seen"] = round(len(rim) / len(pane.rim), 2)
-            if not rim:
-                return out
-        rng = random.Random(f"{self.seed}/{group}/{len(items)}/{pane.area:.3f}")
-        cracks, length = self._cracks(rng, pane, rim, slot, s9)
-        shards = self._shards(rng, pane, rim, slot, s9)
+        overlay = self._overlay(pane, host, s9)
+        if not overlay:
+            return out
+        regions = Counter(region for _, region in overlay)
         info.update(
-            {"crack_m": [round(x, 2) for x in length], "crack_triangles": len(cracks), "shard_triangles": len(shards)}
+            {
+                "host_window": list(host.s9),
+                "crack_triangles": regions["crack"],
+                "shard_triangles": regions["shard_dull"] + regions["shard_bright"],
+            }
         )
-        return out + cracks + shards
+        return out + overlay
 
-    # cracks: random walks in from the rim, each segment a thin quad ----------------
-
-    @staticmethod
-    def _walk(rng, pane, p, d, length):
-        path, travelled = [p], 0.0
-        while travelled < length:
-            step = min(rng.uniform(0.02, 0.05), length - travelled)
-            d = _rotate(d, rng.gauss(0.0, 0.28))
-            q = (path[-1][0] + d[0] * step, path[-1][1] + d[1] * step)
-            if not pane.inside(q):
-                break
-            path.append(q)
-            travelled += step
-        return path, d, travelled
-
-    @staticmethod
-    def _strip(rng, pane, path, width, rect, s9):
-        out = []
-        u0, u1, v0, v1 = rect
-        for a, b in itertools.pairwise(path):
-            seg = math.hypot(b[0] - a[0], b[1] - a[1])
-            if seg < 1e-4:
-                continue
-            e = ((b[0] - a[0]) / seg, (b[1] - a[1]) / seg)
-            n = (-e[1] * width / 2, e[0] * width / 2)
-            a2 = (a[0] - e[0] * width / 2, a[1] - e[1] * width / 2)  # overlap at the joints
-            b2 = (b[0] + e[0] * width / 2, b[1] + e[1] * width / 2)
-            corners = [
-                (a2[0] + n[0], a2[1] + n[1]),
-                (a2[0] - n[0], a2[1] - n[1]),
-                (b2[0] - n[0], b2[1] - n[1]),
-                (b2[0] + n[0], b2[1] + n[1]),
-            ]
-            lifted = [pane.lift(c) for c in corners]
-            if any(x is None for x in lifted):
-                continue
-            du = min(u1 - u0, max(0.008, min(0.035, seg * 0.45)))
-            dv = min(v1 - v0, 0.006)
-            cu, cv = rng.uniform(u0, u1 - du), rng.uniform(v0, v1 - dv)
-            uvs = [(cu, cv), (cu, cv + dv), (cu + du, cv + dv), (cu + du, cv)]
-            vs = [(p, uv, nrm, 1.0, s9) for (p, nrm), uv in zip(lifted, uvs)]
-            out += [[vs[0], vs[1], vs[2]], [vs[0], vs[2], vs[3]]]
+    def _match(self, groups: list[str]) -> dict[str, HostWindow]:
+        """Window group -> the host window whose cracks and shards it takes. A
+        pair faces the same way (sideways, or to the front or rear) and, for side
+        glass, sits on the same side; nearest centres pair first, and each host
+        window goes to one window only, as vanilla windows carry their own (a
+        converted quarter light next to a door doesn't get the host door's too:
+        the vanilla Gallardo 212's quarter lights have none). Both are in the
+        host's car space."""
+        pairs = []
+        for group in groups:
+            tris = [it[0] for it in self.items[group]]
+            sideways = _sideways(tris)
+            pts = [p for t in tris for p in t]
+            centre = tuple(sum(p[a] for p in pts) / len(pts) for a in range(3))
+            for n, h in enumerate(self.host):
+                hc = h.centre
+                if h.overlay and h.sideways == sideways and (not sideways or (hc[0] > 0) == (centre[0] > 0)):
+                    pairs.append((math.dist(hc, centre), group, n))
+        out, taken = {}, set()
+        for _, group, n in sorted(pairs):
+            if group not in out and n not in taken:
+                out[group] = self.host[n]
+                taken.add(n)
+        self.host[:] = [h for n, h in enumerate(self.host) if n not in taken]
         return out
 
-    def _cracks(self, rng, pane, rim, slot, s9):
-        root = math.sqrt(pane.area)
-        lo, hi = CRACK_LENGTH[slot]
-        out, totals, ends = [], [], []
-        for kind, budget, rect, width in (
-            ("crack_light", CRACK_BUDGET[slot][0] * root, CRACK_LIGHT, 0.003),
-            ("crack_heavy", CRACK_BUDGET[slot][1] * root, CRACK_HEAVY, 0.0035),
-        ):
-            used, tries = 0.0, 0
-            # state 2 first lengthens most state-1 cracks, then adds new ones
-            seeds = [e for e in ends if rng.random() < 0.7] if kind == "crack_heavy" else []
-            while used < budget and tries < 400:
-                tries += 1
-                if seeds:
-                    p, d = seeds.pop()
-                    length = rng.uniform(0.4, 0.8) * rng.uniform(lo, hi)
-                else:
-                    p, inward = rim[rng.randrange(len(rim))]
-                    d = _rotate(inward, rng.uniform(-0.7, 0.7))
-                    length = rng.uniform(lo, hi)
-                length = min(length, budget - used + 0.03)
-                paths = []
-                path, d_end, travelled = self._walk(rng, pane, p, d, length)
-                if travelled < 0.015:
-                    continue
-                paths.append(path)
-                if kind == "crack_light":
-                    ends.append((path[-1], d_end))
-                if len(path) >= 3 and rng.random() < 0.35:  # a branch
-                    k = rng.randrange(1, len(path) - 1)
-                    seg = (path[k + 1][0] - path[k][0], path[k + 1][1] - path[k][1])
-                    norm = math.hypot(*seg) or 1.0
-                    branch, _, bt = self._walk(
-                        rng,
-                        pane,
-                        path[k],
-                        _rotate((seg[0] / norm, seg[1] / norm), rng.choice((-1, 1)) * rng.uniform(0.4, 0.9)),
-                        length * rng.uniform(0.3, 0.6),
-                    )
-                    if bt > 0.01:
-                        paths.append(branch)
-                        travelled += bt
-                for path in paths:
-                    out += [(tri, kind) for tri in self._strip(rng, pane, path, width, rect, s9)]
-                used += travelled
-            totals.append(used)
-        return out, totals
+    def _host_pane(self, host: HostWindow):
+        """(frame axes, pane, rim) of a host window, framed like a converted
+        window of its kind (SlotMapper: u along x for windscreens and rear
+        windows, along -z for side glass; v down the glass)."""
+        if host.s9 not in self._host_panes:
+            frames = SlotMapper()
+            section = "glasslf" if host.sideways else "glassf"
+            for pts, _, _ in host.tris:
+                group = frames.add(section, pts)
+            _, a_axis, b_axis, *_ = frames._frame(group)
+            outward = frames.normal(group)
+            items = [(pts, (outward,) * 3, skies, b"") for pts, _, skies in host.tris]
+            pane = _Pane(items, a_axis, b_axis, outward)
+            self._host_panes[host.s9] = (a_axis, b_axis, _Rim(pane) if pane.filled else None)
+        return self._host_panes[host.s9]
 
-    # shards: jagged teeth along the rim, state 3 only -------------------------------
-
-    def _shards(self, rng, pane, rim, slot, s9):
-        clusters = [rim[rng.randrange(len(rim))][0] for _ in range(SHARD_CLUSTERS[slot])]
-        boost = 0.06 if slot == "windscreen" else 0.035
-        order = list(range(len(rim)))
-        rng.shuffle(order)
-        picked, out = [], []
-        buckets: dict[tuple[int, int], list] = defaultdict(list)
-        spacing = 0.035
-        for n in order:
-            c, inward = rim[n]
-            key = (int(c[0] / spacing), int(c[1] / spacing))
-            if any(
-                math.hypot(c[0] - q[0], c[1] - q[1]) < spacing
-                for di in (-1, 0, 1)
-                for dj in (-1, 0, 1)
-                for q in buckets[(key[0] + di, key[1] + dj)]
-            ):
+    def _overlay(self, pane: _Pane, host: HostWindow, s9) -> list:
+        """The host window's crack and shard triangles on this window: each keeps
+        its shape and UVs and moves to the same direction from the window's centre
+        (in units of the box's half extents, so corners go to corners) at the same
+        depth inside the rim, in metres, turned with that direction; then lifted
+        onto the glass. Triangles that land outside the window, or out of the
+        driver's sight, are left out."""
+        ha, hb, hrim = self._host_pane(host)
+        if hrim is None:
+            return []
+        rim = _Rim(pane)
+        out = []
+        for pts, uvs, skies in host.overlay:
+            q = [(_dot(p, ha), _dot(p, hb)) for p in pts]
+            g = (sum(x for x, _ in q) / 3, sum(y for _, y in q) / 3)
+            theta, rho = hrim.polar(g)
+            k = _Rim.bin(theta)
+            ray_h, ray_p = hrim.ray(theta), rim.ray(theta)
+            depth = (hrim.reach[k] - rho) * math.hypot(*ray_h)  # metres inside the host's rim
+            along = rim.reach[k] - depth / (math.hypot(*ray_p) or 1.0)
+            gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
+            if not pane.inside(gp):
                 continue
-            buckets[key].append(c)
-            picked.append(c)
-            near = max((1.0 - math.hypot(c[0] - q[0], c[1] - q[1]) / 0.18 for q in clusters), default=0.0)
-            for tooth in range(1 + (rng.random() < 0.35)):
-                w = rng.uniform(0.012, 0.035)
-                depth = rng.uniform(0.005, 0.025) + boost * max(0.0, near) * rng.uniform(0.5, 1.0)
-                if tooth:
-                    depth *= rng.uniform(0.4, 0.7)
-                tang = (-inward[1], inward[0])
-                shift = rng.uniform(-0.5, 0.5) * w * tooth
-                base = (c[0] - inward[0] * 0.006 + tang[0] * shift, c[1] - inward[1] * 0.006 + tang[1] * shift)
-                tip = rng.uniform(-0.5, 0.5) * w
-                pts2 = [
-                    (base[0] + tang[0] * w / 2, base[1] + tang[1] * w / 2),
-                    (base[0] - tang[0] * w / 2, base[1] - tang[1] * w / 2),
-                    (c[0] + inward[0] * depth + tang[0] * tip, c[1] + inward[1] * depth + tang[1] * tip),
-                ]
-                lifted = [pane.lift(q) for q in pts2]
-                if any(x is None for x in lifted):
-                    continue
-                if rng.random() < 0.6:
-                    u0, u1, v0, v1 = SHARD_BRIGHT
-                    du, dv = 0.03, 0.022
-                    cu, cv = rng.uniform(u0, u1 - du), rng.uniform(v0, v1 - dv)
-                    uvs, region = [(cu, cv), (cu + du, cv), (cu + du * rng.uniform(0.3, 0.7), cv + dv)], "shard_bright"
-                else:  # vanilla: one texel per sliver
-                    u0, u1, v0, v1 = SHARD_DULL
-                    uv = (rng.uniform(u0, u1), rng.uniform(v0, v1))
-                    uvs, region = [uv, uv, uv], "shard_dull"
-                out.append(([(p, uv, nrm, 1.0, s9) for (p, nrm), uv in zip(lifted, uvs)], region))
+            turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
+            corners = []
+            for x, y in q:
+                d = _rotate((x - g[0], y - g[1]), turn)
+                corners.append(pane.lift((gp[0] + d[0], gp[1] + d[1])))
+            if any(c is None for c in corners):
+                continue
+            if self.sight is not None and not self.sight(tuple(sum(c[0][a] for c in corners) / 3 for a in range(3))):
+                continue
+            region = interior_block(uvs)
+            out.append(
+                (
+                    [(p, tuple(uv), nrm, sky, s9) for (p, nrm), uv, sky in zip(corners, uvs, skies)],
+                    region,
+                )
+            )
         return out
 
 
@@ -679,11 +722,11 @@ def _glass_triangles(stream, vehc, masks, materials=EXTERIOR_GLASS):
 
 
 def _interior_region(uvs, tol: float = 0.002) -> str | None:
-    """The INTERIOR_REGIONS key (or "slot:<name>") all three UVs of an
+    """The INTERIOR_BLOCKS key (or "slot:<name>") all three UVs of an
     interior glass triangle fall in, else None."""
-    for name, (u0, u1, v0, v1) in INTERIOR_REGIONS.items():
-        if all(u0 - tol <= u <= u1 + tol and v0 - tol <= v <= v1 + tol for u, v in uvs):
-            return name
+    name = interior_block(uvs, tol)
+    if name is not None:
+        return name
     slots = {_which_slot(u, v) for u, v in uvs}
     if len(slots) == 1 and None not in slots:
         return "slot:" + slots.pop()
@@ -704,9 +747,10 @@ def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | 
     the host's own (a stub cockpit keeps the host's interior, cockpit.md) is
     vanilla data, not converted: its layout isn't checked (vanilla interiors don't
     follow it either: the GMC Savana's straddles 448 of 1678 triangles).
-    window_cracks: False when the cockpit report says no window qualified for
-    cracks (only lamp covers and panes under MIN_WINDOW_AREA, as in open race
-    cars and roadsters); then glass without crack lines is expected."""
+    window_cracks: False when the cockpit report says no window took cracks and
+    shards (only lamp covers and panes under MIN_WINDOW_AREA, as in open race
+    cars and roadsters, or a host interior without them); then glass without
+    them is expected."""
     rows = []
     for kind, masks in ((0, (4,)), (2, (2,))):
         if kind not in kinds:
@@ -753,8 +797,8 @@ def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | 
         rows.append(
             (
                 stray == 0,
-                f"kind 1: interior glass triangles each inside one vanilla interior region of the "
-                f"glass texture (smear surface, crack rows, shard blocks; src/dsfforza/convert/glass.py) or a "
+                f"kind 1: interior glass triangles each inside one block of the glass texture's "
+                f"interior strip (smear surface, cracks, shards; src/dsfforza/convert/glass.py) or a "
                 f"panel slot ({stray} of {len(tris)} straddle or miss)",
             )
         )
@@ -762,18 +806,18 @@ def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | 
             rows.append(
                 (
                     True,
-                    f"kind 1: no interior window qualifies for cracks (cockpit report: lamp covers and panes "
-                    f"under {MIN_WINDOW_AREA} m2 only), so its glass is surface only "
+                    f"kind 1: no interior window took cracks and shards (cockpit report: lamp covers, panes "
+                    f"under {MIN_WINDOW_AREA} m2, or none on the host's interior), so its glass is surface only "
                     f"(surface {regions['surface']})",
                 )
             )
         elif regions.get("surface"):
-            have = {k: regions.get(k, 0) for k in ("crack_light", "crack_heavy", "shard_dull", "shard_bright")}
-            ok = have["crack_light"] > 0 and have["crack_heavy"] > 0 and have["shard_dull"] + have["shard_bright"] > 0
+            have = {k: regions.get(k, 0) for k in ("crack", "shard_dull", "shard_bright")}
+            ok = sum(have.values()) > 0
             rows.append(
                 (
                     ok,
-                    "kind 1: interior glass has crack lines for states 1-2 and rim shards for state 3, "
+                    "kind 1: interior glass has the host's crack lines (states 1-2) or rim shards (state 3), "
                     "so damage shows from the cockpit ("
                     + ", ".join(f"{k} {v}" for k, v in have.items())
                     + f", surface {regions['surface']})",

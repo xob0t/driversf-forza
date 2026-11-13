@@ -1414,11 +1414,12 @@ class Shards:
 
 def plain_glass(car: dict) -> bool:
     """True when the car's converted cockpit has interior glass but no window that
-    qualified for crack lines (glass.InteriorGlass leaves lamp covers and small panes
-    as surface only: open race cars and roadsters), as its cockpit report says."""
+    took crack lines and shards (glass.InteriorGlass leaves lamp covers and small panes
+    as surface only: open race cars and roadsters; and windows the host interior has
+    none for), as its cockpit report says. Reports from before #459 say "crack_m"."""
     interior = (car.get("cockpit") or {}).get("interior")
     windows = interior.get("glass_windows") if isinstance(interior, dict) else None
-    return bool(windows) and not any("crack_m" in w for w in windows.values())
+    return bool(windows) and not any("host_window" in w or "crack_m" in w for w in windows.values())
 
 
 LINT_GROUP = 64  # cars per lint process at least: each reads the whole archive's tables first (~20 s)

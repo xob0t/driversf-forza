@@ -109,7 +109,7 @@ class TinyPane(unittest.TestCase):
         self.assertFalse(pane.inside((0.0, 0.0)))
 
     def test_window(self):
-        window = glass.InteriorGlass(seed="test")
+        window = glass.InteriorGlass()
         window.add("glassLF", self._sliver(), [(1.0, 0.0, 0.0)] * 3, [0.5] * 3, b"\x01\x02\x00\x01")
         tris = window.triangles()
         self.assertEqual({region for _, region in tris}, {"surface"})
