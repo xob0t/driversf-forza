@@ -63,10 +63,21 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
 
 from dsfforza import REPO
 from dsfforza.build import gentle
+from dsfforza.build.install_display import (
+    GIB,
+    MIB,
+    CarFailure,
+    LiveReporter,
+    Reporter,
+    Summary,
+    make_reporter,
+    pack_text,
+    rel,
+    size_text,
+)
 
 # --- constants ------------------------------------------------------------------------------
 
@@ -103,19 +114,8 @@ DEFAULT_OUT = REPO / "out" / "build"
 LOG_DIR = REPO / "out" / "logs"
 SAVE_BACKUPS = REPO / "out" / "save-backups"
 ASI_ROOT_LIMIT = 3003  # every base ID below 1000 (3 entries each) plus SSIC, DMWK, BINF
-MIB = 1 << 20
-GIB = 1 << 30
 VS_INSTALLER = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer")
 VCVARS_DEFAULT = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars32.bat")
-
-STAGES = (
-    ("preflight", "Preflight"),
-    ("prepare", "Prepare"),
-    ("plugin", "Plugin"),
-    ("build", "Build cars"),
-    ("pack", "Pack"),
-    ("install", "Install"),
-)
 
 
 class StageError(Exception):
@@ -152,6 +152,8 @@ def missing_plugin_error(repo: Path) -> StageError:
 
 
 def sha256(path: Path) -> str:
+    """A file's SHA-256 as upper-case hex (the form of VANILLA_ARCHIVE_SHA256 and
+    VANILLA_FILES)."""
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         while block := handle.read(1 << 22):
@@ -339,6 +341,7 @@ def documents_dir() -> Path:
 
 
 def default_save_dir() -> Path:
+    """The game's save folder: Documents/Ubisoft/Driver San Francisco/reloaded/savegames."""
     return documents_dir() / "Ubisoft" / "Driver San Francisco" / "reloaded" / "savegames"
 
 
@@ -351,6 +354,8 @@ def free_bytes(path: Path) -> int:
 
 
 def drive_of(path: Path) -> str:
+    """The drive a path is on (its anchor, lower case), to add up the space needed per
+    drive."""
     return Path(path).resolve().anchor.lower()
 
 
@@ -367,7 +372,7 @@ class Probes:
 # --- selection, jobs, reuse ---------------------------------------------------------------------
 
 
-def default_jobs(cpus: int | None, gentle_on: bool, ram: int | None = None) -> int:
+def default_jobs(cpus: int | None, *, gentle_on: bool, ram: int | None = None) -> int:
     """port_batch.default_jobs (a worker per logical CPU, 1.9 GB of RAM each), and at most
     gentle.CORES while out/gentle is there."""
     from dsfforza.build import port_batch
@@ -405,6 +410,8 @@ def count_cars(lists: list[Path], cars: list[str]) -> int:
 
 
 def fingerprinted_cars(build: Path) -> int:
+    """How many cars of a build have a fingerprint (work/*.fp.json), so --reuse can take
+    them."""
     work = Path(build) / "work"
     return sum(1 for _ in work.glob("*.fp.json")) if work.is_dir() else 0
 
@@ -429,17 +436,22 @@ def earlier_build(out_root: Path, exclude: list[Path]) -> Path | None:
 
 @dataclass
 class BuildDirs:
+    """A dsff install build's folders: the finished build, this run's staging folder and an
+    interrupted run's."""
+
     out: Path  # the finished build (out/build)
     staging: Path  # this run's (out/build.new)
     partial: Path  # an interrupted run's (out/build.partial)
 
     @classmethod
     def of(cls, out: Path) -> BuildDirs:
+        """The folders around the finished build `out` (out/build: out/build.new,
+        out/build.partial)."""
         out = Path(out)
         return cls(out, out.with_name(out.name + ".new"), out.with_name(out.name + ".partial"))
 
 
-def reuse_sources(dirs: BuildDirs, extra: list[Path], no_reuse: bool, discover: bool = True) -> list[Path]:
+def reuse_sources(dirs: BuildDirs, extra: list[Path], *, no_reuse: bool, discover: bool = True) -> list[Path]:
     """The builds port_batch --reuse may copy cars from, in order: the last finished build,
     an interrupted one, the ones named with --reuse, else the biggest earlier build under out/."""
     if no_reuse:
@@ -488,7 +500,7 @@ def promote(dirs: BuildDirs) -> Path:
     return dirs.out
 
 
-def space_needed(cars: int, reusing: bool) -> tuple[int, int]:
+def space_needed(cars: int, *, reusing: bool) -> tuple[int, int]:
     """(bytes on the build drive, bytes on the game drive), roughly: the archive is about
     0.5 GiB plus 4.2 MiB a car, the garage assets 0.4 MiB a car; a converted car takes about
     25 MiB more (work/ chunk, sound previews, the extraction cache); the install copies
@@ -538,6 +550,8 @@ def asi_sources_digest(source: Path = ASI_SOURCE) -> str:
 
 
 def stamp_path(asi: Path) -> Path:
+    """dsfcars.build.json beside a plugin: the sources digest and the file hash it was built
+    from."""
     return Path(asi).with_name("dsfcars.build.json")
 
 
@@ -555,7 +569,7 @@ def plugin_state(asi: Path, digest: str) -> str:
     return "stale"
 
 
-def plugin_action(state: str, vs: bool, rebuild: bool = False) -> str:
+def plugin_action(state: str, *, vs: bool, rebuild: bool = False) -> str:
     """keep (current), build, use (as it is, unverified), or missing (nothing to install)."""
     if rebuild:
         return "build" if vs else "missing"
@@ -612,6 +626,8 @@ def hook_source(path: Path) -> bool:
 
 
 def installed(record: dict | None) -> bool:
+    """Whether an install record is of a dsfforza install that is still in place (not
+    uninstalled)."""
     return bool(record) and record.get("state") != "uninstalled"
 
 
@@ -697,550 +713,7 @@ def gui_problem(build: Path) -> str | None:
     return None
 
 
-# --- the build's progress -----------------------------------------------------------------------
-
-
-@dataclass
-class CarFailure:
-    media: str
-    cause: str
-    error: str = ""
-    log: str | None = None
-
-
-@dataclass
-class Tracker:
-    """port_batch's events (port_batch.emit) folded into what the display shows."""
-
-    clock: object = time.monotonic
-    phase: str = "plan"
-    total: int = 0
-    reused: int = 0
-    todo: int = 0
-    converted: int = 0
-    jobs: int = 1
-    gentle: bool = False
-    seconds_hint: float | None = None  # a car's conversion time in the last build
-    convert_started: float | None = None
-    running: dict = field(default_factory=dict)  # media -> {"started", "note", "verify"}
-    failures: list = field(default_factory=list)
-    rebuilt: dict = field(default_factory=dict)  # why -> count
-    verify: set = field(default_factory=set)
-    verify_done: int = 0
-    merge_cars: int = 0
-    lint_cars: int = 0
-    lint_total: int = 0
-    pack_source: str = ""
-    lint_failed: int = 0
-    gui_total: int = 0
-    packages_total: int = 0
-    gui_done: int = 0
-    gui_last: str = ""
-
-    @property
-    def stage(self) -> str:
-        return "build" if self.phase in ("plan", "convert", "verify") else "pack"
-
-    @property
-    def done(self) -> int:
-        return self.reused + self.converted
-
-    def rate(self) -> float | None:
-        """Converted cars per minute so far."""
-        if not self.converted or self.convert_started is None:
-            return None
-        return self.converted / max(1e-6, self.clock() - self.convert_started) * 60
-
-    def eta(self) -> float | None:
-        """Seconds until every car is converted: the rate so far, else the last build's
-        time per car over the workers."""
-        left = self.todo - self.converted
-        if left <= 0:
-            return 0.0
-        rate = self.rate()
-        if rate:
-            return left / rate * 60
-        if self.seconds_hint:
-            return left * self.seconds_hint / max(1, self.jobs)
-        return None
-
-    def handle(self, event: str, **data) -> list[tuple[str, str]]:
-        """Update from one event; returns (level, text) lines to show above the display."""
-        notes: list[tuple[str, str]] = []
-        now = self.clock()
-        if event == "plan":
-            self.total = len(data.get("cars", []))
-            for s in data.get("skipped", []):
-                failure = CarFailure(s["media"], "not selected", s.get("error", ""))
-                self.failures.append(failure)
-                notes.append(("error", f"{failure.media}: {failure.error or failure.cause}"))
-        elif event == "convert":
-            self.phase = "convert"
-            self.todo = len(data.get("todo", []))
-            self.reused = len(data.get("reused", []))
-            self.jobs = data.get("jobs", self.jobs)
-            self.gentle = data.get("gentle", False)
-            self.convert_started = now
-            for why in (data.get("rebuilt") or {}).values():
-                key = reason_kind(why)
-                self.rebuilt[key] = self.rebuilt.get(key, 0) + 1
-        elif event == "car_start":
-            note = "verify" if data.get("verify") else (data.get("fallback") or "")
-            self.running[data["media"]] = {"started": now, "note": note, "verify": bool(data.get("verify"))}
-        elif event == "car_retry":
-            notes.append(("warn", f"{data['media']}: {data.get('cause') or 'failed'}; building again {data['why']}"))
-        elif event == "car_done":
-            media, report = data["media"], data.get("report") or {}
-            info = self.running.pop(media, {})
-            if info.get("verify") or media in self.verify:
-                self.verify_done += 1
-                if not report.get("ok"):
-                    notes.append(("error", f"{media} (reuse check): {report.get('cause')}"))
-            else:
-                self.converted += 1
-                if not report.get("ok"):
-                    failure = CarFailure(
-                        media, report.get("cause") or "error", str(report.get("error") or "")[:300], data.get("log")
-                    )
-                    self.failures.append(failure)
-                    notes.append(
-                        ("error", f"{media}: {failure.cause}" + (f" (log {failure.log})" if failure.log else ""))
-                    )
-        elif event == "verify":
-            self.phase = "verify"
-            self.verify = set(data.get("cars", []))
-        elif event == "verify_mismatch":  # port_batch --verify-mismatch rebuild
-            bad, redo = data.get("cars", []), data.get("redo", [])
-            notes.append(
-                (
-                    "warn",
-                    f"{', '.join(bad)}: came out different when converted again; using the new copy and "
-                    f"converting the {len(redo)} other reused cars again",
-                )
-            )
-            self.reused = max(0, self.reused - len(redo))
-            self.todo += len(redo)
-            self.phase = "convert"
-        elif event == "merge":
-            self.phase = "merge"
-            self.merge_cars = data.get("cars", 0)
-        elif event == "car_failed":
-            failure = CarFailure(data["media"], data.get("cause") or "merge", str(data.get("error") or "")[:300])
-            self.failures.append(failure)
-            notes.append(("error", f"{failure.media}: {failure.cause} ({failure.error[:120]})"))
-        elif event == "pack_reused":
-            self.phase = "pack_reused"
-            self.pack_source = data.get("source", "")
-        elif event == "lint":
-            self.phase = "lint"
-            self.lint_cars = data.get("cars", 0)
-            self.lint_total = data.get("total", self.lint_cars)
-        elif event == "lint_failed":
-            self.lint_failed += 1
-            notes.append(("warn", f"{data['media']}: lint found problems (kept in the archive; see the log)"))
-        elif event == "gui":
-            self.phase = "gui"
-            self.gui_total = data.get("cars", 0)
-        elif event == "gui_log":
-            self.gui_done = min(self.gui_total, self.gui_done + 1) if self.gui_total else self.gui_done + 1
-            self.gui_last = " ".join(str(data.get("text", "")).split()[:2]).rstrip(":")
-        elif event == "gui_failed":
-            notes.append(("warn", f"garage pictures and badges failed: {data.get('error')} (the cars still work)"))
-        elif event == "packages":
-            self.phase = "packages"
-            self.packages_total = data.get("cars", 0)
-        elif event == "packages_failed":
-            notes.append(("warn", f"car packages failed: {data.get('error')} (the build itself is usable)"))
-        elif event == "done":
-            self.phase = "done"
-        return notes
-
-    def pack_detail(self) -> str:
-        if self.phase == "packages":
-            return f"writing {self.packages_total} car packages"
-        if self.phase == "merge":
-            return f"merging {self.merge_cars} cars into one archive"
-        if self.phase == "pack_reused":
-            return f"unchanged since {rel(Path(self.pack_source))}: reusing its archive and garage pictures"
-        if self.phase == "lint":
-            if self.lint_cars < self.lint_total:
-                return f"checking {self.lint_cars} of {self.lint_total} cars (upvh lint; the rest unchanged)"
-            return "checking every car (upvh lint)"
-        if self.phase == "gui":
-            return f"garage pictures and badges {self.gui_done}/{self.gui_total}" + (
-                f"  {self.gui_last}" if self.gui_last else ""
-            )
-        return ""
-
-
-def pack_text(stats: dict | None, cars: int) -> str:
-    """The pack step's detail: what it took from the last build (port_batch's
-    timings_s.pack_reuse_stats, src/dsfforza/build/pack_reuse.py)."""
-    if not stats:
-        return "garage pictures, badges"
-    if stats.get("whole"):
-        return "unchanged: the last build's pack"
-    linted = stats.get("linted")
-    made = stats.get("pictures_made", 0)
-    if linted is None or (linted >= cars and made >= cars):
-        return "garage pictures, badges"
-    return f"{linted} cars checked, {made} garage pictures drawn (the rest unchanged)"
-
-
-def reason_kind(why: str) -> str:
-    """port_batch.Reuse's reason a car is converted again, in a few words."""
-    for prefix, kind in (
-        ("code ", "code changed"),
-        ("input ", "input changed"),
-        ("folder ", "input changed"),
-        ("job: ", "options changed"),
-        ("first try: ", "code or input changed"),
-        ("Python", "Python or numpy changed"),
-    ):
-        if why.startswith(prefix):
-            return kind
-    return why
-
-
-def clock_text(seconds: float | None) -> str:
-    if seconds is None:
-        return "--:--"
-    seconds = int(seconds)
-    hours, rest = divmod(seconds, 3600)
-    return f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60}:{rest % 60:02d}"
-
-
-def size_text(n: int | None) -> str:
-    if n is None:
-        return "?"
-    return f"{n / GIB:.2f} GiB" if n >= GIB else f"{n / MIB:.0f} MiB"
-
-
-def archive_text(s) -> str:
-    """The build's merged archive: its path and size, or that it wasn't written (past a
-    CHNK's 4 GiB, or --no-archive: port_batch.register_cars; the packages don't need it)."""
-    archive = s.build_dir / "dngvehicles.sp"
-    if s.archive_bytes is None and not archive.is_file():
-        return "not written (the packages don't need it; port_batch writes it below 4 GiB)"
-    return f"{archive} ({size_text(s.archive_bytes)})"
-
-
-# --- the display ------------------------------------------------------------------------------------
-
-
-@dataclass
-class Summary:
-    elapsed: float = 0.0
-    build_dir: Path | None = None
-    in_archive: int = 0
-    built: int = 0
-    reused: int = 0
-    failed: list = field(default_factory=list)  # CarFailure
-    archive_bytes: int | None = None
-    pack: str = ""  # what the pack step redid ("" before it ran)
-    game: Path | None = None
-    replaced: list = field(default_factory=list)
-    created: list = field(default_factory=list)
-    save_backup: Path | None = None
-    log: Path | None = None
-    notes: list = field(default_factory=list)
-    installed: bool = False
-    uninstall: str = "uv run dsff install --uninstall"
-
-
-class Reporter:
-    """Stage states and the build's events; LiveReporter and PlainReporter draw them."""
-
-    def __init__(self):
-        self.states = {key: ("pending", "") for key, _ in STAGES}
-        self.started = {}
-        self.tracker = Tracker()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def stage(self, key: str, state: str, detail: str = "") -> None:
-        if state == "running" and self.states[key][0] != "running":
-            self.started[key] = time.monotonic()
-        self.states[key] = (state, detail)
-        self.show_stage(key)
-
-    def show_stage(self, key: str) -> None:
-        pass
-
-    def note(self, text: str, level: str = "info") -> None:
-        pass
-
-    def event(self, event: str, **data) -> None:
-        before = self.tracker.stage
-        for level, text in self.tracker.handle(event, **data):
-            self.note(text, level)
-        after = self.tracker.stage
-        if event == "convert":
-            t = self.tracker
-            why = ", ".join(f"{n} {kind}" for kind, n in sorted(t.rebuilt.items(), key=lambda kv: -kv[1])[:3])
-            self.states["build"] = (
-                "running",
-                f"{t.todo} to convert, {t.reused} reused"
-                + (f" ({why})" if why else "")
-                + f"; {t.jobs} at a time"
-                + (", Idle, 2 workers at most (out/gentle)" if t.gentle else ""),
-            )
-        elif event == "verify":
-            self.states["build"] = (
-                "running",
-                f"checking {len(self.tracker.verify)} reused cars by building them again",
-            )
-        if before == "build" and after == "pack":
-            t = self.tracker
-            self.stage("build", "done", f"{t.converted} converted, {t.reused} reused, {len(t.failures)} failed")
-            self.stage("pack", "running", t.pack_detail())
-        elif after == "pack" and self.states["pack"][0] == "running":
-            self.states["pack"] = ("running", self.tracker.pack_detail())
-        self.show_event(event, data)
-
-    def show_event(self, event: str, data: dict) -> None:
-        pass
-
-    def summary(self, summary: Summary) -> None:
-        pass
-
-
-class PlainReporter(Reporter):
-    """One line per change, ASCII only: for pipes, logs and old consoles."""
-
-    def __init__(self, stream):
-        super().__init__()
-        self.stream = stream
-        self.shown: dict[str, tuple[str, str]] = {}
-
-    def line(self, text: str) -> None:
-        self.stream.write(text.encode("ascii", "replace").decode("ascii") + "\n")
-        self.stream.flush()
-
-    def show_stage(self, key: str) -> None:
-        state, detail = self.states[key]
-        label = dict(STAGES)[key]
-        before = self.shown.get(key, ("pending", ""))
-        self.shown[key] = (state, detail)
-        if state == "running" and before[0] == "running":
-            if detail and detail != before[1]:
-                self.line(f"  {detail}")
-        elif state == "running":
-            self.line(f"[{key}] {label}..." + (f" {detail}" if detail else ""))
-        elif state in ("done", "skipped", "failed"):
-            self.line(f"[{key}] {state}" + (f": {detail}" if detail else ""))
-
-    def note(self, text: str, level: str = "info") -> None:
-        prefix = {"error": "  FAILED ", "warn": "  warning: "}.get(level, "  ")
-        self.line(prefix + text)
-
-    def show_event(self, event: str, data: dict) -> None:
-        t = self.tracker
-        if event == "convert":
-            mode = "Idle priority, 2 workers at most (out/gentle)" if t.gentle else "Below Normal priority"
-            self.line(f"  {t.total} cars: {t.reused} reused, {t.todo} to convert, {t.jobs} at a time ({mode})")
-        elif event == "car_start" and not data.get("verify"):
-            self.line(f"  start {data['media']}")
-        elif event == "car_done" and data["media"] not in t.verify:
-            report = data.get("report") or {}
-            state = "ok" if report.get("ok") else "failed"
-            rate = t.rate()
-            self.line(
-                f"  done  {data['media']} {state} ({report.get('seconds') or 0:.0f} s)  "
-                f"{t.converted}/{t.todo}" + (f", {rate:.1f}/min" if rate else "") + f", ETA {clock_text(t.eta())}"
-            )
-        elif event == "verify":
-            self.line(f"  checking {len(t.verify)} reused cars by building them again")
-        elif event in ("merge", "lint", "gui", "pack_reused"):
-            self.line(f"  {t.pack_detail()}")
-
-    def summary(self, s: Summary) -> None:
-        for text in summary_lines(s):
-            self.line(text)
-
-
-def summary_lines(s: Summary) -> list[str]:
-    lines = ["", f"Finished in {clock_text(s.elapsed)}."]
-    if s.build_dir is not None:
-        lines.append(
-            f"  Cars:      {s.in_archive} in the archive ({s.built} built, {s.reused} reused), {len(s.failed)} failed"
-        )
-        lines.append(f"  Archive:   {archive_text(s)}")
-    for f in s.failed:
-        lines.append(f"    {f.media}: {f.cause}" + (f" - {f.error[:100]}" if f.error else ""))
-        if f.log:
-            lines.append(f"      log {f.log}")
-    if s.installed:
-        lines.append(
-            f"  Installed: into {s.game}: {len(s.replaced)} files replaced (originals in dsfcars-backup), "
-            f"{len(s.created)} added"
-        )
-        if s.save_backup:
-            lines.append(f"  Save:      backed up to {s.save_backup}")
-        lines.append(f"  Uninstall: {s.uninstall}")
-    lines += [f"  Note: {n}" for n in s.notes]
-    if s.log:
-        lines.append(f"  Log:       {s.log}")
-    return lines
-
-
-class LiveReporter(Reporter):
-    """rich: the stage list, the per-car bar and the running workers, redrawn in place."""
-
-    ICONS: ClassVar[dict[str, str]] = {
-        "done": "[green]✓[/]",
-        "skipped": "[dim]-[/]",
-        "failed": "[red]✗[/]",
-        "pending": "[dim]·[/]",
-    }
-
-    def __init__(self, console, term_fd: int | None = None):
-        super().__init__()
-        from rich.live import Live
-        from rich.spinner import Spinner
-
-        self.console = console
-        self.term_fd = term_fd
-        self.spinner = Spinner("dots", style="cyan")
-        self.live = Live(
-            get_renderable=self.render,
-            console=console,
-            refresh_per_second=4,
-            transient=False,
-            redirect_stdout=False,
-            redirect_stderr=False,
-        )
-
-    def __enter__(self):
-        self.live.start()
-        return self
-
-    def __exit__(self, *exc):
-        self.live.stop()
-        return False
-
-    def note(self, text: str, level: str = "info") -> None:
-        from rich.text import Text
-
-        style = {"error": "red", "warn": "yellow"}.get(level, "")
-        mark = {"error": "✗ ", "warn": "! "}.get(level, "  ")
-        self.console.print(Text(mark + text, style=style))
-
-    def render(self):
-        from rich.console import Group
-        from rich.progress_bar import ProgressBar
-        from rich.table import Table
-
-        if self.term_fd is not None:  # follow the window's size (fd 1 is the log file now)
-            with contextlib.suppress(OSError, ValueError):
-                size = os.get_terminal_size(self.term_fd)
-                self.console.width, self.console.height = size.columns, size.lines
-        stages = Table.grid(padding=(0, 1))
-        stages.add_column(width=1)
-        stages.add_column(style="bold", min_width=11)
-        stages.add_column(overflow="ellipsis", no_wrap=True)
-        stages.add_column(justify="right", style="dim")
-        now = time.monotonic()
-        for key, label in STAGES:
-            state, detail = self.states[key]
-            icon = self.spinner if state == "running" else self.ICONS.get(state, " ")
-            elapsed = clock_text(now - self.started[key]) if state == "running" and key in self.started else ""
-            stages.add_row(icon, label, f"[dim]{detail}[/]" if state != "running" else detail, elapsed)
-        parts = [stages]
-        t = self.tracker
-        if self.states["build"][0] == "running" and t.phase in ("convert", "verify"):
-            rate = t.rate()
-            bar = Table.grid(padding=(0, 1))
-            bar.add_column(style="bold")
-            bar.add_column(width=max(10, min(40, self.console.width - 70)))
-            bar.add_column(no_wrap=True)
-            stats = f"{t.done}/{t.total} cars"
-            stats += f" · {t.reused} reused" if t.reused else ""
-            stats += f" · {rate:.1f}/min" if rate else ""
-            stats += f" · ETA {clock_text(t.eta())}" if t.phase == "convert" else " · checking reused cars"
-            stats += f" · [red]{len(t.failures)} failed[/]" if t.failures else ""
-            bar.add_row(
-                " Cars",
-                ProgressBar(total=max(1, t.total), completed=t.done, complete_style="green", finished_style="green"),
-                stats,
-            )
-            parts.append(bar)
-            workers = Table.grid(padding=(0, 1))
-            workers.add_column(width=3)
-            workers.add_column(no_wrap=True)
-            workers.add_column(justify="right", style="dim")
-            workers.add_column(style="yellow", no_wrap=True, overflow="ellipsis")
-            running = sorted(t.running.items(), key=lambda kv: kv[1]["started"])
-            room = max(3, self.console.height - len(STAGES) - 4)  # a small window: the oldest only
-            for media, info in running[:room]:
-                workers.add_row("  ↳", media, clock_text(now - info["started"]), info["note"])
-            queued = t.todo - t.converted - sum(1 for i in t.running.values() if not i["verify"])
-            more = f"{len(running) - room} more running, " if len(running) > room else ""
-            if queued > 0 or more:
-                workers.add_row("", f"[dim]{more}{max(0, queued)} queued, {t.jobs} at a time[/]", "", "")
-            parts.append(workers)
-        return Group(*parts)
-
-    def summary(self, s: Summary) -> None:
-        from rich.table import Table
-        from rich.text import Text
-
-        self.console.print()
-        grid = Table.grid(padding=(0, 2))
-        grid.add_column(style="bold")
-        grid.add_column()
-        if s.build_dir is not None:
-            failed = f", [red]{len(s.failed)} failed[/]" if s.failed else ", 0 failed"
-            grid.add_row("Cars", f"{s.in_archive} in the archive ({s.built} built, {s.reused} reused){failed}")
-            grid.add_row("Archive", archive_text(s))
-        if s.installed:
-            grid.add_row(
-                "Installed",
-                f"into {s.game}: {len(s.replaced)} files replaced (originals in dsfcars-backup), "
-                f"{len(s.created)} added",
-            )
-            if s.save_backup:
-                grid.add_row("Save backup", str(s.save_backup))
-            grid.add_row("Uninstall", s.uninstall)
-        for n in s.notes:
-            grid.add_row("[yellow]Note[/]", n)
-        if s.log:
-            grid.add_row("Log", str(s.log))
-        self.console.print(Text(f"Finished in {clock_text(s.elapsed)}", style="bold green"))
-        self.console.print(grid)
-        if s.failed:
-            table = Table(title="Failed cars", title_justify="left", show_edge=False, header_style="bold red")
-            table.add_column("car")
-            table.add_column("cause")
-            table.add_column("log", overflow="fold")
-            for f in s.failed:
-                table.add_row(f.media, f.cause + (f": {f.error[:80]}" if f.error else ""), f.log or "")
-            self.console.print(table)
-
-
-# --- output redirection -----------------------------------------------------------------------------
-
-
-def enable_vt(fd: int) -> bool:
-    """ANSI escape sequences on the console behind fd (Windows 10+); False when it can't."""
-    if os.name != "nt":
-        return True
-    try:
-        import msvcrt
-        from ctypes import wintypes
-
-        handle = msvcrt.get_osfhandle(fd)
-        mode = wintypes.DWORD()
-        k32 = ctypes.windll.kernel32
-        if not k32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(k32.SetConsoleMode(handle, mode.value | 0x0004))  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
-    except (OSError, AttributeError, ValueError):
-        return False
+# --- the log -----------------------------------------------------------------------------
 
 
 @contextlib.contextmanager
@@ -1272,18 +745,6 @@ def to_log(log_path: Path):
         log.close()
 
 
-def make_reporter(term, term_fd: int, plain: bool) -> Reporter:
-    if plain or not term.isatty() or not enable_vt(term_fd):
-        return PlainReporter(term)
-    from rich.console import Console
-
-    width = 100
-    with contextlib.suppress(OSError):
-        width = os.get_terminal_size(term_fd).columns
-    console = Console(file=term, force_terminal=True, legacy_windows=False, width=width, highlight=False)
-    return LiveReporter(console, term_fd)
-
-
 # --- the run -------------------------------------------------------------------------------------------
 
 
@@ -1294,6 +755,10 @@ def log(text: str) -> None:
 
 @dataclass
 class Run:
+    """One dsff install run: its arguments, display and probes, what preflight found (the
+    game, the disc images, the vanilla archive, the install record) and what the stages
+    made."""
+
     args: argparse.Namespace
     reporter: Reporter
     probes: Probes = field(default_factory=Probes)
@@ -1307,16 +772,40 @@ class Run:
 
     @property
     def building(self) -> bool:
+        """Whether this run builds (not --install-only)."""
         return not self.args.install_only
 
     @property
     def installing(self) -> bool:
+        """Whether this run installs (not --build-only)."""
         return not self.args.build_only
 
     # 1. preflight ------------------------------------------------------------------------------
 
     def preflight(self) -> str:
-        args, problems, info = self.args, [], []
+        """Stage 1: what the run needs is there (the game, its vanilla archive, the disc
+        images and car lists for a build, the install's prerequisites, disk space). Returns
+        the stage's detail; a StageError lists every problem found."""
+        game = self.find_game()
+        self.game = game
+        problems, info = self.check_game(game)
+        cars = None
+        if self.building:
+            found, notes, cars = self.check_build_inputs()
+            problems += found
+            info += notes
+        if self.installing:
+            problems += self.install_checks()
+        found, notes = self.check_space(cars if cars is not None else len(self.installed_cars()))
+        problems += found
+        info += notes
+        if problems:
+            raise StageError("\n".join(f"- {p}" for p in problems))
+        return ", ".join(info)
+
+    def find_game(self) -> Path:
+        """The game folder: --game, else DSF_GAME_DIR; a StageError when unset or without Driver.exe."""
+        args = self.args
         game = args.game or (Path(os.environ["DSF_GAME_DIR"]) if os.environ.get("DSF_GAME_DIR") else None)
         if game is None:
             raise StageError(
@@ -1327,7 +816,14 @@ class Run:
         game = Path(game)
         if not (game / "Driver.exe").is_file():
             raise StageError(f"No Driver.exe in {game}.", "DSF_GAME_DIR (or --game) must be the game folder.")
-        self.game = game
+        return game
+
+    def check_game(self, game: Path) -> tuple[list[str], list[str]]:
+        """(problems, info) of the game folder: Driver.exe is the 1.04 release dsfcars.asi
+        patches, and the vehicle archive is vanilla when building (the build reads it).
+        Reads the install record and finds the vanilla archive (self.record,
+        self.vanilla_archive)."""
+        problems, info = [], []
         if problem := exe_problem(game / "Driver.exe"):
             problems.append(
                 f"{game / 'Driver.exe'} is {problem}. dsfcars.asi patches only the 1.04 release's "
@@ -1350,53 +846,59 @@ class Run:
                 )
         else:
             info.append("DSF 1.04")
-        cars = None
-        if self.building:
-            from dsfforza.build import forza_roster
+        return problems, info
 
-            self.isos = [Path(p) for p in (args.iso or forza_roster.default_images())]
-            missing = [p for p in self.isos if not p.is_file()]
-            if not self.isos:
+    def check_build_inputs(self) -> tuple[list[str], list[str], int]:
+        """(problems, info, how many cars the build names at most) of a build's inputs: the
+        Forza disc images (self.isos; each identified by its content), the FM4 DLC packs and
+        the car lists."""
+        from dsfforza.build import forza_roster
+
+        args, problems, info = self.args, [], []
+        self.isos = [Path(p) for p in (args.iso or forza_roster.default_images())]
+        missing = [p for p in self.isos if not p.is_file()]
+        if not self.isos:
+            problems.append(
+                "No Forza disc images: put the FH1 and FM4 (disc 1 and 2) .iso files in "
+                f"{REPO / 'assets'}, or pass --iso FILE for each."
+            )
+        elif missing:
+            problems.append(f"Disc image not found: {', '.join(map(str, missing))}")
+        else:
+            # Each image by its content (default.xex), whatever it is called.
+            discs = forza_roster.identify_all(self.isos)
+            found, notes = forza_roster.disc_summary(discs)
+            if not found:
                 problems.append(
-                    "No Forza disc images: put the FH1 and FM4 (disc 1 and 2) .iso files in "
-                    f"{REPO / 'assets'}, or pass --iso FILE for each."
+                    "None of the disc images is a Forza Horizon or Forza Motorsport 4 disc: "
+                    + "; ".join(f"{d.path.name}: {d.error}" for d in discs)
                 )
-            elif missing:
-                problems.append(f"Disc image not found: {', '.join(map(str, missing))}")
             else:
-                # Each image by its content (default.xex), whatever it is called.
-                discs = forza_roster.identify_all(self.isos)
-                found, notes = forza_roster.disc_summary(discs)
-                if not found:
-                    problems.append(
-                        "None of the disc images is a Forza Horizon or Forza Motorsport 4 disc: "
-                        + "; ".join(f"{d.path.name}: {d.error}" for d in discs)
-                    )
-                else:
-                    info.append("discs " + " + ".join(found))
-                    info += notes
-            info += dlc_preflight(forza_roster.dlc_packages(), self.dlc_use())
-            lists = self.lists()
-            gone = [p for p in lists if not Path(p).is_file()]
-            if gone:
-                problems.append(f"Car list not found: {', '.join(map(str, gone))}")
-            # the DLC list in full: an upper bound when some packs are missing (for the disk space)
-            from dsfforza.build.port_batch import DLC_LIST
+                info.append("discs " + " + ".join(found))
+                info += notes
+        info += dlc_preflight(forza_roster.dlc_packages(), self.dlc_use())
+        lists = self.lists()
+        gone = [p for p in lists if not Path(p).is_file()]
+        if gone:
+            problems.append(f"Car list not found: {', '.join(map(str, gone))}")
+        # the DLC list in full: an upper bound when some packs are missing (for the disk space)
+        from dsfforza.build.port_batch import DLC_LIST
 
-            dlc = [DLC_LIST] if self.dlc_cars() else []
-            cars = count_cars([p for p in lists if p not in gone] + dlc, args.car or [])
-        if self.installing:
-            problems += self.install_checks()
-        # disk space: the build folder's drive and the game's
-        cars = cars if cars is not None else len(self.installed_cars())
-        reusing = bool(reuse_sources(BuildDirs.of(args.out), args.reuse or [], args.no_reuse))
-        need_build, need_game = space_needed(cars, reusing)
+        dlc = [DLC_LIST] if self.dlc_cars() else []
+        return problems, info, count_cars([p for p in lists if p not in gone] + dlc, args.car or [])
+
+    def check_space(self, cars: int) -> tuple[list[str], list[str]]:
+        """(problems, info) of the disk space for `cars` cars (space_needed): the build
+        folder's drive and the game's, added up when they are one drive."""
+        args, problems, info = self.args, [], []
+        reusing = bool(reuse_sources(BuildDirs.of(args.out), args.reuse or [], no_reuse=args.no_reuse))
+        need_build, need_game = space_needed(cars, reusing=reusing)
         needs: dict[str, tuple[Path, int]] = {}
         if self.building:
             needs[drive_of(args.out)] = (args.out, need_build)
         if self.installing:
-            path, n = needs.get(drive_of(game), (game, 0))
-            needs[drive_of(game)] = (path, n + need_game)
+            path, n = needs.get(drive_of(self.game), (self.game, 0))
+            needs[drive_of(self.game)] = (path, n + need_game)
         for path, need in needs.values():
             free = self.probes.free(path)
             if free < need:
@@ -1406,11 +908,11 @@ class Run:
                 )
             else:
                 info.append(f"{size_text(free)} free on {Path(path).resolve().anchor.rstrip(chr(92))}")
-        if problems:
-            raise StageError("\n".join(f"- {p}" for p in problems))
-        return ", ".join(info)
+        return problems, info
 
     def lists(self) -> list[Path]:
+        """The car lists the build gets: --list, else the default list unless --car names
+        the cars."""
         if self.args.list:
             return list(self.args.list)
         return [] if self.args.car else [DEFAULT_LIST]
@@ -1429,6 +931,8 @@ class Run:
         return self.dlc_use() == "build" and bool(fm4_dlc.packages())
 
     def installed_cars(self) -> list:
+        """The cars of the build that would be installed (its manifest's), [] when there is
+        none."""
         try:
             build = self.args.build or self.args.out
             return json.loads((Path(build) / "dngvehicles.json").read_text(encoding="utf-8"))["cars"]
@@ -1512,6 +1016,8 @@ class Run:
     # 3. plugin ----------------------------------------------------------------------------------------
 
     def plugin_stage(self) -> tuple[str, str]:
+        """Stage 3: the dsfcars.asi to install: --asi, the release's, or out/asi's, kept,
+        used as it is or built (plugin_action)."""
         args = self.args
         if args.asi:
             if not Path(args.asi).is_file():
@@ -1528,7 +1034,7 @@ class Run:
         digest = asi_sources_digest()
         state = plugin_state(ASI_OUT, digest)
         vcvars = find_vcvars()
-        action = plugin_action(state, vcvars is not None, args.rebuild_plugin)
+        action = plugin_action(state, vs=vcvars is not None, rebuild=args.rebuild_plugin)
         log(f"plugin: {state}, Visual Studio {'found' if vcvars else 'not found'} -> {action}")
         if action == "keep":
             self.plugin = ASI_OUT
@@ -1553,19 +1059,11 @@ class Run:
         return "done", f"built {rel(ASI_OUT)} and tested it against Driver.exe"
 
     def build_plugin(self, vcvars: Path) -> None:
+        """Build and test dsfcars.asi (tools/asi/build.ps1 -Test with vcvars32.bat), then
+        stamp what it was built from."""
         env = {**os.environ, "DSF_GAME_DIR": str(self.game)}
         env["PATH"] = str(VS_INSTALLER) + os.pathsep + env.get("PATH", "")
-        command = [
-            powershell(),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(ASI_SOURCE / "build.ps1"),
-            "-VcVars",
-            str(vcvars),
-            "-Test",
-        ]
+        command = powershell_script(ASI_SOURCE / "build.ps1", "-VcVars", str(vcvars), "-Test")
         log("plugin: " + " ".join(command))
         result = subprocess.run(command, env=env, cwd=str(REPO), check=False)
         if result.returncode != 0 or not ASI_OUT.is_file():
@@ -1580,6 +1078,8 @@ class Run:
     # 4-5. build and pack -------------------------------------------------------------------------------
 
     def build(self) -> None:
+        """Stages 4 and 5: port_batch build into out/build.new with the install's settings,
+        reusing the earlier builds' cars, then out/build.new becomes out/build."""
         from dsfforza.build import port_batch
         from dsfforza.game import game_paths
 
@@ -1588,15 +1088,38 @@ class Run:
         note = start_staging(dirs)
         if note:
             self.reporter.note(note)
-        sources = reuse_sources(dirs, args.reuse or [], args.no_reuse)
+        sources = reuse_sources(dirs, args.reuse or [], no_reuse=args.no_reuse)
         hint = None
         if sources:
             self.reporter.stage("build", "running", "reusing cars from " + ", ".join(rel(s) for s in sources))
             hint = seconds_per_car(sources[0])
+        argv = self.port_batch_argv(dirs.staging, sources)
+        build_args = port_batch.build_parser().parse_args(argv)
+        build_args.dsf = game_paths.vanilla(build_args.dsf, quiet=True)
+        build_args.progress = self.reporter.event
+        self.reporter.tracker.seconds_hint = hint
+        os.environ["DSF_GAME_DIR"] = str(self.game)
+        log("port_batch " + " ".join(argv))
+        try:
+            port_batch.cmd_build(build_args)
+        except SystemExit as error:
+            raise StageError(
+                f"The build stopped: {error.code}",
+                f"The cars built so far are kept in {dirs.staging} and reused by the next run.",
+            ) from error
+        self.build_dir = promote(dirs)
+        if self.build_dir != dirs.out:
+            self.summary.notes.append(f"{dirs.out} could not be replaced (in use?); this build is in {self.build_dir}")
+        self.read_report(self.build_dir)
+
+    def port_batch_argv(self, staging: Path, sources: list[Path]) -> list[str]:
+        """port_batch build's command line for this run: into `staging`, the cars of the lists
+        (and the FM4 DLC packs' unless --no-fm4-dlc) and --car, reusing `sources`."""
+        args = self.args
         # The ID policy, root limit and wide glyphs are for the merged archive the build also writes
         # (the in-game tests run it: tools/wsb/run-series.ps1 -Archives); the car packages
         # (--packages, <build>/packages/*.dsfcar) get their IDs from the car manager at install.
-        argv = ["build", "--out", str(dirs.staging), "--dsf", str(self.vanilla_archive), "--gui", "--packages"]
+        argv = ["build", "--out", str(staging), "--dsf", str(self.vanilla_archive), "--gui", "--packages"]
         argv += ["--id-policy", "asi", "--root-limit", str(ASI_ROOT_LIMIT), "--wide-glyphs"]
         for path in self.lists():
             argv += ["--list", str(path)]
@@ -1616,25 +1139,10 @@ class Run:
         argv += ["--verify-mismatch", "rebuild"]
         if args.verify_pack:
             argv += ["--verify-pack"]
-        build_args = port_batch.build_parser().parse_args(argv)
-        build_args.dsf = game_paths.vanilla(build_args.dsf, quiet=True)
-        build_args.progress = self.reporter.event
-        self.reporter.tracker.seconds_hint = hint
-        os.environ["DSF_GAME_DIR"] = str(self.game)
-        log("port_batch " + " ".join(argv))
-        try:
-            port_batch.cmd_build(build_args)
-        except SystemExit as error:
-            raise StageError(
-                f"The build stopped: {error.code}",
-                f"The cars built so far are kept in {dirs.staging} and reused by the next run.",
-            ) from error
-        self.build_dir = promote(dirs)
-        if self.build_dir != dirs.out:
-            self.summary.notes.append(f"{dirs.out} could not be replaced (in use?); this build is in {self.build_dir}")
-        self.read_report(self.build_dir)
+        return argv
 
     def read_report(self, build: Path) -> None:
+        """The summary's cars, failures and notes from a build's batch-report.json."""
         s = self.summary
         s.build_dir = build
         try:
@@ -1684,10 +1192,14 @@ class Run:
         }
 
     def game_has_hook(self) -> bool:
+        """DriverNGHook is in the game folder, and not as a file our earlier install put
+        there."""
         hook = self.game / "plugins" / "DriverNGHook.asi"
         return hook.is_file() and "plugins\\DriverNGHook.asi".lower() not in self.ours()
 
     def game_has_loader(self) -> bool:
+        """An ASI loader is in the game folder, and not as a file our earlier install put
+        there."""
         name = self.probes.loader(self.game)
         return bool(name) and name.lower() not in self.ours()
 
@@ -1717,6 +1229,8 @@ class Run:
         return hook, loader
 
     def backup_save(self) -> Path | None:
+        """Copy the save folder (--save-dir, else the game's) to out/save-backups/<time>/;
+        None when there is none."""
         save = Path(self.args.save_dir) if self.args.save_dir else default_save_dir()
         if not save.is_dir():
             log(f"no save folder at {save}; nothing to back up")
@@ -1744,6 +1258,8 @@ class Run:
         return flags
 
     def install(self) -> str:
+        """Stage 6: tools/install.ps1 installs the build's car packages, the plugin, the
+        hook and the loader; the summary gets what it replaced and added."""
         args, game = self.args, self.game
         build = Path(args.build) if args.build else (self.build_dir or args.out)
         # The car packages, through the car manager: none of the build's archive, Lua or GUI files.
@@ -1767,18 +1283,7 @@ class Run:
         self.summary.save_backup = None if args.no_save_backup else self.backup_save()
         hook, loader = self.hook_files()
         self.reporter.stage("install", "running", "tools/install.ps1: the plugin, the Lua and the car packages")
-        command = [
-            powershell(),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(INSTALL_PS1),
-            "-GamePath",
-            str(game),
-            "-Build",
-            str(build),
-        ]
+        command = powershell_script(INSTALL_PS1, "-GamePath", str(game), "-Build", str(build))
         command += self.install_flags(hook, loader)
         log("install: " + " ".join(command))
         result = subprocess.run(command, cwd=str(REPO), capture_output=True, text=True, check=False)
@@ -1809,13 +1314,6 @@ def uninstall_command(game: Path | None) -> str:
     return f"{command_name()} --uninstall" + (f' --game "{game}"' if game else "")
 
 
-def rel(path: Path) -> str:
-    try:
-        return str(Path(path).resolve().relative_to(REPO))
-    except ValueError:
-        return str(path)
-
-
 def seconds_per_car(build: Path) -> float | None:
     """The median conversion time of a car in an earlier build (batch-report.json), for the
     first ETA before this run has finished a car."""
@@ -1828,12 +1326,19 @@ def seconds_per_car(build: Path) -> float | None:
 
 
 def powershell() -> str:
+    """Windows PowerShell: the one on PATH, else its usual place."""
     found = shutil.which("powershell")
     if found:
         return found
     return str(
         Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     )
+
+
+def powershell_script(script: Path, *args: str) -> list[str]:
+    """The command line that runs a PowerShell script with its arguments (no profile, any
+    execution policy)."""
+    return [powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *args]
 
 
 def run_stage(run: Run, key: str, step) -> None:
@@ -1853,7 +1358,6 @@ def execute(run: Run) -> int:
     started = time.monotonic()
     current = "preflight"
     try:
-        current = "preflight"
         run_stage(run, "preflight", run.preflight)
         current = "prepare"
         if run.building:
@@ -1913,6 +1417,7 @@ def execute(run: Run) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """dsff install's command line."""
     parser = argparse.ArgumentParser(
         prog=command_name(),  # the usage line as the user types it
         description=__doc__.splitlines()[0],
@@ -1952,7 +1457,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="cars converted at a time (default: one per logical CPU, as many as 1.9 GB of RAM each fits: "
-        f"{default_jobs(os.cpu_count(), False)} here; out/gentle caps it at 2)",
+        f"{default_jobs(os.cpu_count(), gentle_on=False)} here; out/gentle caps it at 2)",
     )
     build.add_argument("--out", type=Path, default=DEFAULT_OUT, help="the build folder (default: out/build)")
     build.add_argument("--reuse", type=Path, action="append", metavar="DIR", help="an earlier build to reuse cars from")
@@ -2001,16 +1506,7 @@ def passthrough(args) -> int:
     if not game:
         print("Set DSF_GAME_DIR to the game folder, or pass --game.", file=sys.stderr)
         return 2
-    command = [
-        powershell(),
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(INSTALL_PS1),
-        "-GamePath",
-        str(game),
-    ]
+    command = powershell_script(INSTALL_PS1, "-GamePath", str(game))
     if args.status:
         command.append("-Status")
     else:
@@ -2029,6 +1525,9 @@ def passthrough(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """dsff install: the stages, with a display on the terminal and everything the tools
+    print in the log; --status, --uninstall, --migrate and --report run their own tools.
+    Returns the exit code."""
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.status or args.uninstall or args.migrate:
         return passthrough(args)
@@ -2037,11 +1536,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return report.main(["--game", str(args.game)] if args.game else [])
     if args.jobs is None:
-        args.jobs = default_jobs(os.cpu_count(), gentle.enabled())
+        args.jobs = default_jobs(os.cpu_count(), gentle_on=gentle.enabled())
     args.out = Path(args.out).resolve()
     log_path = args.log or LOG_DIR / f"install-{datetime.datetime.now():%Y%m%d-%H%M%S}.log"
     with to_log(log_path) as (term, term_fd):
-        reporter = make_reporter(term, term_fd, args.plain)
+        reporter = make_reporter(term, term_fd, plain=args.plain)
         run = Run(args, reporter)
         run.summary.log = log_path
         log(f"dsff install {' '.join(sys.argv[1:] if argv is None else argv)}")

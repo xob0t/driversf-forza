@@ -1465,6 +1465,9 @@ class Plan:
             except (ValueError, RuntimeError, LookupError, KeyError) as error:
                 self.failures.append(f"template {template}: {error}")
                 self.log(f"  forza sound: template {template} failed: {error}")
+                # drop the template's other loop lengths; _next counts the entries kept before
+                # the failed one, so the next entry tried is the one that followed it (#594)
+                self._next = sum(o[0] != template for o in self._order[: self._next - 1])
                 self._order = [o for o in self._order if o[0] != template]
                 continue
             sound.report.update(template=template, media=self.media, game=self.game, engine=self.engine_text)

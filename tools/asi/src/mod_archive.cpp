@@ -35,6 +35,10 @@
 #include "patch.h"
 #include "shared.h"
 
+bool vehicle_maps_install(bool audio);
+void vehicle_maps_remove();
+int vehicle_maps_selftest();
+
 namespace {
 
 const uint32_t kInline = 1100;  // entries the reader holds inline
@@ -2849,7 +2853,9 @@ void mod_archive_init()
             hooked = g_sslp_hooked = patch_jmp(0x005A0B50, (void*)h_sslp_load, 5, kSslpExpect);
         if (!hooked)
             dsf_log("slots: 005A0B50 is not the vanilla SSLP load; vehicle slots stay 35");
-        else if (!(patch_wrap_lists() && patch_pool45() && patch_acquire_7a() && patch_modl_records() && patch_bank_list())) {  // they only act past their inline room
+        else if (!(patch_wrap_lists() && patch_pool45() && patch_acquire_7a() && patch_modl_records() && patch_bank_list() &&
+                   vehicle_maps_install(true))) {  // they only act past their inline room
+            dsf_log("slots: a list or ID-map patch site is not the vanilla code; vehicle slots stay 35");
             if (g_sslp_hooked) {
                 patch_bytes(0x005A0B50, kSslpExpect, 5);
                 g_sslp_hooked = false;
@@ -2857,11 +2863,18 @@ void mod_archive_init()
         } else if (patch_pool16((uint32_t)slots) && patch_ak_default_pool((uint32_t)slots) &&
                    patch_vehicle_pool((uint32_t)slots))
             g_vehicle_slots = (uint32_t)slots;
-        else if (g_sslp_hooked) {
-            patch_bytes(0x005A0B50, kSslpExpect, 5);
-            g_sslp_hooked = false;
+        else {
+            // The ID maps' patch removes model audio's 45-entry gate, which 35 slots don't need.
+            dsf_log("slots: a pool patch site is not the vanilla code; vehicle slots stay 35");
+            vehicle_maps_remove();
+            if (g_sslp_hooked) {
+                patch_bytes(0x005A0B50, kSslpExpect, 5);
+                g_sslp_hooked = false;
+            }
         }
     }
+    // slots_trace at 35: log the provider maps' occupancy (insert hooks only; model audio keeps its gate).
+    if (g_slots_trace && !g_vehicle_slots) vehicle_maps_install(false);
 
     // Files past 2 GiB. The file layer's seek (0x0085A970) clamps a position
     // with the sign bit set to 0 (`CMP [ECX+0x30],0; JGE`), so every entry of
@@ -3355,7 +3368,7 @@ int mod_archive_pkg_selftest(const char* dir)
         patch_bytes(0x005A0B50, kSslpExpect, 5);
         g_sslp_hooked = false;
     }
-    int slot_failures = slots_selftest();
+    int slot_failures = slots_selftest() + vehicle_maps_selftest();
     g_st_fail = 0;
     char d[MAX_PATH], path[MAX_PATH], list[MAX_PATH];
     _snprintf_s(d, sizeof d, _TRUNCATE, "%s\\pkgtest\\", dir);

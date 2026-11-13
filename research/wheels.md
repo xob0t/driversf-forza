@@ -1,6 +1,6 @@
 # Wheels: the Forza wheel model in DSF
 
-Updated: 2026-11-05
+Updated: 2026-11-12 (wheel sky term, #525)
 
 User report from driving the testdrive build (`out/testdrive`, 40 cars): the
 wheels look broken on every car, the Veyron worst. The first sections are
@@ -1416,6 +1416,221 @@ wheels into range keep MAXData.xml: AST_DB5Vantage_64, BUS_TOUR_12, EAE_Speedste
 JAG_Etype_61, PEU_205T16_84 (and its ShowCase copy), and the others of #436's list whose
 sources agree.
 
+## Wheel sky term: what the engine and vanilla's bake define (2026-11-12, issue #525)
+
+A static RE round on `WHEEL_SKY_OPEN` (0.64) and `WHEEL_SKY_SIDE` (0.5) of `wheel_sky`
+("Wheel shading"). No build, render or game run. Tool: `tools/re/sky_bake.py` (`body`,
+`wheel`). The disassembly comes from `tools/re/gpch.py dis 104`.
+
+### What the engine does with s0.w (confirmed-static, GPCH 104 = `GLOBAL_Tyre_LOD1` pass 0)
+
+Vertex shader (`Vehicles_Functions.hlsl` line 631): `o2.w = c106.y x v0.w`, the position's w
+(int16) scaled as every other vehicle program does (`/ 4096`, forza-lamps-blur-re.md 2.1). Pixel
+shader (`PixelShader.hlsl`), with `ao` = that value (`v1.w`):
+
+```text
+#line 86   mad r0.w, lightmap.x, 0.4, 0.6            // ambientlightamount
+#line 121  mul r0.y, r0.w, v1.w                      // ambientlightamount x ao
+#line 461  dp3 r0.z, N, -c9                          // fAmbNdotL, c9 = g_LightAmbVariationDirection
+#line 465  mad r2.xyz, r0.z, c10, c11                // vec3AmbientLight = Lower x fAmbNdotL + Upper
+#line 469  mul r2.xyz, r0.y, r2                      // x ambientlightamount x ao
+#line 126  add r0.y, -1, v1.w ; mad r0.y, c8.x, r0.y, 1 ; mul r0.x, r0.x, r0.y
+                                                     // direct x (1 + g_vDirectionalOcclusionAmount (ao - 1))
+```
+
+So s0.w is a plain occlusion multiplier on the ambient (and, by `g_vDirectionalOcclusionAmount`,
+on the sun). The engine applies the facing-dependent part itself, with the runtime normal. Nothing
+rescales the baked value or says what an open vertex holds. **The engine's lighting doesn't
+define an open level.** It comes from Reflections' bake, so the question is what that bake does.
+
+### Vanilla's body bake: the share of the hemisphere that sees the sky (confirmed-static, 140 vehicles)
+
+`sky_bake.py body`: for each four-wheeled vanilla vehicle's clean exterior entry (wheel parts
+and the blur disc left out), the 90th percentile of s0.w per 0.1 bin of the normal's n_y,
+then the median over the vehicles:
+
+| n_y | (1 + n_y) / 2 | body p90 |
+| --- | --- | --- |
+| +0.95 | 0.975 | 0.986 |
+| +0.55 | 0.775 | 0.789 |
+| +0.15 | 0.575 | 0.589 |
+| -0.05 | 0.475 | 0.496 |
+| -0.25 | 0.375 | 0.397 |
+| -0.55 | 0.225 | 0.251 |
+| -0.95 | 0.025 | 0.130 |
+
+From n_y = -0.6 up, the envelope is (1 + n_y) / 2 to 0.01..0.02. That is about what the bin's
+upper half adds: p90 takes the bin's top normals. (1 + n_y) / 2 is exactly the share of a
+cosine-weighted hemisphere about the normal that lies above the horizon. So Reflections baked
+**sky visibility**: the share of the cosine-weighted hemisphere that reaches the sky, the
+ground below the horizon counting as blocked, at full scale 1 (the body's maximum s0.w is 1.000 on at least 95% of the
+vehicles). Below n_y = -0.6 the envelope stays near 0.13..0.25, not 0. That part isn't
+explained (ground bounce, or bake normals other than the drawn ones). It doesn't touch wheels.
+
+The table was first measured with the top bin half-open, so normals with n_y = 1 exactly (flat
+roofs) were left out of the +0.95 row. Re-measured on 2026-11-13 with that bin closed at +1 (and
+the tyre-material body pieces below counted as body): every row is unchanged, +0.95 included
+(p90 0.986, p97 0.996, p99 0.998).
+
+The ports' bodies don't follow this rule: `vertex_sky` writes Forza AO x (0.25 + 0.55 (1 + n_y) / 2),
+so an open side panel gets 0.525 x AO and a roof 0.8 x AO, against vanilla's 0.5 and 1.0. The
+floor and range were set on the Desanne (`vertices.py`). The body rule would be Forza AO x (1 + n_y) / 2
+(#597; it isn't #525's).
+
+### Forza's AO byte against the body bake (2026-11-12, issue #597; measured on 3 cars, roster pending CPU)
+
+Does Forza AO x (1 + n_y) / 2 give vanilla's bake? That needs to know what Forza's AO byte
+(`carbin.Vertex.extra[0]`, `forza-materials.md`) holds. If it already counts the ground below the
+horizon, (1 + n_y) / 2 counts it a second time.
+
+**Measured.** For each vertex of a car's exterior body carbin (both vertex pools of every section, pools
+that pass `vertices._pool_has_ao`), the byte / `FORZA_AO_FULL` (105) per 0.1 bin of the normal's
+n_y. No build, only the cached carbins:
+
+| n_y | (1 + n_y) / 2 | FER_F151_11 (FH1) p50 / p90 | MER_S65AMG_12 (FH1) p50 / p90 | NIS_370Z_10 (FM4) p50 / p90 |
+| --- | --- | --- | --- | --- |
+| +0.95 | 0.975 | 0.93 / 1.01 | 0.97 / 1.00 | 0.98 / 1.00 |
+| +0.55 | 0.775 | 1.00 / 1.01 | 0.98 / 1.00 | 1.00 / 1.01 |
+| +0.15 | 0.575 | 0.96 / 1.01 | 0.96 / 1.00 | 0.97 / 1.00 |
+| -0.05 | 0.475 | 0.83 / 0.99 | 0.91 / 0.98 | 0.92 / 0.99 |
+| -0.25 | 0.375 | 0.80 / 0.95 | 0.85 / 0.97 | 0.83 / 0.97 |
+| -0.55 | 0.225 | 0.66 / 0.91 | 0.71 / 0.95 | 0.81 / 0.99 |
+| -0.95 | 0.025 | 0.50 / 0.91 | 0.64 / 0.97 | 0.51 / 0.97 |
+
+Correlation of the byte with n_y over the body: 0.36, 0.33, 0.43 (`forza-materials.md`'s 0.4..0.9 is
+per section). That comes from the median, not the envelope.
+
+**What follows.**
+
+- **The byte has no ground term.** An open vertex holds ~1 whatever way it faces: p90 is 0.91..0.97
+  facing straight down and 1.0 facing up, where vanilla's envelope has 0.13 and 0.99. So the byte
+  is occlusion over the hemisphere about the normal, by the car only. (1 + n_y) / 2 doesn't
+  count the ground twice, and an open port vertex under AO x (1 + n_y) / 2 lands on vanilla's
+  envelope from n_y -0.6 up by construction. The median falls towards n_y = -1 because undersides
+  are occluded by the car (sills, floor, wheel wells), not by the ground.
+- **The occluded vertices aren't derived.** Vanilla's bake is one integral, sky visibility =
+  share of the cosine-weighted hemisphere that is both unblocked and above the horizon. AO x
+  (1 + n_y) / 2 is the product of two such shares. It equals the integral only where the car's
+  occluders block as much of the hemisphere above the horizon as below it. Under a sill or a
+  bumper lip, most of the car lies on one side of the horizon, so the product is off there. Two
+  ways to settle it:
+  (a) on vanilla's own geometry, compute the hemisphere occlusion without the ground and the full
+  sky visibility (rays marched through the vehicle's triangles, like `wheel_sky`), and see which
+  one vanilla's s0.w follows below the envelope, i.e. whether the separable product is what
+  Reflections' bake gives;
+  (b) march the port's own sky visibility (body triangles plus the ground plane) instead of
+  using Forza's byte at all.
+  Both are roster surveys (CPU).
+- **Vanilla's floor below n_y -0.6 is still unexplained.** It is 0.13..0.25 there, and AO x
+  (1 + n_y) / 2 gives 0.01..0.2. Until its cause is known (ground bounce in the bake, or bake
+  normals other than the drawn ones; `sky_bake.py body` can split it by part and by height), a
+  rule with no floor would knowingly differ from vanilla on every underside.
+- `DEFAULT_AO` 0.8 (pools whose byte is a constant, FM4 glass) has no source either. Under the
+  derived rule it would be the open level, 1, unless the occlusion of those panes is marched.
+
+So the code keeps the fit, marked `TODO(fit, #597)` in `vertices.py`, until (a) or (b) and the floor
+are settled and a `render_compare` of every port plus an in-game shot next to a vanilla car
+(roof and side panels in the same light) check the prediction: roofs +25% (0.80 -> 1.0 x AO),
+side panels -5% (0.525 -> 0.5 x AO), undersides 0.25 -> ~0.02 x AO.
+
+### Vanilla's wheel bake: the same shape, a scale per vehicle (confirmed-static, 140 vehicles)
+
+- **No up/down term.** The tread holds one value all round the axle. On the Scirocco (274) it is
+  0.389..0.391 in eight 45-degree sectors; on the Corvette (162) 0.468..0.480. The bake doesn't
+  depend on the wheel's angle (the wheel turns).
+- **The shape is the converter's own visibility.** `sky_bake.py wheel` runs
+  `forza2dsf.wheel_sky` on each vanilla wheel part's own vertices and triangles at an open level
+  of 1. That is the wheel's own triangles as occluders with the inboard half-space closed, which
+  for an open face is (1 + n_x) / 2. Vanilla's s0.w correlates with it at a median r = 0.87
+  (IQR 0.79..0.92; rays past the tyre's radius counting 1; 0.84, IQR 0.78..0.89, counting 0).
+  By host: the 107 with one wheel part 0.88 (IQR 0.80..0.92), the 33 with a front and a rear
+  part 0.84 (0.76..0.89).
+  Measured 2026-11-13 (`out/re/sky_wheel.tsv` from `sky_bake.py wheel`). It differs from the
+  first measurement (r 0.83, IQR 0.61..0.91) in two ways. First, that one joined all of a
+  vehicle's wheel parts into one occluder set. Each part is one wheel model in its own frame
+  with the hub at the origin, so on the 33 two-part hosts the front and rear models overlapped
+  and occluded each other; each part is now marched alone (PR #598's review). Second, that one
+  also took every tyre-material submodel as wheel. 8 parts on 4 hosts (119, 208, 215, 217) hold
+  one outside the wheel parts. Each of those parts is a whole body in the car's frame (1.8 to
+  2.0 m wide, 3.7 to 4.6 m long), and the tyre piece in it is body geometry: a spare wheel on
+  208's tailgate (z -1.95..-1.73 m), a rubber strip across 119. They now count as body. The first
+  per-vehicle table wasn't kept, so the change can't be split between the two fixes.
+- **The scale is the vehicle's.** The least-squares scale k (vanilla s0.w / visibility, rays past
+  the tyre counting 1) is 0.46 / 0.55 / 0.64 / 0.75 / 0.85 (p5 / p25 / median / p75 / p95; first
+  measured 0.45 / 0.55 / 0.64 / 0.77 / 0.90). The vanilla 370Z (227) has 0.46, the R8 (139) 0.71,
+  the Scirocco (274) 0.68, the GT-R (228) 0.76. The per-vehicle maximum of a wheel's s0.w runs
+  0.59..0.98.
+
+So `WHEEL_SKY_OPEN` 0.64 is this per-vehicle scale's fleet median. Reflections set it per asset,
+so vanilla defines no one wheel level that a port could take. That rules out a "vanilla's
+level" as a derivation: any single value from that spread is a fit.
+
+### The derivation: the body's rule on a part that turns (derived)
+
+Vanilla gives one rule that holds for every vehicle, the body's: the share of the cosine-weighted
+hemisphere that reaches the sky. A wheel's bake can't follow the wheel's angle (vanilla's
+doesn't), so the rule's value for a wheel vertex is its mean over the wheel's turn. Take a
+wheel-frame direction w = (w_x, w_y, w_z) and the wheel turned by phi about its axle (x). The
+world up component is w_y cos phi - w_z sin phi. It is above the horizon for exactly half of
+the turn, whatever w is (except w on the axle, a null set). Hence:
+
+    s0.w = 1/2 x (cosine-weighted share of the hemisphere not blocked by the wheel or the car)
+
+- **Open level: 0.5**, the same for every facing. An open outward face gets 0.5, and so does the
+  open side panel next to it under the body's rule ((1 + 0) / 2). That is the shared rule #525
+  asks for. 0.5 sits within vanilla's spread of k (p5 0.45, p25 0.55), and the vanilla 370Z's
+  own wheel is at 0.46.
+- **Inboard rays: 0**, blocked by the car, as `wheel_sky` already does. Vanilla's shape agrees
+  (r 0.83 with the inboard half closed).
+- **Rays leaving past the tyre's radius (`WHEEL_SKY_SIDE`):** with the ground already in the
+  1/2, these count as open only for the turn angles where they leave the wheel well. Above the
+  horizon they reach the fender liner, unless they go out through the arch opening's front or
+  rear edge; below it they reach the road. So the value isn't a constant. It is the share of the
+  upper half-turn in which such a ray clears the port's own body round that wheel, and it is
+  0 when the arch covers the whole top half. Taking 0 for all cars is a lower bound, not the
+  rule: the 370Z's tread would go from 0.15 to 0.00, black. Vanilla doesn't pin it either. Its
+  tread runs 0.10..0.90 on the 21 vehicles with a clean tread ring, which is the per-vehicle
+  scale again.
+
+### Prediction (current code against the derived open level)
+
+`wheel_sky` with (OPEN, SIDE) = (0.64, 0.5) against (0.5, 0) on the cached Forza wheel
+(`out/cache`, LOD 1, Data_Car size not applied). These are calls of the one function, with no
+build. The derived SIDE column uses the lower bound above, so only the outward and barrel rows
+are the derivation's:
+
+| Car | Faces | Current median (p90) | Derived median (p90) |
+| --- | --- | --- | --- |
+| PEU_205T16_84 | outward (n_x > 0.9), 732 vertices | 0.613 (0.640) | 0.479 (0.500) |
+| PEU_205T16_84 | barrel (faces the axle) | 0.053 (0.293) | 0.042 (0.229) |
+| NIS_370Z_10 | outward, 707 | 0.613 (0.640) | 0.479 (0.500) |
+| NIS_370Z_10 | tread, 31 | 0.147 (0.160) | 0.000 (lower bound; needs the arch) |
+| AUD_R8V10_10 | outward, 849 | 0.613 (0.640) | 0.479 (0.500) |
+| any | inward (back of the disc) | 0.000 | 0.000 |
+
+Where SIDE doesn't enter, the open level scales every value by 0.5 / 0.64 = 0.78: the wheel's
+ambient drops by 22%. On vanilla's scale, the derived 0.5 matches the vanilla 370Z (0.46) and is
+darker than the Scirocco (0.69), R8 (0.71) and GT-R (0.76).
+
+### What a code change looks like (not made here)
+
+- `WHEEL_SKY_OPEN = 0.5`, with its source being the body bake's rule averaged over the wheel's
+  turn (this section).
+- `WHEEL_SKY_SIDE` replaced by a per-wheel escape share. For rays leaving past the tyre's radius,
+  march them, at each turn angle above the horizon, into the port's body triangles near the hub
+  (`wheel_clearance.near_points` has them at that point of the conversion), and count the share
+  that leaves the wheel well. Until that exists, 0.5 stays marked `TODO(fit, #525)`: replacing it
+  with 0 is the lower bound and makes treads black.
+- Checks it needs: a `render_compare` of the affected cars (every port), and in game
+  `-Views wheel,wheels` next to a vanilla car in the same shot.
+
+### Ruled out
+
+- **An open level from the engine:** the shaders multiply s0.w as it is (above).
+- **A vanilla wheel level:** it is a per-asset scale (0.45..0.90); its median is today's fit.
+- **(1 + n_y) / 2 at the wheel's rest angle:** vanilla's wheel bake has no angle term (the tread
+  is uniform round the axle), and a baked term turns with the wheel.
+
 ## Fitted-rule audit (2026-11-05)
 
 Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
@@ -1446,7 +1661,7 @@ Roster counts are offline surveys of all 573 cars of `tools/batches/all.txt` fro
 | --- | --- | --- | --- | --- |
 | Blur disc texels (`wheel_blur_section` UV0 into Forza's `wheel2.xds` via `blur_picture_map`; `dsf_materials.wheel_blur_texels`: rim PaintScale, backdrop 60, gloss 0.44; the tint the picture's mean) | | fitted | the derived rule is written (forza-lamps-blur-re.md 2.4: a radial ramp of the converted rim's rotational mean, the tint its chroma); the texels are made in `dsf_materials`, another worker's area | #407, #419 |
 | `WHEEL_BLUR_SKY` | 0.9 | fitted | vanilla discs' 0.9..1.0, after 0.56 looked dark on the 370Z. 2.4 gives each ring the rim's mean AO, which holds only with 2.4's texels | #407 |
-| `WHEEL_SKY_OPEN`, `WHEEL_SKY_SIDE` | 0.64, 0.5 | fitted | vanilla's outward-face median of medians; a side share that puts the tread near vanilla's 0.29. The occlusion itself (the ray march) is derived | #525 |
+| `WHEEL_SKY_OPEN`, `WHEEL_SKY_SIDE` | 0.64, 0.5 | fitted | vanilla's outward-face median of medians; a side share that puts the tread near vanilla's 0.29. The occlusion itself (the ray march) is derived. Since 2026-11-12 the open level has a derivation (0.5, the body bake's sky visibility averaged over the wheel's turn); the side share needs a march into the port's arch ("Wheel sky term") | #525 |
 | `ROTOR_RING` | 0.6 of the rotor's radius | fitted | triangle centroids by r / outer have no gap there (0.5 to 0.55: 125k, 0.55 to 0.6: 160k, 0.6 to 0.65: 128k triangles over the roster) | #524 |
 | Rotor swatches (`WHEEL_UV[ROTOR_DISC]`, `[ROTOR_HUB]`) | mid grey (106, gloss 58), the inner-rim dark | fitted | Forza's `rotor0..4.xds` aren't read; which one a rotor samples isn't traced | #524 |
 | `plain_rotor`'s hat radius | 0.85 x the ring's inner radius | unknown | | #524 |

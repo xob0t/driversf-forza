@@ -51,6 +51,44 @@ def test_display_patch_maps_the_scene_onto_the_display():
     assert abs(outside[0] - 0.225) < 1e-9
 
 
+def test_kmh_scene_needles_count_mph():
+    # FER_458Spider_12's km/h scene (#593): its speed needle turns 235.9 deg over
+    # SPEED_MAX 370 km/h. DSF's gauge 2 counts degrees per 80 mph and p605 clamps in mph
+    # (cockpit.geometry.GAUGE_UNITS, SPEED_DIAL_PARAM), so the needle must reach 100 on
+    # the face (100 km/h) at 62.1 mph: 0.6376 deg/km/h is 1.0261 deg/mph, sweep 82
+    # (51 before the fix), and the dial ends at 370 / 1.609344 = 229.9 mph.
+    from dsfforza.convert.cockpit import displays
+    from dsfforza.convert.cockpit.geometry import GAUGE_IDS, GAUGE_UNITS
+
+    per_kmh, top_kmh = 235.9 / 370.0, 370.0
+    per_mph, top_mph = dd.gauge_scale("speed", per_kmh, top_kmh, "kmh")
+    assert abs(per_mph - per_kmh * 1.609344) < 1e-12 and abs(top_mph - 370.0 / 1.609344) < 1e-12
+    assert abs(per_mph * top_mph - 235.9) < 1e-9  # the sweep over the face is the scene's
+    assert dd.gauge_scale("speed", per_kmh, top_kmh, "mph") == (per_kmh, top_kmh)
+    assert dd.gauge_scale("tach", 0.03, 9000.0, "kmh") == (0.03, 9000.0)  # rpm either way
+    p = _patch()
+    needle = {
+        "family": "speed",
+        "patch": p,
+        "pivot": (500.0, 400.0),
+        "pivot3d": p.point(500, 400),
+        "corners": [p.point(x, y, dd.NEEDLE_LIFT) for x, y in ((500, 398), (700, 398), (700, 402), (500, 402))],
+        "colour": (255, 40, 0, 255),
+        "per_unit": per_mph,
+        "rest_deg": 0.0,
+        "reverse": False,
+        "top": top_mph,
+    }
+    plan = dd.DigitalPlan(4, 4, bytearray(64), needles=[needle])
+    [(gauge, cal)] = displays.dash_needles(plan, 2)
+    assert cal.gauge_id == GAUGE_IDS["speed"] and cal.sweep == round(per_kmh * 1.609344 * GAUGE_UNITS["speed"]) == 82
+    assert cal.dial_max == 229.9
+    assert abs(abs(gauge.sweep_deg) - 235.9) < 1e-9
+    # The engine's needle at 100 km/h (62.1 mph) is where the scene's needle is at 100 km/h.
+    engine_deg = cal.sweep * (100 / 1.609344) / GAUGE_UNITS["speed"]
+    assert abs(engine_deg - per_kmh * 100) < 0.2  # within the gauge table's whole degrees
+
+
 def test_preview_draws_the_cells_the_engine_picks():
     # One digit quad over cell 0 of a strip: the engine's offset shows cell digit + 1.
     W, H = 64, 512

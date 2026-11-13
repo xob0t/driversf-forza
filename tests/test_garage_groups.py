@@ -12,17 +12,17 @@ from dsfforza.build import port_batch
 
 def test_garage_group_asi_one_group():
     counts = {"ID:1": 45}
-    assert port_batch.garage_group("ID:1", "ID:1", counts, port_batch.ASI_GROUP_CAP, 119) == "ID:1"
+    assert port_batch.garage_group("ID:1", counts, port_batch.ASI_GROUP_CAP, 119) == "ID:1"
 
 
 def test_garage_group_vanilla_cap():
     counts = {"ID:1": 19}
-    assert port_batch.garage_group("ID:1", "ID:1", counts, 19, 119) == "ADDED CARS"
+    assert port_batch.garage_group("ID:1", counts, 19, 119) == "ADDED CARS"
     counts["ADDED CARS"] = 19
-    assert port_batch.garage_group("ID:1", "ID:1", counts, 19, 119) == "ADDED CARS 2"
+    assert port_batch.garage_group("ID:1", counts, 19, 119) == "ADDED CARS 2"
     # no group left: not listed
     full = {f"M{i}": 1 for i in range(118)} | {"ID:1": 19, "ADDED CARS": 19}
-    assert port_batch.garage_group("ID:1", "ID:1", full, 19, 119) is None
+    assert port_batch.garage_group("ID:1", full, 19, 119) is None
 
 
 if __name__ == "__main__":

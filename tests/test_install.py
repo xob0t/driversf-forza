@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from dsfforza.build import forza_roster, install, package, thirdparty
+from dsfforza.build import forza_roster, install, install_display, package, port_batch, thirdparty
 
 
 def _tmp():
@@ -36,14 +36,14 @@ def _touch(path: Path, data: bytes = b"x") -> Path:
 
 def test_default_jobs_follow_the_cpus_ram_and_gentle():
     gb = 1 << 30
-    assert install.default_jobs(16, False, 32 * gb) == 16  # a worker per logical CPU
-    assert install.default_jobs(32, False, 32 * gb) == 17  # 32 GB at 1.9 GB each
-    assert install.default_jobs(6, False, 32 * gb) == 6
-    assert install.default_jobs(16, False, 8 * gb) == 4
-    assert install.default_jobs(1, False, 32 * gb) == 1
-    assert install.default_jobs(None, False, 32 * gb) == 1
-    assert install.default_jobs(16, False, 1 * gb) == 1
-    assert install.default_jobs(16, True, 32 * gb) == 2
+    assert install.default_jobs(16, gentle_on=False, ram=32 * gb) == 16  # a worker per logical CPU
+    assert install.default_jobs(32, gentle_on=False, ram=32 * gb) == 17  # 32 GB at 1.9 GB each
+    assert install.default_jobs(6, gentle_on=False, ram=32 * gb) == 6
+    assert install.default_jobs(16, gentle_on=False, ram=8 * gb) == 4
+    assert install.default_jobs(1, gentle_on=False, ram=32 * gb) == 1
+    assert install.default_jobs(None, gentle_on=False, ram=32 * gb) == 1
+    assert install.default_jobs(16, gentle_on=False, ram=1 * gb) == 1
+    assert install.default_jobs(16, gentle_on=True, ram=32 * gb) == 2
 
 
 def test_lint_and_render_processes_follow_the_free_ram():
@@ -249,7 +249,7 @@ def _run(args, running=False, free=1 << 50, vc=True, loader="winmm.dll"):
     probes = install.Probes(
         running=lambda game: running, vc_runtime=lambda: vc, free=lambda path: free, loader=lambda game: loader
     )
-    return install.Run(args, install.PlainReporter(io.StringIO()), probes)
+    return install.Run(args, install_display.PlainReporter(io.StringIO()), probes)
 
 
 def _fake_game(root: Path) -> Path:
@@ -449,7 +449,7 @@ class Clock:
 
 def test_tracker_counts_cars_rate_eta_and_failures():
     clock = Clock()
-    t = install.Tracker(clock=clock)
+    t = install_display.Tracker(clock=clock)
     t.handle("plan", cars=["A", "B", "C", "D"], skipped=[{"media": "Z", "error": "not a car on the discs"}])
     assert t.total == 4 and t.failures[0].cause == "not selected"
     t.seconds_hint = 60.0
@@ -503,7 +503,7 @@ def test_summary_notes_a_verify_mismatch():
 
 def test_plain_display_is_ascii_and_moves_build_to_pack():
     stream = io.StringIO()
-    r = install.PlainReporter(stream)
+    r = install_display.PlainReporter(stream)
     r.stage("build", "running")
     r.stage("build", "running", "reusing cars from out\\build")
     r.event("plan", cars=["A"], skipped=[])
@@ -535,7 +535,7 @@ def test_summary_lines_name_failures_logs_and_uninstall():
         log=Path("out/logs/x.log"),
         installed=True,
     )
-    text = "\n".join(install.summary_lines(s))
+    text = "\n".join(install_display.summary_lines(s))
     assert "1:02:05" in text and "3 in the archive (1 built, 2 reused), 1 failed" in text
     assert "X_1: extraction" in text and "out/build/work/X_1.log" in text.replace("\\", "/")
     assert "3.00 GiB" in text and "dsff install --uninstall" in text and "save-backups" in text
@@ -664,3 +664,27 @@ def test_package_takes_the_player_files_and_refuses_game_data():
         raise AssertionError("missing file not noticed")
     except SystemExit as error:
         assert "uv.lock" in str(error)
+
+
+def test_port_batch_argv():
+    with _tmp() as tmp:
+        root = Path(tmp)
+        args = _args("--no-fm4-dlc", "--car", "AAA_X_01@fm4", "--verify-pack", out=root / "build")
+        run = _run(args)
+        run.isos, run.vanilla_archive = [root / "a.iso"], root / "v.sp"
+        argv = run.port_batch_argv(root / "build.new", [root / "old"])
+        assert argv == [
+            *("build", "--out", str(root / "build.new"), "--dsf", str(root / "v.sp"), "--gui", "--packages"),
+            *("--id-policy", "asi", "--root-limit", "3003", "--wide-glyphs", "--no-fm4-dlc"),
+            *("--car", "AAA_X_01@fm4", "--iso", str(root / "a.iso"), "--reuse", str(root / "old")),
+            *("--jobs", "1", "--verify-reuse", "2", "--verify-mismatch", "rebuild", "--verify-pack"),
+        ]
+        # The default list unless --car names the cars; nothing reused: no reuse check.
+        listed = _run(_args("--no-fm4-dlc", out=root / "build"))
+        listed.isos, listed.vanilla_archive = [], root / "v.sp"
+        argv = listed.port_batch_argv(root / "build.new", [])
+        assert argv[argv.index("--list") + 1] == str(install.DEFAULT_LIST)
+        assert argv[argv.index("--verify-reuse") + 1] == "0"
+        assert "--verify-pack" not in argv
+        # port_batch's own parser takes it
+        port_batch.build_parser().parse_args(argv)

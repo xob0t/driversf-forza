@@ -333,6 +333,8 @@ def convert(
             uid_seed=seed,
             wheels=wheels,
             blur_materials=opts.blur_materials,
+            # the fit each axle's rotor is drawn with (wheel_sections), for the blur ramp (#596)
+            rotor_fits={"front": (*fits["front"], *dims.tyre_centre), "rear": (*rear_fit, *dims.tyre_centre)},
         )
         layout.update(tex_full.layout)
         layout.update(tex_ext.layout)
