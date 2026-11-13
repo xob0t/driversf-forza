@@ -739,8 +739,10 @@ fixture alone does not prove it explains every #584/#586 gameplay failure.
 
 **Model audio.** Engine+0x280's provider has vtable 0x00DE3824 and size
 0x2F0, made by 0x00557000 / initialized by 0x00556EE0. Its map header is
-`+4`, nodes `+0x10`, sentinel `+0x2E0`, common/default data pointer
-`+0x2EC`. It has the same 45-node map layout, but registration
+`+4`, nodes `+0x10`, sentinel `+0x2E0`. The common/default data pointer at
+`+0x2EC` is the sentinel's value field (sentinel + 12): a 46th fresh node
+would overwrite it, which is why vanilla needs the gate. It has the same
+45-node map layout, but registration
 0x00556E30 checks `active >= 45` and silently skips the store. Lookup
 0x00556E90 returns the keyed profile or null; 0x00556E50 removes it.
 Audio setup 0x00553860 obtains this profile by the vehicle model key at
@@ -752,7 +754,7 @@ statically; a specific audible failure needs runtime evidence.
 three insert call sites and model-audio registration. ED/EF are recognized
 by the provider vtable and class tag, model audio by its own vtable. Other
 users of the generic insert stay native. Native insertion, signed key
-ordering, lookup, removal, sentinel and common/default pointers remain.
+ordering, lookup, removal and the sentinel (with its common/default value) remain.
 The audio register follows the original operator[]/profile-store sequence,
 with the count gate removed only for its verified provider.
 

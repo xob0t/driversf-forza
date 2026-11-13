@@ -12,15 +12,21 @@
 
 namespace {
 
-// 0086C340 / 0086B4A0: map+0x0C..+0x2DC holds 45 sixteen-byte nodes.
+// 0086C340 / 0086B4A0: map+0x0C..+0x2DC holds 45 sixteen-byte nodes (nodes from
+// provider+0x248, sentinel at provider+0x518: (0x518 - 0x248) / 16 = 45).
 // 00556EE0: the audio provider has the same map at object+4.
 constexpr uint32_t kNodeBytes = 16;
 constexpr uint32_t kInlineNodes = 45;
 constexpr uint32_t kHead = 12 + kInlineNodes * kNodeBytes;
-constexpr uint32_t kProviderVtable = 0x00E3966C;
-constexpr uint32_t kAudioVtable = 0x00DE3824;
-using Insert = int**(__thiscall*)(int*, int**, int*, const int*);
-using Index = int*(__thiscall*)(int*, const int*);
+constexpr uint32_t kProviderVtable = 0x00E3966C;  // set by both ED/EF constructors
+constexpr uint32_t kAudioVtable = 0x00DE3824;     // Engine+0x280's model-audio provider (factory 00557000)
+// Peaks are logged from 40 nodes: below vanilla's own peak of 43 at 35 slots
+// (research/traffic.md), so slots_trace at 35 shows them. A logging choice, not a limit.
+constexpr uint32_t kLogFrom = 40;
+// Log label for the model-audio map; the audio provider has no class tag of its own.
+constexpr uint32_t kAudioLabel = 0xA0;
+using Insert = int**(__thiscall*)(int*, int**, int*, const int*);  // 007D7270, the map template's insert
+using Index = int*(__thiscall*)(int*, const int*);                  // 00556F60, operator[]
 
 struct Page {
     Page* next;
@@ -50,7 +56,7 @@ bool readable_map(const void* p, size_t size)
 uint32_t map_kind(int* pool)
 {
     uint8_t* p = (uint8_t*)pool;
-    if (readable_map(p - 4, 4) && *(uint32_t*)(p - 4) == kAudioVtable) return 0xA0;
+    if (readable_map(p - 4, 4) && *(uint32_t*)(p - 4) == kAudioVtable) return kAudioLabel;
     uint8_t* owner = p - 0x23C;
     if (readable_map(owner, 0x238) && *(uint32_t*)owner == kProviderVtable) {
         uint32_t kind = *(uint32_t*)(owner + 0x234);
@@ -138,7 +144,7 @@ int** __fastcall insert(int* pool, void*, int** out, int* pos, const int* kv)
     bool peak = used > m->peak;
     if (peak) m->peak = used;
     ReleaseSRWLockExclusive(&g_lock);
-    if (peak && used >= kInlineNodes)
+    if (peak && used >= kLogFrom)
         dsf_log("slots: provider map %p class %#x holds %u nodes (peak; %u inline)", pool, kind, used, kInlineNodes);
     return result;
 }
@@ -155,66 +161,111 @@ void __fastcall audio_register(uint8_t* self, void*, int profile, int key)
     *value = profile;
 }
 
+// The three of 007D7270's 60 direct callers that insert into these maps (research/traffic.md,
+// "Vehicle provider maps and model audio"): the EF registrations at 0086B5C9 and 0086B3DE, and
+// operator[] 00556F60's insert at 00556F9B (the ED map and model audio). kCalls are their
+// original `call 007D7270` encodings.
 constexpr uint32_t kSites[] = {0x0086B5C9, 0x0086B3DE, 0x00556F9B};
 const uint8_t kCalls[][5] = {
     {0xE8, 0xA2, 0xBC, 0xF6, 0xFF}, {0xE8, 0x8D, 0xBE, 0xF6, 0xFF}, {0xE8, 0xD0, 0x02, 0x28, 0x00}};
+// 00556E30, model-audio registration as shipped: cmp dword [ecx+0Ch],2Dh (the 45-entry gate);
+// jae ret; lea eax,[esp+8]; push eax; add ecx,4; call 00556F60; mov ecx,[esp+4]; mov [eax],ecx; ret 8.
 const uint8_t kRegister[] = {0x83, 0x79, 0x0C, 0x2D, 0x73, 0x13, 0x8D, 0x44, 0x24, 0x08, 0x50, 0x83,
     0xC1, 0x04, 0xE8, 0x1D, 0x01, 0x00, 0x00, 0x8B, 0x4C, 0x24, 0x04, 0x89, 0x08, 0xC2, 0x08, 0x00};
+// Layout checks in the ED (0086C340) and EF (0086B4A0) constructors: lea ecx,[eax+518h] (the
+// sentinel), lea ecx,[eax+248h] (the first node), mov dword [eax+234h],0EDh / 0EFh (the class tag).
 const uint8_t kCtor[] = {0x8D, 0x88, 0x18, 0x05, 0x00, 0x00};
 const uint8_t kNodeStart[] = {0x8D, 0x88, 0x48, 0x02, 0x00, 0x00};
 const uint8_t kEdKind[] = {0xC7, 0x80, 0x34, 0x02, 0x00, 0x00, 0xED, 0x00, 0x00, 0x00};
 const uint8_t kEfKind[] = {0xC7, 0x80, 0x34, 0x02, 0x00, 0x00, 0xEF, 0x00, 0x00, 0x00};
+// Model-audio layout: lookup 00556E90 takes its sentinel at +0x2E0 (add edi,2E0h at 00556EBB), and
+// factory 00557000 allocates 0x2F0 bytes (push 2F0h).
 const uint8_t kAudioLookup[] = {0x81, 0xC7, 0xE0, 0x02, 0x00, 0x00};
 const uint8_t kAudioFactory[] = {0x68, 0xF0, 0x02, 0x00, 0x00};
+// Vtable 00DE3824's slot 1 (at 00DE3828) is the registration 00556E30.
+constexpr uint32_t kAudioRegisterSlot = 0x00DE3828;
+bool g_audio_installed = false;
+
+// What isn't the vanilla code, or null when every site and layout matches.
+const char* preflight_mismatch()
+{
+    for (int i = 0; i < 3; i++)
+        if (!check_bytes(kSites[i], kCalls[i], 5)) return "an insert call site";
+    if (!check_bytes(0x0086B4E4, kCtor, sizeof kCtor) || !check_bytes(0x0086C384, kCtor, sizeof kCtor) ||
+        !check_bytes(0x0086B4D8, kNodeStart, sizeof kNodeStart) ||
+        !check_bytes(0x0086C378, kNodeStart, sizeof kNodeStart) || !check_bytes(0x0086B4BE, kEfKind, sizeof kEfKind) ||
+        !check_bytes(0x0086C35E, kEdKind, sizeof kEdKind))
+        return "the ED/EF constructors' layout";
+    if (!check_bytes(0x00556E30, kRegister, sizeof kRegister)) return "the model-audio registration 00556E30";
+    if (!check_bytes(0x00556EBB, kAudioLookup, sizeof kAudioLookup) ||
+        !check_bytes(0x00557000, kAudioFactory, sizeof kAudioFactory))
+        return "the model-audio provider's layout";
+    if (*(uint32_t*)kAudioRegisterSlot != 0x00556E30) return "vtable 00DE3824's registration slot";
+    return nullptr;
+}
+
+bool preflight()
+{
+    const char* what = preflight_mismatch();
+    if (what) dsf_log("slots: %s is not the vanilla code; the ID maps keep their 45 nodes", what);
+    return !what;
+}
 
 void restore_sites()
 {
     for (int i = 0; i < 3; i++) patch_bytes(kSites[i], kCalls[i], 5);
     patch_bytes(0x00556E30, kRegister, 6);
-    g_installed = false;
+    g_installed = g_audio_installed = false;
 }
 
 }  // namespace
 
-bool vehicle_maps_install()
+// The insert hooks, and with `audio` the model-audio registration without its 45-entry gate.
+// slots_trace at 35 slots passes audio=false: it only logs the maps' peaks and keeps vanilla's gate.
+bool vehicle_maps_install(bool audio)
 {
-    if (g_installed) return true;
-    for (int i = 0; i < 3; i++)
-        if (!check_bytes(kSites[i], kCalls[i], 5)) return false;
-    if (!check_bytes(0x0086B4E4, kCtor, sizeof kCtor) || !check_bytes(0x0086C384, kCtor, sizeof kCtor) ||
-        !check_bytes(0x0086B4D8, kNodeStart, sizeof kNodeStart) ||
-        !check_bytes(0x0086C378, kNodeStart, sizeof kNodeStart) ||
-        !check_bytes(0x0086B4BE, kEfKind, sizeof kEfKind) ||
-        !check_bytes(0x0086C35E, kEdKind, sizeof kEdKind) ||
-        !check_bytes(0x00556E30, kRegister, sizeof kRegister) ||
-        !check_bytes(0x00556EBB, kAudioLookup, sizeof kAudioLookup) ||
-        !check_bytes(0x00557000, kAudioFactory, sizeof kAudioFactory) ||
-        *(uint32_t*)0x00DE3828 != 0x00556E30) return false;
-    for (int i = 0; i < 3; i++) {
-        if (!patch_call(kSites[i], (void*)insert, kCalls[i])) {
-            for (int j = 0; j < i; j++) patch_bytes(kSites[j], kCalls[j], 5);
+    if (g_installed && (g_audio_installed || !audio)) return true;
+    if (!g_installed) {
+        if (!preflight()) return false;
+        for (int i = 0; i < 3; i++) {
+            if (!patch_call(kSites[i], (void*)insert, kCalls[i])) {
+                for (int j = 0; j < i; j++) patch_bytes(kSites[j], kCalls[j], 5);
+                dsf_log("slots: patching insert site %08X failed; the ID maps keep their 45 nodes", kSites[i]);
+                return false;
+            }
+        }
+        g_installed = true;
+    }
+    if (audio) {
+        if (!patch_jmp(0x00556E30, (void*)audio_register, 6, kRegister)) {
+            restore_sites();
+            dsf_log("slots: patching 00556E30 failed; the ID maps keep their 45 nodes");
             return false;
         }
+        g_audio_installed = true;
+        dsf_log("slots: ED/EF and model-audio ID maps continue beyond 45 in page storage; native lookup/removal retained");
+    } else {
+        dsf_log("slots_trace: the ID maps' peaks are logged from %u nodes; model audio keeps its 45-entry gate", kLogFrom);
     }
-    if (!patch_jmp(0x00556E30, (void*)audio_register, 6, kRegister)) {
-        for (int i = 0; i < 3; i++) patch_bytes(kSites[i], kCalls[i], 5);
-        return false;
-    }
-    g_installed = true;
-    dsf_log("slots: ED/EF and model-audio ID maps continue beyond 45 in page storage; native lookup/removal retained");
     return true;
+}
+
+// Undo every patch of this file (a later slot patch failed, so the slots stay 35).
+void vehicle_maps_remove()
+{
+    if (g_installed) restore_sites();
 }
 
 int vehicle_maps_selftest()
 {
     int failures = 0;
 #define MAP_CHECK(x) do { if (!(x)) { printf("FAIL vehicle maps:%d %s\n", __LINE__, #x); failures++; } } while (0)
-    const bool installed = g_installed;
+    const bool installed = g_installed, audio_installed = g_audio_installed;
     if (installed) restore_sites();
     const Index index = (Index)0x00556F60;
     using Ctor = void*(__thiscall*)(void*);
-    using Remove = void(__thiscall*)(void*, int);
-    using RemoveKey = int(__thiscall*)(int*, const int*);
+    using Remove = void(__thiscall*)(void*, int);               // 00556E50, model audio's removal by key
+    using RemoveKey = int(__thiscall*)(int*, const int*);       // 00556FB0, the map template's erase
     using Register = void(__thiscall*)(void*, int, int);
     using Lookup = int(__thiscall*)(void*, int);
     uint8_t provider[0x534] = {};
@@ -237,11 +288,28 @@ int vehicle_maps_selftest()
 
     // A late preflight mismatch must leave every earlier site unmodified.
     *(uint8_t*)0x00556EBB ^= 1;
-    MAP_CHECK(!vehicle_maps_install());
+    MAP_CHECK(!vehicle_maps_install(true));
     for (int i = 0; i < 3; i++) MAP_CHECK(bytes_equal(kSites[i], kCalls[i], 5));
     MAP_CHECK(bytes_equal(0x00556E30, kRegister, 6));
     *(uint8_t*)0x00556EBB ^= 1;
-    MAP_CHECK(vehicle_maps_install());
+
+    // slots_trace (audio=false): ED/EF still continue past 45, model audio keeps vanilla's gate.
+    MAP_CHECK(vehicle_maps_install(false) && bytes_equal(0x00556E30, kRegister, 6));
+    {
+        reset(0xEF);
+        for (int key = 0; key < 50; key++) *index(pool, &key) = key;
+        MAP_CHECK(pool[2] == 50 && guard());
+        uint8_t gated[0x300] = {};
+        ((void*(__thiscall*)(void*))0x00556EE0)(gated);
+        for (int key = 0; key < 46; key++) ((void(__thiscall*)(void*, int, int))0x00556E30)(gated, key, key);
+        MAP_CHECK(*(int*)(gated + 12) == 45);
+    }
+    // vehicle_maps_remove() (a later slot patch failed) restores every site, the audio gate too.
+    MAP_CHECK(vehicle_maps_install(true) && !bytes_equal(0x00556E30, kRegister, 6));
+    vehicle_maps_remove();
+    for (int i = 0; i < 3; i++) MAP_CHECK(bytes_equal(kSites[i], kCalls[i], 5));
+    MAP_CHECK(bytes_equal(0x00556E30, kRegister, 6) && !g_installed && !g_audio_installed);
+    MAP_CHECK(vehicle_maps_install(true));
 
     for (uint32_t kind : {0xEDu, 0xEFu}) {
         reset(kind);
@@ -321,7 +389,7 @@ int vehicle_maps_selftest()
     MAP_CHECK(((Lookup)0x00556E90)(audio, 5) == 0 && *(int*)(audio + 12) == 63);
     for (int i = 0; i < 16; i++) MAP_CHECK(audio[0x2F0 + i] == 0xAB);
     ((Ctor)0x00556EE0)(audio);  // another session at the same owner address
-    *(uint32_t*)(audio + 0x2EC) = 0x12345678;  // native common/default profile
+    *(uint32_t*)(audio + 0x2EC) = 0x12345678;  // the sentinel's value field: the common/default profile
     for (int key = 0; key < 64; key++) ((Register)0x00556E30)(audio, key + 200, key);
     MAP_CHECK(*(int*)(audio + 12) == 64 && *(uint32_t*)(audio + 0x2EC) == 0x12345678);
     for (int key = 0; key < 64; key++) MAP_CHECK(((Lookup)0x00556E90)(audio, key) == key + 200);
@@ -342,7 +410,7 @@ int vehicle_maps_selftest()
     for (int key = 0; key < 46; key++) ((Register)0x00556E30)(audio, key, key);
     MAP_CHECK(*(int*)(audio + 12) == 45);
     restore_sites();
-    if (installed) MAP_CHECK(vehicle_maps_install());
+    if (installed) MAP_CHECK(vehicle_maps_install(audio_installed));
     printf("vehicle maps selftest: %d failures\n", failures);
 #undef MAP_CHECK
     return failures;
