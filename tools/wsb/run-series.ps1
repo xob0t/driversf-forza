@@ -102,6 +102,7 @@ $sandbox = Join-Path $PSScriptRoot 'sandbox.ps1'
 $vmScript = Join-Path $PSScriptRoot 'vm.ps1'
 $hostSession = Join-Path $PSScriptRoot 'host-session.ps1'
 $runTest = Join-Path $PSScriptRoot 'guest\run-test.ps1'
+. (Join-Path $PSScriptRoot 'guest\guest-game.ps1')   # the part of the game folder a guest gets
 $hostState = Join-Path $outputHost 'host-session'
 $pauseFlag = Join-Path $repo 'out\wsb-pause'
 if ($OnHost -and $Vm) { throw '-OnHost and -Vm exclude each other' }
@@ -280,14 +281,25 @@ $hostRootFiles = 'dsf_enhanced.asi', 'dsf_enhanced.ini'
 $script:hostRootHashes = $null
 $script:driftSaid = $false
 function Get-HostRootHashes {
-    # SHA-256 of the host game folder's root files, once per series: the guest's C:\Game should
-    # have the same (result.json "gameRoot").
+    # SHA-256 of the host game folder's root files a guest gets (guest\guest-game.ps1), once per
+    # series: the guest's C:\Game should have the same (result.json "gameRoot").
     if ($null -eq $script:hostRootHashes) {
         $script:hostRootHashes = @{}
-        Get-ChildItem -LiteralPath $GamePath -File | Where-Object { $_.Extension -notin '.log', '.dmp' } |
+        Get-ChildItem -LiteralPath $GamePath -File | Where-Object { $_.Extension -notin '.log', '.dmp' -and (Test-GuestGameFile $_.Name) } |
             ForEach-Object { $script:hostRootHashes[$_.Name.ToLower()] = (Get-FileHash -LiteralPath $_.FullName).Hash }
     }
     return $script:hostRootHashes
+}
+function Show-GpuMemory($r) {
+    # -Vm: the guest's GPU memory is the VM's graphics memory ($VmSettings svga.graphicsMemoryKB).
+    # Runs whose GPU use reached it went black for good a few seconds later while the C++ side ran on
+    # (issue #589); say so, as the shots after it show nothing.
+    if (-not $Vm -or -not $r.memory -or -not $r.memory.maxGpuSharedMB) { return }
+    $capMB = [int]$VmSettings['svga.graphicsMemoryKB'] / 1024
+    if ($r.memory.maxGpuSharedMB -ge $capMB - 16) {
+        "  WARNING: the guest's GPU memory reached the VM's $capMB MB (peak $($r.memory.maxGpuSharedMB) MB): frames after it" +
+            " can be black (research/in-game-tests.md, 'Guest GPU memory'); memory.csv has when"
+    }
 }
 function Show-GameFiles($r) {
     # The dsf_enhanced the run used; with -Vm, root files of the guest's C:\Game that differ from
@@ -303,8 +315,8 @@ function Show-GameFiles($r) {
         Where-Object { $_ -notin $hostRootFiles -and $hostHashes[$_] -ne $guest[$_] })
     if ($differ) {
         $script:driftSaid = $true
-        "  WARNING: the guest's C:\Game differs from the host game folder in $($differ -join ', '); refresh it:" +
-            " vm.ps1 Exec -Vm $($vmTarget.Id) -Script C:\Repo\tools\wsb\guest\setup-vm.ps1 -Arguments '-Phase','Game'"
+        "  WARNING: the guest's C:\Game differs from the host game folder in $($differ -join ', '); refresh it" +
+            " (waits for the VM's series): tools\wsb\vm-build.ps1 -Step Provision -Vm $($vmTarget.Id)"
     }
 }
 
@@ -475,7 +487,9 @@ try {
         if ($gate) { Set-Content (Join-Path $runDir 'cpu-gate.txt') $gate }
         $r = Get-Content $result -Raw | ConvertFrom-Json
         "  stage=$($r.stage) crashed=$([bool]$r.crashed) error=$($r.error)"
+        if ($r.unpause) { "  the world was paused after the go; $($r.unpause) Esc (events.json, paused-NN.png)" }
         Show-GameFiles $r
+        Show-GpuMemory $r
         if ((Test-LoadFailure $r) -and -not $queue[$qi].Retry -and ($OnHost -or $Vm)) {
             "  the world didn't load; retrying once"
             $queue.Insert($qi + 1, [pscustomobject]@{ Archive = $archive; Index = $queue[$qi].Index; Retry = $true })

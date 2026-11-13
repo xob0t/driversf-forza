@@ -4,7 +4,9 @@ Runs inside the dsfforza test VM as its user (admin, no UAC), in the desktop ses
 
   Provision  links C:\Repo, C:\Output, C:\Profile to the VMware shared folders, then
              runs Game, Profile and Session (tools\wsb\vm-build.ps1 Provision).
-  Game       C:\Game <- the host's game folder (share "Game", read-only), mirrored, then
+  Game       C:\Game <- the host's game folder (share "Game", read-only): its retail folders
+             and root files only (guest-game.ps1: no graphics API proxies such as DXVK's
+             d3d9.dll, no mods, DLSS 5 helper or dsf_enhanced world map), mirrored, then
              put back to vanilla: files a dsfforza install replaced come from its
              dsfcars-backup, files it created are dropped (run-test.ps1 rebuilds plugins
              and UserLuaScripts anyway). Re-run to pick up changes to the host install.
@@ -22,6 +24,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The Game phase's list of what the guest gets. vm.ps1 Start runs this script alone from C:\dsf for the
+# Session phase, so only Game needs the file beside it (vm-build.ps1 Provision copies it; C:\Repo has it).
+$guestGame = Join-Path $PSScriptRoot 'guest-game.ps1'
+if (Test-Path -LiteralPath $guestGame) { . $guestGame }
+elseif ($Phase -in 'Provision', 'Game') { throw "no $guestGame (the list of what the guest gets) beside this script" }
 $shares = '\\vmware-host\Shared Folders'
 New-Item -ItemType Directory -Force -Path C:\dsf | Out-Null
 $log = [System.Collections.Generic.List[string]]::new()
@@ -115,10 +122,29 @@ function Invoke-Links {
 function Invoke-Game {
     $source = Join-Path $shares 'Game'
     if (-not (Test-Path -LiteralPath (Join-Path $source 'Driver.exe'))) { throw "no Driver.exe in $source" }
-    # dsfforza-backup: the install's backup folder before the rename to dsfcars (install.ps1 -Migrate).
-    & robocopy.exe $source C:\Game /MIR /XD dsfcars-backup dsfforza-backup /XF *.log *.dmp /R:2 /W:2 /NP /NFL /NDL /NJH | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy of the game failed (exit $LASTEXITCODE)" }
-    Say "game mirrored to C:\Game (robocopy exit $LASTEXITCODE)"
+    # Only the retail game's folders and root files (guest-game.ps1): the host folder also holds the
+    # owner's graphics setup (DXVK's d3d9.dll, the DLSS 5 helper), mods and dsf_enhanced's world map.
+    New-Item -ItemType Directory -Force -Path C:\Game | Out-Null
+    $kept = @()
+    foreach ($item in Get-ChildItem -LiteralPath $source -Force) {
+        if ($item.PSIsContainer) {
+            if (-not (Test-GuestGameFolder $item.Name)) { continue }
+            & robocopy.exe $item.FullName (Join-Path C:\Game $item.Name) /MIR /XF *.log *.dmp /R:2 /W:2 /NP /NFL /NDL /NJH | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "robocopy of the game's $($item.Name) failed (exit $LASTEXITCODE)" }
+        }
+        elseif (Test-GuestGameFile $item.Name) {
+            Copy-Item -LiteralPath $item.FullName (Join-Path C:\Game $item.Name) -Force
+        }
+        else { continue }
+        $kept += $item.Name
+    }
+    # What an earlier mirror of the whole folder left: the folders and root files left out now.
+    $dropped = @(Get-ChildItem -LiteralPath C:\Game -Force | Where-Object { $kept -notcontains $_.Name })
+    foreach ($item in $dropped) {
+        if ($item.PSIsContainer) { Remove-Item -LiteralPath $item.FullName -Recurse -Force } else { Remove-Item -LiteralPath $item.FullName -Force }
+    }
+    $skipped = @(Get-ChildItem -LiteralPath $source -Force | Where-Object { $kept -notcontains $_.Name } | ForEach-Object Name)
+    Say "game mirrored to C:\Game: $($kept.Count) entries; left out $($skipped -join ', '); removed $(@($dropped | ForEach-Object Name) -join ', ')"
     $backup = Join-Path $source 'dsfcars-backup'
     if (-not (Test-Path -LiteralPath (Join-Path $backup 'install.json'))) { $backup = Join-Path $source 'dsfforza-backup' }
     $manifest = Join-Path $backup 'install.json'

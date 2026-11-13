@@ -83,7 +83,8 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `run-test.ps1` runs with its defaults: `C:\Repo` (repo, read-only),
   `C:\Output` (`%LOCALAPPDATA%\Temp\dsfforza-wsb`, read-write), `C:\Profile`
   (Documents\Ubisoft\Driver San Francisco, read-only). `C:\Game` is a local
-  copy of the game folder (share `Game`, read-only), put back to vanilla from
+  copy of the game folder's retail part (share `Game`, read-only; "Guest game
+  folder" below: no graphics proxies, mods or world map), put back to vanilla from
   `dsfcars-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install. `dsf_enhanced.asi` and `.ini` don't
@@ -390,6 +391,93 @@ was up.
   the load, and only normal and low (Idle, which starved the VM under host
   builds) have been tried; `high` is untested and would also take CPU from
   the user's desktop.
+
+### Guest game folder (2026-11-13, issue #589)
+
+On 2026-11-08 the guests' `C:\Game` was mirrored again (`setup-vm.ps1 -Phase Game`,
+then a `robocopy /MIR` of the whole host folder). The host folder by then held
+the owner's own setup beside the game: DXVK's `d3d9.dll` (Direct3D 9 on Vulkan,
+7.9 MB), the DLSS 5 helper (`dlss5\`) and 2.3 GB of its dumps, dsf_enhanced's
+world map (`dsf_enhanced\redirect\worldlod.txt` sends `Install\san_francisco.dngc`
+to `worldlod-map\san_francisco.dngc`, 795 MB against the game's 532 MB), an
+installed `dsfcars\` (4.3 GB of car packages), two mods and backups. Three
+failures followed.
+
+- **The game exits at start** (0xC0000409, about 0.1 s after the plugin
+  loads): Windows loads `d3d9.dll` from the game folder before System32, and
+  the VMs have no Vulkan (confirmed-runtime: `vm1-20261108-184558` to
+  `-185054`). `winmm.dll` (the ASI loader) was never part of it: the host's,
+  its three `.bak` copies and the guest's from 2026-10-24 are one file
+  (SHA-256 `9A2BB218...`).
+- **The world stays paused after the load** (confirmed-runtime correlation, the
+  mechanism not decoded): in every VM run that reached the probe's go
+  (2026-11-05 to -13), the probe never left `wait_level` in 14 of the 47 runs
+  with a `d3d9.dll` in the run folder (DXVK replaced by a forwarding proxy or
+  a copy of a system `d3d9.dll`, `-Override d3d9.dll=...`) and in none of the
+  104 without one. The PAUSED menu comes up after the zoom presses
+  (`vm2-20261113-025000`: `zoom-05.png` at street level, `observe-01.png`
+  PAUSED with MAP highlighted), and the game's user Lua updates stop while it
+  is up (the probe's last line there is "zap level 1"). The Enter count of
+  `Enter-StoryWorld` doesn't decide it (4 presses: 34 runs went on, 7 stuck;
+  3 presses: 116 and 7). With the proxy, dsf_enhanced's BorderlessWindowed
+  window (1600x900, logged at device creation either way) also ended up a
+  1280x720 window with a frame in 39 of the 47 runs (`observe-01.png` 1286x771
+  instead of 1600x922); without it, never.
+- **Black frames while driving in traffic** (confirmed-runtime correlation,
+  the mechanism not decoded): the guest's GPU memory is the VM's graphics
+  memory, 512 MB (`$VmSettings`). In the six traffic drives of 2026-11-13
+  (`vm1-20261113-183436`, `-184555`, `-185710`, `vm2-20261113-183507`,
+  `-184627`, `-185744`; `-Traffic -DriveSeconds 200`, ID 170) `memory.csv`
+  has the GPU memory at about 400 MB in the Shift view, at 504 to 510 MB
+  within 0 to 60 s of driving, then down to about 150 MB, with Driver.exe's
+  private bytes 330 MB lower; from that sample on every shot is black, the
+  probe's Lua lines stop, and dsf_enhanced's log runs on. vmware.log has the
+  guest create its shaders again at that moment (a burst of `DXUM_09:
+  Unrecognized shader`), as after the load. Those runs had the world map,
+  `LODEngineThresholdScale=0.25` (an `-Override` ini is used as given, without
+  run-test's rewrite) and DLAA off (so the 4x MSAA swap chain was back). Runs
+  of 2026-11-05 to -08 03:45 (the 2026-10-24 guest folder, the host ini with
+  the rewrite) peaked at 343 to 391 MB and drove (`vm1-20261108-020144` to
+  `-034550`); from the re-mirror on, with the same ini, 461 to 475 MB
+  (`vm1-20261108-185509`, `-190306`, `-191513`).
+
+What a guest gets now (`tools\wsb\guest\guest-game.ps1`, used by
+`setup-vm.ps1 -Phase Game`, by `run-test.ps1` outside `-OnHost` and by
+run-series' check of the guest's root files):
+
+- the retail game's folders (the ones whose files date from the 2012
+  release: `bin`, `Common`, `Input`, `Install`, `Locale`, `media`) and
+  `plugins`, which run-test fills itself; the host's `Install\san_francisco.dngc`
+  is the game's own (SHA-256 `2826CC70...`, which its leftover
+  `Install\manifest.json` names as the original);
+- every root file except graphics API proxies (`d3d9.dll`, `dxgi.dll`,
+  `d3d11.dll`, ...), backups (`*.bak*`), logs and dumps.
+
+`run-test.ps1` applies the same list when it builds `C:\Run` in a guest (the
+sandbox reads the host folder itself, and a VM not provisioned again still has
+the old copy; `result.json` `gameRootSkipped`, `gameFoldersSkipped`). The run
+copy of `dsf_enhanced.ini` in a guest also has `[DLSS5] Export=0`, `Helper=0`
+and `[DLAA] Enable=0` (`Get-RunEnhancedIni`): they need an NVIDIA RTX GPU and
+the helper. `vm-build.ps1 -Step Provision` now waits for the VM's series first.
+
+After the go, `run-test.ps1` waits for the probe to say it saw it; if no
+probe line comes for `-PauseQuietSeconds` (20 s; the probe logs every 4 ticks in
+`wait_level`, about 2 s at 60 fps), the world is taken as paused and Esc
+(resume) is tapped, at most 4 times (`paused-NN.png`, `result.json`
+`unpause`). A running game never gets that Esc, which would open the menu (a
+blind `-MenuKeys 'Esc:3'` did in 3-press runs). run-series prints a warning
+when a run's GPU memory reached the VM's graphics memory.
+
+**Checked** (2026-11-13, plain `run-series.ps1 -Vm`, no `-Override`; vanilla
+archive, ID 170, `-Traffic -DriveSeconds 200 -WaitSeconds 420`): 4 of 4
+traffic drives finished with the probe done, no black shot, the window
+borderless (1600x922) and the GPU memory at most 375 MB: `vm2-20261113-195623`
+(204 of 204 cockpit samples above 5 mph), `vm2-20261113-200101` (105; it left
+the road and stopped, still drawn), both after VM 2 was provisioned again;
+`vm1-20261113-201754` (204) and `-202237` (199) on VM 1's old copy, where
+run-test left out `d3d9.dll`, the backups and seven folders itself. A plain
+short probe (ID 304, `vm2-20261113-200607`) finished too. No run needed the
+Esc. Then VM 1 was provisioned again as well.
 
 ### VM results (2026-10-24)
 
