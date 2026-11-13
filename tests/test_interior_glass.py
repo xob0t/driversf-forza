@@ -138,7 +138,7 @@ def test_cockpit_glass_takes_the_lexan_binding():
     lexan_r = SimpleNamespace(name="lexanR", subsections=[SimpleNamespace(lod=1)])
     car = SimpleNamespace(body=[lexan, glass_own, lexan_r])
     pairs = {id(sub): (0, 4), id(glass_own.subsections[0]): (0, 20), id(lexan_r.subsections[0]): (0, 21)}
-    dmg = SimpleNamespace(assignment=lambda body, lod: {(k, 0): v for k, v in pairs.items()}, bound=lambda pair: pair)
+    dmg = SimpleNamespace(assignment=lambda *_: {(k, 0): v for k, v in pairs.items()}, bound=lambda pair: pair)
     skin = interior_glass_skin(dmg, car, SimpleNamespace(lods={"full": 1}))
     assert skin["glassF"] == skin["lexanF"] == bytes((0, 4, 0, 1))
     assert skin["glassR"] == bytes((0, 20, 0, 1))  # a glass section of its own keeps its own
