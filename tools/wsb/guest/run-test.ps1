@@ -94,6 +94,8 @@ param(
     [int]$StallSeconds = 120, # Story stage: give up once Driver.exe's private bytes have made no new high (+4 MB) for this
                          # long (a hung load); a slow load that still grows is waited for
     [int]$StorySeconds = 900, # Story stage: give up after this long in any case
+    [int]$PauseQuietSeconds = 20, # -Probe: after the go, this long without a probe line means the world is paused: Esc
+                         # (Resume-PausedWorld; the probe logs every ~2 s in wait_level at 60 fps)
     [string]$GameRootFrom, # folder whose files replace the game folder's root files of the same name (run-series.ps1 -Vm:
                          # the host game folder's current dsf_enhanced.asi and .ini); -Override wins. result.json
                          # "dsfEnhanced" records the .asi and .ini used, "gameRoot" the game folder's root file hashes.
@@ -104,6 +106,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'guest-game.ps1')   # what of the game folder a guest run uses
 
 if ($Detach) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -500,10 +503,15 @@ try {
     Remove-RunTree $run
     New-Item -ItemType Directory -Force -Path $run | Out-Null
     $result.gameRoot = [ordered]@{}   # SHA-256 of the game folder's root files (run-series.ps1 -Vm compares the host's)
+    # In a guest (VM or sandbox) only the files guest-game.ps1 lets through: the sandbox reads the host
+    # folder itself, and a VM's C:\Game from before that list can still hold DXVK's d3d9.dll.
+    $skippedRoot = @()
     foreach ($file in Get-ChildItem $GameDir -File | Where-Object { $_.Extension -notin '.log', '.dmp' }) {
+        if (-not $OnHost -and -not (Test-GuestGameFile $file.Name)) { $skippedRoot += $file.Name; continue }
         Copy-Item -LiteralPath $file.FullName -Destination $run
         $result.gameRoot[$file.Name] = (Get-FileHash -LiteralPath $file.FullName).Hash
     }
+    if ($skippedRoot) { $result.gameRootSkipped = $skippedRoot; Note "root files left out (guest-game.ps1): $($skippedRoot -join ', ')" }
     # -GameRootFrom: its files replace the game folder's root files of the same name (run-series.ps1
     # -Vm: the host game folder's current dsf_enhanced.asi and .ini; C:\Game in the VM is a copy
     # from when it was provisioned). -Override still wins (below).
@@ -517,10 +525,20 @@ try {
     }
     if (-not $OnHost) { Copy-Item "$OutputDir\HostDll\*.dll" $run }
     $iniFrom = if ($rootFrom['dsf_enhanced.ini']) { $rootFrom['dsf_enhanced.ini'] } else { Join-Path $GameDir 'dsf_enhanced.ini' }
-    (Get-Content -LiteralPath $iniFrom) `
-        -replace '^TrafficSpawnDistanceScale=.*$', 'TrafficSpawnDistanceScale=1.0' `
-        -replace '^LODEngineThresholdScale=.*$', 'LODEngineThresholdScale=1.0' |
-        Set-Content (Join-Path $run 'dsf_enhanced.ini')
+    # The run copy: traffic spawn distance and engine LOD thresholds at the game's own (1.0). In a guest
+    # also DLSS 5 and DLAA off: they need an NVIDIA RTX GPU and the helper in the game's dlss5 folder,
+    # which a guest has neither of (guest-game.ps1). With DLAA on and no helper, VM shots came out
+    # black while the Lua drove on (issue #589).
+    $guestOff = if ($OnHost) { @{} } else { @{ 'DLSS5' = @('Export', 'Helper'); 'DLAA' = @('Enable') } }
+    $section = ''
+    $iniLines = foreach ($line in (Get-Content -LiteralPath $iniFrom)) {
+        if ($line -match '^\s*\[([^\]]+)\]') { $section = $Matches[1] }
+        $key = if ($line -match '^\s*([A-Za-z0-9_]+)\s*=') { $Matches[1] } else { '' }
+        if ($key -in 'TrafficSpawnDistanceScale', 'LODEngineThresholdScale') { "$key=1.0" }
+        elseif ($key -and $guestOff[$section] -contains $key) { "$key=0" }
+        else { $line }
+    }
+    $iniLines | Set-Content (Join-Path $run 'dsf_enhanced.ini')
     Remove-Item (Join-Path $run 'Driver.log'), (Join-Path $run 'dsf_enhanced.log') -ErrorAction SilentlyContinue
 
     # -Override: relative game path (lower-case) -> replacement file.
@@ -537,7 +555,8 @@ try {
         Note "root file $key <- $($overrides[$key])"
     }
     # Which dsf_enhanced the run uses: the .asi's hash and source, the source .ini's hash (the
-    # run copy has TrafficSpawnDistanceScale and LODEngineThresholdScale set to 1.0 unless overridden).
+    # run copy has TrafficSpawnDistanceScale and LODEngineThresholdScale set to 1.0, and in a guest
+    # DLSS 5 and DLAA off, unless overridden).
     $sourceOf = { param($name) if ($overrides[$name]) { $overrides[$name] } elseif ($rootFrom[$name]) { $rootFrom[$name] } else { Join-Path $GameDir $name } }
     $hashOf = { param($path) if (Test-Path -LiteralPath $path) { (Get-FileHash -LiteralPath $path).Hash } }
     $iniSource = & $sourceOf 'dsf_enhanced.ini'
@@ -627,7 +646,10 @@ try {
     }
 
     $overlayHook = $Overlay -and (Test-Path -LiteralPath (Join-Path $Overlay 'plugins\DriverNGHook.asi'))
+    $skippedDirs = @()
     foreach ($dir in Get-ChildItem $GameDir -Directory) {
+        # In a guest, the retail game's folders and plugins only (guest-game.ps1).
+        if (-not $OnHost -and -not (Test-GuestGameFolder $dir.Name)) { $skippedDirs += $dir.Name; continue }
         $target = Join-Path $run $dir.Name
         switch ($dir.Name) {
             'Install' {
@@ -704,6 +726,7 @@ try {
             default { Add-LinkTree $dir.FullName $target $dir.Name.ToLower() }
         }
     }
+    if ($skippedDirs) { $result.gameFoldersSkipped = $skippedDirs; Note "game folders left out (guest-game.ps1): $($skippedDirs -join ', ')" }
 
     # -Overlay: another mod's files, as a player has them after installing that mod and then ours
     # with install.ps1 -Force (research/felony-rework.md):
@@ -847,6 +870,45 @@ try {
         }
         return $pulses
     }
+    # The world can come up paused (the PAUSED menu over it): the probe then waits in wait_level for
+    # good, and the zoom presses only move the menu's cursor (issue #589). While the game is paused the
+    # game's user Lua updates stop, so the probe's Driver.log lines (a "zap level" line every 4 ticks
+    # in wait_level) stop too. After the go, until the probe says it saw it: when no probe line has come
+    # for -PauseQuietSeconds, the world is taken as paused and Esc (the menu's back, i.e. resume) is
+    # tapped. A running game is never sent Esc, which would open the menu. result.json "unpause" counts them.
+    function Resume-PausedWorld {
+        $logFile = Join-Path $RunPath 'Driver.log'
+        $pos = 0; $lastLine = Get-Date; $start = Get-Date; $presses = 0
+        while (((Get-Date) - $start).TotalSeconds -lt 180) {
+            Start-Sleep -Seconds 1
+            $text = ''
+            try {
+                $stream = [IO.File]::Open($logFile, 'Open', 'Read', 'ReadWrite')
+                try {
+                    if ($stream.Length -lt $pos) { $pos = 0 }
+                    [void]$stream.Seek($pos, 'Begin')
+                    $bytes = New-Object byte[] ($stream.Length - $pos)
+                    $read = $stream.Read($bytes, 0, $bytes.Length); $pos += $read
+                    $text = [Text.Encoding]::UTF8.GetString($bytes, 0, $read)
+                } finally { $stream.Dispose() }
+            } catch { }
+            if ($text -match '\[dsfforza\] (harness go after|no go from the harness|id \d+: spawn returned|id \d+: PLAYER IS DRIVING|done|error)') {
+                if ($presses) { Note "unpause: the probe goes on after $presses Esc" }
+                return
+            }
+            if ($text -match '\[dsfforza\] ') { $lastLine = Get-Date; continue }
+            if (((Get-Date) - $lastLine).TotalSeconds -lt $PauseQuietSeconds) { continue }
+            $driver.Refresh()
+            if ($driver.HasExited -or $presses -ge 4) { return }
+            $presses++; $result.unpause = $presses
+            Save-Shot ("paused-{0:D2}.png" -f $presses)
+            [DsfGuest]::Tap((Get-GameWindow), 0x1B, 0x01)
+            Note "unpause: no probe line for $PauseQuietSeconds s after the go; Esc ($presses)"
+            $lastLine = Get-Date
+        }
+        Note 'unpause: the probe never said it saw the go'
+    }
+
     $pulses = Enter-StoryWorld
     $result.enterPresses = $pulses
     Note "story world ready after $pulses presses"
@@ -889,6 +951,7 @@ try {
     if ($Probe) {
         [IO.File]::WriteAllText((Join-Path $RunPath 'Common\UserLuaScripts\dsfcars\go.lua'), "return { go = 1 }`r`n")
         Note 'probe go'
+        Resume-PausedWorld
     }
 
     # Wait for the probe (or just watch the game for -WaitSeconds).
