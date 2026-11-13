@@ -27,3 +27,20 @@ function Test-GuestGameFolder([string]$Name) {
     # A top-level folder of the game folder the guest gets.
     return $GuestGameFolders -contains $Name
 }
+
+function Get-RunEnhancedIni([string[]]$Lines, [switch]$Guest) {
+    # run-test.ps1's copy of dsf_enhanced.ini: traffic spawn distance and engine LOD thresholds at the
+    # game's own (1.0). -Guest (a VM or sandbox run) also turns DLSS 5 and DLAA off: they need an NVIDIA
+    # RTX GPU and the helper in the game's dlss5 folder, which a guest has neither of. With DLAA on and no
+    # helper, VM shots came out black while the Lua drove on (issue #589). Keys are matched per section
+    # ([Ultrawide] has its own Enabled).
+    $off = if ($Guest) { @{ 'DLSS5' = @('Export', 'Helper'); 'DLAA' = @('Enable') } } else { @{} }
+    $section = ''
+    foreach ($line in $Lines) {
+        if ($line -match '^\s*\[([^\]]+)\]') { $section = $Matches[1] }
+        $key = if ($line -match '^\s*([A-Za-z0-9_]+)\s*=') { $Matches[1] } else { '' }
+        if ($key -in 'TrafficSpawnDistanceScale', 'LODEngineThresholdScale') { "$key=1.0" }
+        elseif ($key -and $off[$section] -contains $key) { "$key=0" }
+        else { $line }
+    }
+}

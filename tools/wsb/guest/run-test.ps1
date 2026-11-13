@@ -525,20 +525,8 @@ try {
     }
     if (-not $OnHost) { Copy-Item "$OutputDir\HostDll\*.dll" $run }
     $iniFrom = if ($rootFrom['dsf_enhanced.ini']) { $rootFrom['dsf_enhanced.ini'] } else { Join-Path $GameDir 'dsf_enhanced.ini' }
-    # The run copy: traffic spawn distance and engine LOD thresholds at the game's own (1.0). In a guest
-    # also DLSS 5 and DLAA off: they need an NVIDIA RTX GPU and the helper in the game's dlss5 folder,
-    # which a guest has neither of (guest-game.ps1). With DLAA on and no helper, VM shots came out
-    # black while the Lua drove on (issue #589).
-    $guestOff = if ($OnHost) { @{} } else { @{ 'DLSS5' = @('Export', 'Helper'); 'DLAA' = @('Enable') } }
-    $section = ''
-    $iniLines = foreach ($line in (Get-Content -LiteralPath $iniFrom)) {
-        if ($line -match '^\s*\[([^\]]+)\]') { $section = $Matches[1] }
-        $key = if ($line -match '^\s*([A-Za-z0-9_]+)\s*=') { $Matches[1] } else { '' }
-        if ($key -in 'TrafficSpawnDistanceScale', 'LODEngineThresholdScale') { "$key=1.0" }
-        elseif ($key -and $guestOff[$section] -contains $key) { "$key=0" }
-        else { $line }
-    }
-    $iniLines | Set-Content (Join-Path $run 'dsf_enhanced.ini')
+    # The run copy: game LOD and traffic distance scales at 1.0; in a guest DLSS 5 and DLAA off (guest-game.ps1).
+    Get-RunEnhancedIni (Get-Content -LiteralPath $iniFrom) -Guest:(-not $OnHost) | Set-Content (Join-Path $run 'dsf_enhanced.ini')
     Remove-Item (Join-Path $run 'Driver.log'), (Join-Path $run 'dsf_enhanced.log') -ErrorAction SilentlyContinue
 
     # -Override: relative game path (lower-case) -> replacement file.

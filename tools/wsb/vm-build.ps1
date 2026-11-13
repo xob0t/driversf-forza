@@ -7,9 +7,10 @@ VMware Tools, game copy, snapshot "clean". See tools\wsb\vm.ps1 for using it.
 Steps (default: all, in order; each can be run alone):
   Iso        C:\VMs\dsfforza-test\config.iso: autounattend.xml, dsf-first-logon.ps1 and
              the VC++ x86 runtime (C:\VMs\downloads\vcredist\vc_redist.x86.exe).
-  Create     the VM: 4 vCPU, 8 GB, 80 GB growable SATA disk, BIOS firmware (no TPM or
+  Create     the VM: CPUs, memory and graphics memory from $VmSettings (vm-common.ps1: 4 vCPU,
+             4 GB, 512 MB), 80 GB growable SATA disk, BIOS firmware (no TPM or
              Secure Boot; the Windows 11 checks are bypassed in autounattend.xml), SVGA
-             3D with 2 GB graphics memory, no network, no USB, shared folders
+             3D, no network, no USB, shared folders
              Repo (read-only), Output (read-write), Game and Profile (read-only).
   Install    boots the Windows ISO with no window and waits for the unattended install,
              first-logon.ps1 and VMware Tools; then powers off, detaches the CDs and adds
@@ -198,6 +199,8 @@ function Step-Install {
 function Step-Provision {
     Start-VmHeadless
     Say 'provisioning (copies the game: several minutes)'
+    # setup-vm.ps1 runs from its copy in C:\dsf and dot-sources the list of what the guest gets beside it.
+    Invoke-Vmrun @('copyFileFromHostToGuest', $VmVmx, (Join-Path $PSScriptRoot 'guest\guest-game.ps1'), 'C:\dsf\guest-game.ps1') -Guest | Out-Null
     $out = & (Join-Path $PSScriptRoot 'vm.ps1') Exec -Vm $VmInfo.Id -HostScript (Join-Path $PSScriptRoot 'guest\setup-vm.ps1') -Arguments @('-Phase', 'Provision', '-Tag', $VmName) -TimeoutSeconds 3600
     Get-Content (Join-Path $VmOutputHost "vm\$VmName\setup-provision.json") -ErrorAction SilentlyContinue
     Stop-Vm | Out-Null

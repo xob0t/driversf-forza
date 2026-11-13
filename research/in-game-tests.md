@@ -83,7 +83,8 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `run-test.ps1` runs with its defaults: `C:\Repo` (repo, read-only),
   `C:\Output` (`%LOCALAPPDATA%\Temp\dsfforza-wsb`, read-write), `C:\Profile`
   (Documents\Ubisoft\Driver San Francisco, read-only). `C:\Game` is a local
-  copy of the game folder (share `Game`, read-only), put back to vanilla from
+  copy of the game folder's retail part (share `Game`, read-only; "Guest game
+  folder" below: no graphics proxies, mods or world map), put back to vanilla from
   `dsfcars-backup\install.json`: replaced files restored and hash-checked,
   created ones dropped. Re-run `setup-vm.ps1 -Phase Game` (through `vm.ps1
   Exec`) after changing the host install. `dsf_enhanced.asi` and `.ini` don't
