@@ -101,6 +101,30 @@ def test_no_host_window_on_that_side():
     assert {r for _, r in g.triangles()} == {"surface"}
 
 
+def test_rear_window_does_not_take_the_windscreen():
+    """The host's rear glass has no cracks or shards: the converted rear window keeps its
+    surface only rather than taking the host windscreen's (CodeRabbit, #608)."""
+    shard = (((0.6, 0.6, 1.0), (0.58, 0.6, 1.0), (0.6, 0.58, 1.0)), SHARD_UV, (0.5,) * 3)
+    front = _host_window((0, 5), 1.4, 0.7, 1.0, [shard])
+    rear = glass.HostWindow((0, 22), [(p, SMEAR_UV, (0.5,) * 3) for p in _quad(-0.6, 0.6, 0.0, 0.4, -1.2)], [])
+    host = [front, rear]
+    g = glass.InteriorGlass(host=host)
+    for pts in _quad(-0.5, 0.5, 0.0, 0.4, -1.1):
+        g.add("glassR", pts, [(0.0, 0.0, -1.0)] * 3, [0.5] * 3, bytes((0, 22, 0, 1)))
+    assert {r for _, r in g.triangles()} == {"surface"}
+    assert [h.kind for h in host] == ["front", "rear"] and host[0] is front  # not taken
+
+
+def test_deeper_than_the_window_reaches():
+    """A crack 0.3 m inside a 1.4 m wide host windscreen's left edge can't go 0.3 m inside a
+    0.4 m wide window: it would cross the centre to the far side, so it's left out."""
+    z = 1.0
+    crack = (((0.38, 0.35, z), (0.40, 0.35, z), (0.40, 0.36, z)), CRACK_UV, (0.5,) * 3)
+    host = [_host_window((0, 5), 1.4, 0.7, z, [crack])]
+    g = _windscreen(0.4, 0.7, z, host)
+    assert {r for _, r in g.triangles()} == {"surface"}
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

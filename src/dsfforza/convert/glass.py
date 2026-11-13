@@ -361,6 +361,11 @@ class _Pane:
     def inside(self, p) -> bool:
         return (self._i(p[0]), self._j(p[1])) in self.filled
 
+    def near(self, p) -> bool:
+        """Inside, or in a cell next to one inside: the grid knows the rim to a cell."""
+        i, j = self._i(p[0]), self._j(p[1])
+        return any((i + di, j + dj) in self.filled for di in (-1, 0, 1) for dj in (-1, 0, 1))
+
     def lift(self, p):
         """(position, normal) on the glass under plane point p, LIFT inside it;
         just outside the pane the nearest triangle's plane is extended. Where
@@ -439,12 +444,14 @@ class _Rim:
 @dataclass
 class HostWindow:
     """One window of the host's vanilla interior (an s9 group of its glass):
-    every triangle as (points, UVs, sky terms), and which of them are its crack
-    and shard layers (interior_block crack, shard_dull, shard_bright)."""
+    every triangle as (points, UVs, sky terms), which of them are its crack
+    and shard layers (interior_block crack, shard_dull, shard_bright), and its
+    kind (host_kinds: "front", "rear" or "side")."""
 
     s9: tuple[int, int]
     tris: list
     overlay: list
+    kind: str = ""
 
     @cached_property
     def centre(self) -> tuple:
@@ -465,6 +472,19 @@ def _sideways(tris) -> bool:
         for a in range(3):
             area[a] += abs(c[a])
     return area[0] >= max(area[1], area[2])
+
+
+def host_kinds(windows: list[HostWindow]) -> list[HostWindow]:
+    """Set each host window's kind: "side" when it faces sideways (_sideways);
+    of the others, the frontmost (largest centre z) is the windscreen ("front")
+    and the rest are "rear". Vanilla interiors don't sit their windscreen on a
+    fixed side of z = 0 (on the 212 at z +1.0, on the 248 at -0.04), so the order
+    decides, not the sign."""
+    ahead = [w for w in windows if not w.sideways]
+    front = max(ahead, key=lambda w: w.centre[2], default=None)
+    for w in windows:
+        w.kind = "side" if w.sideways else "front" if w is front else "rear"
+    return windows
 
 
 def host_windows(stream, vehc) -> list[HostWindow]:
@@ -490,10 +510,12 @@ def host_windows(stream, vehc) -> list[HostWindow]:
             uvs = tuple(tuple(vb.read(e8, i)[:2]) for i in idx)
             skies = tuple(vb.read(e0, i)[3] / 4096 for i in idx)
             groups[tuple(vb.read(e9, idx[0])[:2])].append((pts, uvs, skies))
-    return [
-        HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")])
-        for s9, tris in sorted(groups.items())
-    ]
+    return host_kinds(
+        [
+            HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")])
+            for s9, tris in sorted(groups.items())
+        ]
+    )
 
 
 class InteriorGlass:
@@ -514,6 +536,8 @@ class InteriorGlass:
         self.frames = SlotMapper()
         self.items: dict[str, list] = defaultdict(list)
         self.host = host if host is not None else []
+        if any(not h.kind for h in self.host):
+            host_kinds(self.host)
         self.sight = sight  # DSF point -> seen by the driver (cockpit.GlassSight); None: all
         self.report: dict[str, dict] = {}
         self._host_panes: dict[tuple, tuple] = {}
@@ -605,21 +629,32 @@ class InteriorGlass:
 
     def _match(self, groups: list[str]) -> dict[str, HostWindow]:
         """Window group -> the host window whose cracks and shards it takes. A
-        pair faces the same way (sideways, or to the front or rear) and, for side
-        glass, sits on the same side; nearest centres pair first, and each host
-        window goes to one window only, as vanilla windows carry their own (a
-        converted quarter light next to a door doesn't get the host door's too:
-        the vanilla Gallardo 212's quarter lights have none). Both are in the
-        host's car space."""
+        pair is of one kind: side glass on the same side of the car, the
+        windscreen (the converted windscreen slot) with the host's, the rear
+        window with the host's rear glass; roof glass takes none. Nearest centres
+        pair first, and each host window goes to one window only, as vanilla
+        windows carry their own (a converted quarter light next to a door doesn't
+        get the host door's too: the vanilla Gallardo 212's quarter lights have
+        none). A window whose kind the host has no cracks and shards for keeps
+        its surface only, as on the host. Both are in the host's car space."""
         pairs = []
         for group in groups:
             tris = [it[0] for it in self.items[group]]
-            sideways = _sideways(tris)
+            slot = self.frames.slot(group)
+            kind = (
+                "side"
+                if _sideways(tris)
+                else {"windscreen": "front", "rear": "rear"}.get(slot)
+                if "/roof" not in group
+                else None
+            )
+            if kind is None:
+                continue
             pts = [p for t in tris for p in t]
             centre = tuple(sum(p[a] for p in pts) / len(pts) for a in range(3))
             for n, h in enumerate(self.host):
                 hc = h.centre
-                if h.overlay and h.sideways == sideways and (not sideways or (hc[0] > 0) == (centre[0] > 0)):
+                if h.overlay and h.kind == kind and (kind != "side" or (hc[0] > 0) == (centre[0] > 0)):
                     pairs.append((math.dist(hc, centre), group, n))
         out, taken = {}, set()
         for _, group, n in sorted(pairs):
@@ -650,8 +685,9 @@ class InteriorGlass:
         its shape and UVs and moves to the same direction from the window's centre
         (in units of the box's half extents, so corners go to corners) at the same
         depth inside the rim, in metres, turned with that direction; then lifted
-        onto the glass. Triangles that land outside the window, or out of the
-        driver's sight, are left out."""
+        onto the glass. Triangles that land outside the window (a corner more than
+        one cell of the occupancy grid outside it, or a depth past the centre of a
+        smaller window), or out of the driver's sight, are left out."""
         ha, hb, hrim = self._host_pane(host)
         if hrim is None:
             return []
@@ -665,14 +701,19 @@ class InteriorGlass:
             ray_h, ray_p = hrim.ray(theta), rim.ray(theta)
             depth = (hrim.reach[k] - rho) * math.hypot(*ray_h)  # metres inside the host's rim
             along = rim.reach[k] - depth / (math.hypot(*ray_p) or 1.0)
+            if along <= 0:
+                continue  # deeper than this window reaches: it would cross to the far side
             gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
             if not pane.inside(gp):
                 continue
             turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
-            corners = []
+            flat = []
             for x, y in q:
                 d = _rotate((x - g[0], y - g[1]), turn)
-                corners.append(pane.lift((gp[0] + d[0], gp[1] + d[1])))
+                flat.append((gp[0] + d[0], gp[1] + d[1]))
+            if not all(pane.near(c) for c in flat):
+                continue
+            corners = [pane.lift(c) for c in flat]
             if any(c is None for c in corners):
                 continue
             if self.sight is not None and not self.sight(tuple(sum(c[0][a] for c in corners) / 3 for a in range(3))):
