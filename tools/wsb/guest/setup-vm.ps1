@@ -24,7 +24,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'guest-game.ps1')
+# The Game phase's list of what the guest gets. vm.ps1 Start runs this script alone from C:\dsf for the
+# Session phase, so only Game needs the file beside it (vm-build.ps1 Provision copies it; C:\Repo has it).
+$guestGame = Join-Path $PSScriptRoot 'guest-game.ps1'
+if (Test-Path -LiteralPath $guestGame) { . $guestGame }
+elseif ($Phase -in 'Provision', 'Game') { throw "no $guestGame (the list of what the guest gets) beside this script" }
 $shares = '\\vmware-host\Shared Folders'
 New-Item -ItemType Directory -Force -Path C:\dsf | Out-Null
 $log = [System.Collections.Generic.List[string]]::new()
