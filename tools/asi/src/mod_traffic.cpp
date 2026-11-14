@@ -11,18 +11,22 @@
 #include "patch.h"
 
 bool archive_package_loaded(int id);
+uint32_t slots_expected();  // mod_archive.cpp: the kind-0 vehicle slots the game has (or will have)
 
 namespace {
 // Package base IDs stay below 1000; 59 AI sets, five frequencies, byte range indices.
 constexpr uint32_t kModels = 1000, kMaxRows = 59 * 5 * 256;
-const char kFeatureMarker[] = "DSFCARS-TRAFFIC-POOLS: 1";
+const char kFeatureMarker[] = "DSFCARS-TRAFFIC-POOLS: 2";
 // 005A6D20: +5B0..+998 stores 50 twenty-byte nontraffic nodes.
 constexpr uint32_t kNodes = (0x998 - 0x5B0) / 20;
-struct Header { char magic[8]; uint32_t rows, pairs, packages; };
-struct Row { uint32_t hash, frequency, start, count, signature, first, size, live_cap; float total; };
+// slots: the vehicle slots the manager planned the caps for. reserve: the slots the cap rule
+// leaves to the set's native list, the mission pot, the player and the interesting vehicles
+// (runtime_traffic.py live_reserve), so live_cap() can apply the rule to the slots the game got.
+struct Header { char magic[8]; uint32_t rows, pairs, packages, slots; };
+struct Row { uint32_t hash, frequency, start, count, signature, first, size, live_cap, reserve; float total; };
 struct Pair { uint32_t id; float weight; uint32_t package; };
 struct Range { uint32_t start, count; float total; };
-static_assert(sizeof(Header) == 20 && sizeof(Row) == 36 && sizeof(Pair) == 12, "pool file layout");
+static_assert(sizeof(Header) == 24 && sizeof(Row) == 40 && sizeof(Pair) == 12, "pool file layout");
 void* g_file;
 Header* g_header;
 Row* g_rows;
@@ -37,6 +41,8 @@ DWORD g_thread;
 bool g_force_skip; // native offline fixture only
 bool g_weight_warning;
 bool g_validation_logged;
+uint32_t g_fixture_slots;   // native offline fixture only: the slots live_cap() sees
+uint32_t g_logged_slots;    // the slot count live_cap() last logged
 using Pick = int(__thiscall*)(const Range*, uint32_t);
 using Request = bool(__thiscall*)(void*, uint32_t);
 using Release = void(__thiscall*)(void*, uint32_t);
@@ -51,6 +57,13 @@ Set g_set;
 
 uint8_t* engine() { return *(uint8_t**)0x00FE7228; }
 uint8_t* spooler() { uint8_t* e = engine(); return e ? *(uint8_t**)(e + 0x214) : nullptr; }
+// The spooler's state and its one active queue operation (research/runtime-traffic-pools.md,
+// "Spooler state and active operation", confirmed-static): +DAC 2 = loading +D9C (005A7B33),
+// 3 = unloading +D9C (005A7AFD), 5 = reset, no requests or releases (005A6DED, 005A7480;
+// 005A7860 and 005A78D0 return at once). +D9C is the active operation's model ID and +DA4 its
+// reference count, both copied from the queue head by 005A7A50 (005A7A69, 005A7A7E).
+constexpr uint32_t kSpoolState = 0xDAC, kActiveId = 0xD9C;
+constexpr uint32_t kStateUnloading = 3, kStateReset = 5;
 
 uint32_t fnv(const void* data, size_t size, uint32_t hash = 2166136261u)
 {
@@ -69,12 +82,12 @@ void forget(const char* reason, bool release)
     // the resident lists (005A6EA0's tests), as after a native reset.
     for (uint32_t id = 0; id < kModels; ++id) if (g_pending[id]) {
         g_pending[id] = 0;
-        if (release && owner && owner == spooler() && *(uint32_t*)(owner + 0xDAC) != 5) {
+        if (release && owner && owner == spooler() && *(uint32_t*)(owner + kSpoolState) != kStateReset) {
             // 005A6B00 prefers a resident node, even a zero-ref unloading one,
             // over its queued reload. Release exactly our known ownership.
-            // 005A7100 skips the currently unloading ID; its normal queued-
-            // load release helper 005A66E0 cancels that reload explicitly.
-            if (*(uint32_t*)(owner + 0xDAC) == 3 && *(uint32_t*)(owner + 0xD9C) == id)
+            // 005A7100 skips the currently unloading ID (005A7123..005A7133); its
+            // queued-load release helper 005A66E0 cancels that reload explicitly.
+            if (*(uint32_t*)(owner + kSpoolState) == kStateUnloading && *(uint32_t*)(owner + kActiveId) == id)
                 ((Request)0x005A66E0)(owner, id);
             ((Release)0x005A78D0)(owner, id);
             dsf_log("live-pool: cancel %u (%s)", id, reason);
@@ -210,6 +223,29 @@ Row* find_row(const Range* range)
     return nullptr;
 }
 
+// The row's streaming cap for the slots the game has. pools.bin's caps follow
+// runtime_traffic.py live_cap() at the planned slots (header): max(0, min(slots - reserve,
+// 50 - pot - 11, ports)). With fewer slots (the slot raise failed its preflight and stayed at
+// 35, or the ini changed after the manager ran) min(live_cap, slots - reserve) is the same rule
+// at those slots. Past them the spool refuses requests and the provider maps outgrow their
+// inline nodes with no page storage (vehicle_maps.cpp is installed only with the raise).
+// More slots than planned keep the planned cap.
+uint32_t live_cap(const Row* row)
+{
+    uint32_t slots = g_fixture_slots ? g_fixture_slots : slots_expected();
+    if (slots != g_logged_slots) {
+        g_logged_slots = slots;
+        if (slots < g_header->slots)
+            dsf_log("live-pool: pools.bin was planned for %u vehicle slots, the game has %u; streaming caps "
+                    "follow %u slots", g_header->slots, slots, slots);
+        else
+            dsf_log("live-pool: %u vehicle slots (pools.bin planned for %u)", slots, g_header->slots);
+    }
+    if (slots >= g_header->slots) return row->live_cap;
+    uint32_t room = slots > row->reserve ? slots - row->reserve : 0;
+    return room < row->live_cap ? room : row->live_cap;
+}
+
 int __fastcall decide(const Range* range, void*, uint32_t seed)
 {
     if (g_thread && GetCurrentThreadId() != g_thread) return ((Pick)0x00916870)(range, seed);
@@ -217,7 +253,7 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     if (g_force_skip) return -1;
     Row* row = find_row(range);
     uint8_t* s = spooler();
-    if (!row || !s || *(uint32_t*)(s + 0xDAC) == 5) return ((Pick)0x00916870)(range, seed);
+    if (!row || !s || *(uint32_t*)(s + kSpoolState) == kStateReset) return ((Pick)0x00916870)(range, seed);
     if (!g_thread) g_thread = GetCurrentThreadId();
     uint8_t ready[kModels], valid[kModels] = {};
     if (!ready_models(s, ready)) return ((Pick)0x00916870)(range, seed);
@@ -252,15 +288,16 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     // A pool that fits keeps ordinary weighted reuse. A larger pool gives
     // each loaded added model one primary birth, then lets native owners
     // drain it. This explicit variety policy avoids an immortal small cache.
-    bool rotate = added > row->live_cap;
+    uint32_t cap = live_cap(row);
+    bool rotate = added > cap;
     const Pair* chosen = sample(choices, row->size, row->total, seed, valid);
-    if (chosen && chosen->package && !ready[chosen->id] && !g_pending[chosen->id] && occupied < row->live_cap) {
+    if (chosen && chosen->package && !ready[chosen->id] && !g_pending[chosen->id] && occupied < cap) {
         // +9A0 owns fifty pending nodes, independent of the single active
         // loader at +D9C. 005A6FD0 admits multiple queued model requests.
         if (*(uint32_t*)(s + 0x9A8) < kNodes && ((Request)0x005A7860)(s, chosen->id)) {
             g_pending[chosen->id] = 1; g_owner = s;
             dsf_log("live-pool: request %u, %u choices, package cache %u/%u, thread %lu", chosen->id,
-                    row->size, occupied, row->live_cap, g_thread);
+                    row->size, occupied, cap, g_thread);
         }
     }
     // Retain the chosen native/added group, redistributing only within its
@@ -355,7 +392,7 @@ bool bind_file(void* bytes, size_t size)
 {
     if (size < sizeof(Header)) return false;
     Header* h = (Header*)bytes;
-    if (memcmp(h->magic, "DSFPOOL1", 8) || h->rows > kMaxRows || h->packages > kModels ||
+    if (memcmp(h->magic, "DSFPOOL2", 8) || h->rows > kMaxRows || h->packages > kModels || h->slots > kModels ||
         (uint64_t)h->pairs > (uint64_t)h->rows * kModels) return false;
     uint64_t expected = sizeof(Header) + (uint64_t)h->packages * 4 + (uint64_t)h->rows * sizeof(Row) +
                         (uint64_t)h->pairs * sizeof(Pair);
@@ -367,7 +404,8 @@ bool bind_file(void* bytes, size_t size)
     for (uint32_t i = 0; i < h->rows; ++i) {
         const Row& r = rows[i];
         if (r.frequency >= 5 || r.count > kModels || r.size > kModels || r.first > h->pairs ||
-            r.size > h->pairs - r.first || r.live_cap > kNodes || !_finite(r.total) || r.total < 0) return false;
+            r.size > h->pairs - r.first || r.live_cap > kNodes || r.reserve > kModels || !_finite(r.total) ||
+            r.total < 0) return false;
     }
     for (uint32_t i = 0; i < h->pairs; ++i)
         if (pairs[i].id >= kModels || pairs[i].package > 2 || !_finite(pairs[i].weight) || pairs[i].weight < 0) return false;
@@ -397,8 +435,8 @@ bool read_file()
     fclose(f);
     if (!valid) { free(data); dsf_log("live-pool: invalid file %s; traffic unchanged", path); return false; }
     g_file = data;
-    dsf_log("live-pool: %u rows, %u weighted choices, %u package IDs in %s", g_header->rows,
-            g_header->pairs, g_header->packages, path);
+    dsf_log("live-pool: %u rows, %u weighted choices, %u package IDs, planned for %u vehicle slots in %s",
+            g_header->rows, g_header->pairs, g_header->packages, g_header->slots, path);
     return true;
 }
 
@@ -443,7 +481,16 @@ bool install()
 void mod_traffic_init()
 {
     dsf_log("%s", kFeatureMarker);
-    if (!cfg_bool("traffic", "runtime_pool", true) || !read_file()) return;
+    if (!cfg_bool("traffic", "runtime_pool", true)) {
+        dsf_log("live-pool: [traffic] runtime_pool=0; traffic unchanged");
+        return;
+    }
+    if (!read_file()) return;
+    uint32_t slots = slots_expected();
+    if (slots < g_header->slots)
+        dsf_log("live-pool: the game will have %u vehicle slots, pools.bin was planned for %u; streaming caps "
+                "follow %u slots", slots, g_header->slots, slots);
+    g_logged_slots = slots;
     dsf_log("live-pool: native runtime selection installed %d", install());
 }
 
@@ -462,6 +509,7 @@ int mod_traffic_selftest()
     void* savedPairs = *(void**)0x016DA940;
     *(void**)0x00FE7228 = e; *(void**)(e + 0x758) = tm; *(void**)(e + 0x214) = s;
     *(int*)(tm + 0x5CA9F0) = -1;
+    g_fixture_slots = 60;
     struct NativePair { uint32_t id; float weight; } native[] = {{1,3}, {2,1}, {700,2}, {701,3.5f}};
     Pair choices[] = {{1,3,0}, {2,1,0}, {700,2,1}, {701,3.5f,1}};
     *(void**)0x016DA940 = native;
@@ -480,7 +528,7 @@ int mod_traffic_selftest()
     }
     LIVE_CHECK(fnv("hello",5) == 0x4F9F2CABu);
     struct { Header h; uint32_t id; Row row; Pair choices[4]; } file = {};
-    memcpy(file.h.magic,"DSFPOOL1",8); file.h.rows=1; file.h.pairs=4; file.h.packages=1; file.id=700;
+    memcpy(file.h.magic,"DSFPOOL2",8); file.h.rows=1; file.h.pairs=4; file.h.packages=1; file.h.slots=60; file.id=700;
     file.row.count=4; file.row.size=4; file.row.live_cap=26; file.row.total=9.5f;
     memcpy(file.choices,choices,sizeof choices);
     LIVE_CHECK(bind_file(&file,sizeof file));
@@ -580,6 +628,20 @@ int mod_traffic_selftest()
         const Pair* pick=sample(file.choices,4,9.5f,seed);
         if(pick && pick->id>=700 && pick->id<=702) seeds[pick->id-700]=seed;
     }
+    // pools.bin planned for 60 slots, the game at 35 (the slot raise failed its preflight):
+    // the cap is the same rule at 35, min(live_cap, slots - reserve); more slots keep the plan.
+    g_fixture_slots=35; file.row.reserve=35;
+    LIVE_CHECK(live_cap(&file.row)==0);
+    LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && !g_pending[700] && *(uint32_t*)(s+0x9A8)==0);
+    file.row.reserve=34; LIVE_CHECK(live_cap(&file.row)==1);
+    LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && g_pending[700] && *(uint32_t*)(s+0x9A8)==1);
+    LIVE_CHECK(decide(&range,nullptr,seeds[1])<700 && !g_pending[701] && *(uint32_t*)(s+0x9A8)==1);
+    g_fixture_slots=70; LIVE_CHECK(live_cap(&file.row)==2);
+    forget("slot clamp fixture",true);
+    LIVE_CHECK(!g_pending[700] && *(uint32_t*)(s+0x9A8)==0);
+    head[0]=head[1]=(uint32_t)head; *(uint32_t*)(s+0x9A0)=(uint32_t)(s+0x9AC);
+    *(uint32_t*)(s+0x9A4)=*(uint32_t*)(s+0x9A8)=0;
+    g_fixture_slots=60; file.row.reserve=0;
     LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && g_pending[700]);
     LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && *(uint32_t*)(s+0x9A8)==1);
     queued=(uint32_t*)head[1]; LIVE_CHECK(queued[2]==700 && queued[3]==0 && queued[4]==1);
@@ -588,8 +650,8 @@ int mod_traffic_selftest()
     LIVE_CHECK(((RefCount)0x005A6B00)(s,700)==1 && ((RefCount)0x005A6B00)(s,701)==1);
     forget("cancel queued fixture",true);
     LIVE_CHECK(!g_pending[700] && !g_pending[701] && *(uint32_t*)(s+0x9A8)==0);
-    // Cancelling the sole active-load lease schedules its native unload.
-    // Other owners' active-load references remain intact.
+    // Cancelling the sole active-load lease schedules its native unload (state 2: loading +D9C,
+    // +DA4 its references; 005A7100 at 005A7147..005A717C). Other owners' references remain.
     *(uint32_t*)(s+0xDAC)=2; *(uint32_t*)(s+0xD9C)=702; *(uint32_t*)(s+0xDA4)=1;
     g_pending[702]=1; g_owner=s; forget("cancel active fixture",true);
     queued=(uint32_t*)head[1]; LIVE_CHECK(queued[2]==702 && queued[3]==1 && queued[4]==1);
@@ -675,7 +737,7 @@ int mod_traffic_selftest()
     LIVE_CHECK(patch_bytes(0x0059C620,existsBytes,5));
     LIVE_CHECK(patch_bytes(0x0059C5C0,capacityBytes,5));
     *(void**)0x00FE7228=savedEngine; *(void**)0x016DA940=savedPairs; free(tm);
-    g_header=nullptr; g_rows=nullptr; g_pairs=nullptr; g_thread=0; g_unique=0;
+    g_header=nullptr; g_rows=nullptr; g_pairs=nullptr; g_thread=0; g_unique=0; g_fixture_slots=0; g_logged_slots=0;
     memset(g_packages,0,sizeof g_packages); memset(g_valid,0,sizeof g_valid); memset(g_seen,0,sizeof g_seen);
     printf("live-pool native fixture: %d failures\n",failures);
     return failures;

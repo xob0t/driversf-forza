@@ -39,6 +39,18 @@ max(0, min(vehicle_slots - native_list_count - mission_pot_max - 1 - 10,
            50 - mission_pot_max - 1 - 10))
 ```
 
+`vehicle_slots` here is the slot count the manager read from `dsfcars.ini`
+when it wrote the file (header field). The game can have fewer: the slot raise
+fails its preflight and stays at 35 (`mod_archive.cpp`, "vehicle slots stay
+35", which also removes the provider maps' page storage), or the ini changed
+after the manager ran. Each row therefore carries its reserve,
+`native_list_count + mission_pot_max + 1 + 10`, and the plugin caps the row at
+`min(live_cap, slots - reserve)` with the slots `slots_expected()` reports.
+For fewer slots than planned that is the formula above at those slots; more
+slots than planned keep the planned cap (`mod_traffic.cpp` `live_cap()`,
+`runtime_traffic.py` `live_cap()`/`live_reserve()`). The plugin logs the
+slot count it applies.
+
 A numeric user streaming budget can lower that capacity. All resident package
 models count toward it, including models owned by other systems. Native
 admission remains authoritative. Each requested model has at most one temporary
@@ -46,6 +58,47 @@ prefetch lease. Both resident models and outstanding leases count against the
 budget; a resident lease is counted once. The pending queue's fifty-node bound
 also limits admission. These are capacity
 reserves derived from native data, not fitted traffic-population targets.
+
+## Spooler state and active operation (`+DAC`, `+D9C`, `+DA4`)
+
+Confirmed-static (2026-11-15, `uv run dsff xref disp 0xdac`, `dis` of each
+function below), and exercised against the native functions in the offline
+fixture (`mod_traffic_selftest`: "cancel active fixture", "cancel unloading
+reload fixture"). The traffic spooler `[Engine+0x214]` runs one queue
+operation at a time. Its pending queue has the sentinel `+D94` and the head
+`+D98`, with nodes `{prev, next, id +8, op +C, count +10}` (op 0 load, 1
+unload). `005A7A50` pops the head into the active operation:
+
+```
+005a7a60  mov eax, [esi+0d98h]      ; queue head
+005a7a66  mov ecx, [eax+8]
+005a7a69  mov [esi+0d9ch], ecx      ; +D9C: the active operation's model ID
+005a7a6f  mov edx, [eax+0ch]
+005a7a75  mov [esi+0da0h], edx      ; +DA0: its op
+005a7a7b  mov eax, [eax+8]          ; (eax = node+8) node+10h
+005a7a7e  mov [esi+0da4h], eax      ; +DA4: its reference count
+...                                 ; op 1: 005A8660, 005A7250(id), then
+005a7afd  mov dword [esi+0dach], 3  ; +DAC = 3: unloading +D9C
+...                                 ; op 0: 0059DB40 on +DA8 (unless +DB4 is that ID), then
+005a7b33  mov dword [esi+0dach], 2  ; +DAC = 2: loading +D9C
+005a7b68  mov dword [esi+0dach], 0  ; queue empty, nothing else to do: 0, idle
+```
+
+`+DAC` (state; `005A7B80` dispatches on it, `cmp eax,4; ja`, through the
+table at `005A7CE0`):
+
+| Value | Meaning | Evidence |
+| --- | --- | --- |
+| 0 | idle | `005A7B68` |
+| 2 | loading `+D9C`; `+DA4` holds its references | `005A7B33`. RefCount `005A6B00` returns `+DA4` for it (`005a6b52 cmp [ecx+0dach],2; 005a6b5b cmp [ecx+0d9ch],esi; 005a6b68 mov eax,[ecx+0da4h]`). Request `005A6FD0` adds one (`005a6ff7 cmp ecx,2; 005a6ffc cmp [esi+0d9ch],edi; 005a7015 inc [esi+0da4h]`). Release `005A7100` takes one, and at 1 queues the unload instead (`005a7147 mov eax,[esi+0da4h]; cmp eax,1; jne 005a717a` -> `005a716d call 005a7e60`; `005a717a dec eax; mov [esi+0da4h],eax`) |
+| 3 | unloading `+D9C` | `005A7AFD`. Release `005A7100` returns without a change for that ID (`005a7123 cmp ecx,3; 005a7128 cmp [esi+0d9ch],edi; je 005a719b`). Its queued reload is released through `005A66E0`, which finds the queue node with that ID and op 0 and drops one reference (`005a66f5 cmp [eax+8],esi; 005a66fa cmp [eax+0ch],0; 005a670d dec [eax+10h]`) |
+| 4 | set from `005A7930` (`005A7956`, `005A7998`); not used by the plugin | |
+| 5 | reset: no model lists, nothing to request or release | Constructor `005A6D20` sets it (`005a6ded mov dword [esi+0dach],5`), and reset `005A7360` sets it on exit (`005a7480`) and returns at once when it already holds (`005a7363 cmp [esi+0dach],5; je 005a748b`). Request `005A7860` returns false at 5 (`005a7863 cmp [esi+0dach],5; je 005a78c5` -> `xor al,al; ret 4`), release `005A78D0` returns (`005a78d3 cmp ...,5; je 005a792b`) |
+
+So the picker leaves the native pick alone at 5 (`decide()`), and
+`forget()` releases its leases only when the state isn't 5. For the ID being
+unloaded (state 3) it calls `005A66E0` before Release, since Release would skip
+that ID and leave the reload's lease.
 
 ## Selection and file contract
 
@@ -79,17 +132,17 @@ tracking because native reset owns the references; set changes and replay
 restore cancel requests before calling their original functions. The unloading
 reload exception above is exercised against actual native queue helpers.
 
-The file starts with `DSFPOOL1`, then row, pair and package-ID counts. Package
-IDs are u32. Rows are 36 bytes: eight u32 fields for set hash, frequency,
-native start/count, native fingerprint, choice start/count and live capacity,
-then float total. Pairs are twelve bytes: model ID, float weight and flags
+The file starts with `DSFPOOL2`, then row, pair and package-ID counts and the
+vehicle slots the caps were planned for. Package IDs are u32. Rows are 40
+bytes: nine u32 fields for set hash, frequency, native start/count, native
+fingerprint, choice start/count, live capacity and reserve, then float total. Pairs are twelve bytes: model ID, float weight and flags
 for package model or native model added from another set. Reuse identical
 pair blocks across rows. Reject invalid bounds, nonfinite/negative weights,
 unknown flags and IDs outside the package base-ID domain below 1000.
 
 FNV-1a over the original twelve-byte range and its eight-byte pairs detects
 stale or externally changed native weights. A mismatch leaves that row native.
-The separate binary marker `DSFCARS-TRAFFIC-POOLS: 1` lets the manager detect
+The separate binary marker `DSFCARS-TRAFFIC-POOLS: 2` lets the manager detect
 support without changing car-package capabilities or rebuilding car assets.
 Patch sites are checked as a group before installation; missing pool files
 install no traffic hooks. The original native 40-entry selector buffer never

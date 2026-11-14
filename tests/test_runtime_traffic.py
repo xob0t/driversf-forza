@@ -14,9 +14,10 @@ from dsfforza.build import runtime_traffic as live
 from dsfforza.game import traffic_sets
 
 
-def records(blob: bytes):
-    magic, count, pairs, packages = live.HEADER.unpack_from(blob)
+def records(blob: bytes, slots: int | None = None):
+    magic, count, pairs, packages, planned = live.HEADER.unpack_from(blob)
     assert magic == live.MAGIC
+    assert slots is None or planned == slots
     rows = [live.ROW.unpack_from(blob, live.HEADER.size + packages * 4 + i * live.ROW.size) for i in range(count)]
     base = live.HEADER.size + packages * 4 + count * live.ROW.size
     choices = [live.PAIR.unpack_from(blob, base + i * live.PAIR.size) for i in range(pairs)]
@@ -44,7 +45,7 @@ class RuntimeTrafficTest(unittest.TestCase):
             tc.set_ambient(None, pool="all")
             blob, reports = live.build(tc)
             _before, after, preview = live.preview(tc, tt.CH7, tc.t["ambient"])
-        rows, pairs = records(blob)
+        rows, pairs = records(blob, slots=60)
         ch7 = [r for r in rows if r[0] == traffic_sets.name_hash(tt.CH7)]
         self.assertEqual(len(ch7), 2)
         for row in ch7:
@@ -53,6 +54,10 @@ class RuntimeTrafficTest(unittest.TestCase):
             self.assertGreater(row[6], 721)
             self.assertLessEqual(row[7], live.MISSION_NODES - tt.POTS[tt.CH7] - 1 - live.MAX_IV_MODELS)
             self.assertLessEqual(row[7], 60 - 2 - tt.POTS[tt.CH7] - 1 - live.MAX_IV_MODELS)
+            # the reserve is the row's native list, the pot, the player and the IVs; the cap follows it
+            loaded = row[8] - live.live_reserve(0, tt.POTS[tt.CH7])
+            self.assertEqual(loaded, 3)  # Chapter 7 lists 101, 102, 103
+            self.assertEqual(row[7], live.live_cap(60, loaded, tt.POTS[tt.CH7]))
         self.assertEqual(preview.candidates, 721)
         self.assertTrue(set(ids) <= set(after))
         self.assertEqual(next(r for r in reports if r.name == tt.CH7).candidates, 721)
@@ -358,6 +363,76 @@ class RuntimeTrafficTest(unittest.TestCase):
         self.assertEqual(report.candidates, 1)
         self.assertAlmostEqual(shares[m.state["cars"][a]["id"]], 0.25)
         self.assertNotIn(m.state["cars"][b]["id"], shares)
+
+    def test_plugin_cap_at_fewer_slots_is_the_rule_at_those_slots(self):
+        """mod_traffic.cpp live_cap(): min(row cap, slots - reserve) for fewer slots than planned,
+        the planned cap for more (the slot raise failed, or the ini changed after the manager ran)."""
+
+        def plugin_cap(cap, reserve, planned, slots):
+            return cap if slots >= planned else min(cap, max(slots - reserve, 0))
+
+        for loaded in (0, 2, 15, 18, 40):
+            for pot in (0, 5, 16, 18):
+                for ports in (None, "fill", 0, 3, 100):
+                    for planned in (35, 41, 48, 60):
+                        cap = live.live_cap(planned, loaded, pot, ports)
+                        reserve = live.live_reserve(loaded, pot)
+                        for slots in range(35, 61):
+                            want = live.live_cap(slots, loaded, pot, ports) if slots < planned else cap
+                            self.assertEqual(plugin_cap(cap, reserve, planned, slots), want)
+        # 35 slots leave a 15-model set with an 18-car pot no streaming room
+        self.assertEqual(live.live_cap(35, 15, 18), 0)
+        self.assertEqual(live.live_cap(60, 15, 18), 60 - 15 - 18 - 1 - live.MAX_IV_MODELS)
+
+    def test_runtime_pool_off_writes_the_static_sets(self):
+        m = self.manager()
+        a = m.install(self.package("CAR_A_10"))
+        tc = self.control(m)
+        self.supports_live()
+        tc.set_ambient(None, ports="fill")
+        tc.write()
+        self.assertTrue((self.game / live.POOL_FILE).exists())
+        self.assertFalse((self.game / traffic.AI_COPY).exists())
+        self.assertTrue(any("automatic selection" in line for line in tc.status()))
+        ini = self.game / traffic.PLUGIN_INI
+        ini.parent.mkdir(parents=True, exist_ok=True)
+        ini.write_text("[traffic]\n; live pools off\nruntime_pool=0\npool_file=x\n", encoding="utf-8")
+        self.assertFalse(tc.live_pools())
+        tc.write()
+        self.assertFalse((self.game / live.POOL_FILE).exists())
+        self.assertTrue((self.game / traffic.AI_COPY).exists())
+        redirect = (self.game / car_gui.GENERATED / car_gui.REDIRECT).read_text()
+        self.assertIn(traffic.AI_COPY.as_posix(), redirect.replace("\\", "/"))
+        status = tc.status()
+        self.assertFalse(any("automatic selection" in line for line in status))
+        self.assertTrue(any("[traffic] runtime_pool=0" in line for line in status))
+        self.assertTrue(any("static sets" in line for line in status))
+        # a pool setting with live pools off: the static sets still, the pool reported inactive
+        tc.set_ambient(None, pool=[a])
+        tc.write()
+        self.assertFalse((self.game / live.POOL_FILE).exists())
+        self.assertTrue(any("saved pools are not active" in line for line in tc.status()))
+        # on again: the live file, no static copy
+        ini.write_text("[TRAFFIC]\nRuntime_Pool = 1\n", encoding="utf-8")
+        tc.write()
+        self.assertTrue((self.game / live.POOL_FILE).exists())
+        self.assertFalse((self.game / traffic.AI_COPY).exists())
+
+    def test_runtime_pool_off_by_module_switches(self):
+        ini = self.game / traffic.PLUGIN_INI
+        ini.parent.mkdir(parents=True, exist_ok=True)
+        for text, off in (
+            ("", ""),
+            ("[traffic]\nruntime_pool=1\n", ""),
+            ("[traffic]\nruntime_pool=0\n", "[traffic] runtime_pool=0"),
+            ("[traffic]\nruntime_pool=no\n", "[traffic] runtime_pool=0"),  # GetPrivateProfileInt: no digits, 0
+            ("[traffic]\nruntime_pool=2 ; on\n", ""),
+            ("[traffic]\nenabled=0\n", "[traffic] enabled=0"),
+            ("[dsfcars]\nenabled=0\n[traffic]\nruntime_pool=1\n", "[dsfcars] enabled=0"),
+            ("[archive]\nruntime_pool=0\n", ""),
+        ):
+            ini.write_text(text, encoding="utf-8")
+            self.assertEqual(traffic.plugin_runtime_pool_off(self.game), off, text)
 
     def test_native_fingerprint_uses_all_zero_and_nonzero_columns(self):
         self.assertEqual(live.fingerprint(b"hello"), 0x4F9F2CAB)

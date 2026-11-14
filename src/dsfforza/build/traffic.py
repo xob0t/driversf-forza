@@ -337,6 +337,39 @@ def dlc_media() -> set[str]:
     return {line.split()[0] for line in lines if line.strip() and not line.startswith("#")}
 
 
+def plugin_ini_int(game: Path, section: str, key: str, default: int) -> int:
+    """A dsfcars.ini integer as the plugin reads it (cfg_int: GetPrivateProfileIntA): section and
+    key case-insensitive, the default when either is missing, else the value's leading digits (an
+    optional sign first), 0 when it has none or is negative (the API's documented result)."""
+    import re
+
+    try:
+        lines = (Path(game) / PLUGIN_INI).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return default
+    current = None
+    for line in lines:
+        text = line.strip()
+        if text.startswith("[") and "]" in text:
+            current = text[1 : text.index("]")].strip().lower()
+        elif current == section.lower() and "=" in text and not text.startswith(";"):
+            name, value = text.split("=", 1)
+            if name.strip().lower() == key.lower():
+                digits = re.match(r"[+-]?\d+", value.strip())
+                return max(int(digits.group()), 0) if digits else 0
+    return default
+
+
+def plugin_runtime_pool_off(game: Path) -> str:
+    """The dsfcars.ini setting that stops the plugin reading pools.bin, "" when none does:
+    mod_traffic_init runs unless [dsfcars] enabled=0 or [traffic] enabled=0 (main.cpp
+    run_modules), and reads the file unless [traffic] runtime_pool=0."""
+    for section, key in (("dsfcars", "enabled"), ("traffic", "enabled"), ("traffic", "runtime_pool")):
+        if plugin_ini_int(game, section, key, 1) == 0:
+            return f"[{section}] {key}=0"
+    return ""
+
+
 def plugin_slots(game: Path, capabilities: set[str] | None) -> int:
     """The vehicle spool slots the installed plugin gives: [archive] vehicle_slots of its ini when
     it can raise them (capability archive.slots), else the vanilla 35."""
@@ -516,11 +549,16 @@ class TrafficControl:
         # "default" present, even empty: `traffic ambient` without fields before "on" was stored
         return bool(amb.get("on") or "default" in amb or amb.get("sets"))
 
-    def live_pools(self) -> bool:
+    def live_plugin(self) -> bool:
         """Whether the installed plugin supports selecting and streaming the full pool."""
         from dsfforza.build import car_manager, runtime_traffic
 
         return runtime_traffic.supported(self.m.game / car_manager.PLUGIN)
+
+    def live_pools(self) -> bool:
+        """Whether the game will use live pools: the plugin supports them and its ini doesn't turn
+        them off (plugin_runtime_pool_off). When off, the static sets are written instead."""
+        return self.live_plugin() and not plugin_runtime_pool_off(self.m.game)
 
     def has_pool_setting(self) -> bool:
         amb = self.t["ambient"]
@@ -530,7 +568,7 @@ class TrafficControl:
 
     def require_live_pools(self) -> None:
         """Refuse a live-pool edit when the installed plugin cannot use it."""
-        if not self.live_pools():
+        if not self.live_plugin():
             raise SystemExit("live chapter pools need the updated dsfcars.asi; no static batch was generated")
 
     def _write_live(self, *, strict: bool):
@@ -555,7 +593,8 @@ class TrafficControl:
         """Write traffic files. Only automatic car saves may tolerate live-pool failures."""
         from dsfforza.build import car_gui, runtime_traffic
 
-        if self.ambient_changes() and (self.live_pools() or self.has_pool_setting()):
+        # runtime_pool=0 with a plugin that has live pools: the static sets, as without live pools
+        if self.ambient_changes() and (self.live_pools() or (self.has_pool_setting() and not self.live_plugin())):
             return self._write_live(strict=strict)
         (self.m.game / runtime_traffic.POOL_FILE).unlink(missing_ok=True)
 
@@ -665,12 +704,16 @@ class TrafficControl:
                 if r.name in configured
             )
             return out
-        if self.has_pool_setting():
+        if self.has_pool_setting() and not self.live_plugin():
             out.append("live pools require the updated dsfcars.asi; saved pools are not active")
             return out
+        if self.live_plugin():
+            note = "; saved pools are not active" if self.has_pool_setting() else ""
+            off = plugin_runtime_pool_off(self.m.game)
+            out.append(f"live ambient pools: off in {PLUGIN_INI.as_posix()} ({off}){note}")
         ai, reports = self.plan()
         slots, _ = self.facts()
-        out.append(f"ambient traffic ({slots} vehicle spool slots):")
+        out.append(f"ambient traffic, static sets ({slots} vehicle spool slots):")
         for r in reports:
             line = f"  {r.name}: {r.models} models of {r.budget}, weights {r.weights}"
             s = set_settings(self.t["ambient"], r.name)

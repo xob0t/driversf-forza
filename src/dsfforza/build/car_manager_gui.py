@@ -368,8 +368,10 @@ class App:
             text += "".join(f"; {n}" for n in rep.notes)
         else:
             text = f"{name}: as the game has it"
-        if not self.tc.live_pools():
+        if not self.tc.live_plugin():
             text += "; install the updated plugin to activate live pools"
+        elif not self.tc.live_pools():
+            text += f"; live pools are off in dsfcars.ini ({traffic.plugin_runtime_pool_off(self.tc.m.game)})"
         self.budget.configure(text=text)
 
     def toggle_models(self) -> None:

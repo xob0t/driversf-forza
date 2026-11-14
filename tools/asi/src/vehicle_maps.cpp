@@ -398,10 +398,21 @@ int vehicle_maps_selftest()
         value[0] = (int)(uintptr_t)(specs + 16 * k);
         value[1] = 0;  // +10h: state; get() skips nodes above 0
     };
-    auto spec_model = [&](int id) {
+    auto spec_get = [&](int id) {
         void* spec = nullptr;
         ((SpecGet)0x0086B9E0)(spec_owner, &spec, (uint32_t)id);
-        return spec ? (int)*(uint32_t*)(*(uint8_t**)((uint8_t*)spec + 0x4850) + 0x14) : -1;
+        return (uint8_t*)spec;
+    };
+    auto spec_model = [&](int id) {
+        uint8_t* spec = spec_get(id);
+        return spec ? (int)*(uint32_t*)(*(uint8_t**)(spec + 0x4850) + 0x14) : -1;
+    };
+    // Every patch site of this file as shipped: the three insert calls, the spec map's append
+    // call 0086BE67 and the model-audio registration 00556E30.
+    auto sites_restored = [&]() {
+        bool same = bytes_equal(kSpecSite, kSpecCall, sizeof kSpecCall) && bytes_equal(0x00556E30, kRegister, 6);
+        for (int i = 0; i < 3; i++) same &= bytes_equal(kSites[i], kCalls[i], 5);
+        return same;
     };
     // As shipped: 45 models resolve to themselves; a 46th (here 151, between two others)
     // overwrites the sentinel, and every lower ID then resolves to another model.
@@ -423,12 +434,14 @@ int vehicle_maps_selftest()
            spec_model(3));
     spec_reset();
 
-    // A late preflight mismatch must leave every earlier site unmodified.
-    *(uint8_t*)0x00556EBB ^= 1;
-    MAP_CHECK(!vehicle_maps_install(true));
-    for (int i = 0; i < 3; i++) MAP_CHECK(bytes_equal(kSites[i], kCalls[i], 5));
-    MAP_CHECK(bytes_equal(0x00556E30, kRegister, 6));
-    *(uint8_t*)0x00556EBB ^= 1;
+    // A late preflight mismatch must leave every site unmodified: one in the model-audio
+    // layout, and the last check, the spec append's bump at 008CCAFA.
+    for (uint32_t at : {0x00556EBBu, 0x008CCAFAu}) {
+        *(uint8_t*)at ^= 1;
+        MAP_CHECK(!vehicle_maps_install(true));
+        MAP_CHECK(sites_restored() && !g_installed && !g_audio_installed);
+        *(uint8_t*)at ^= 1;
+    }
 
     // slots_trace (audio=false): ED/EF still continue past 45, model audio keeps vanilla's gate.
     MAP_REQUIRE(vehicle_maps_install(false) && bytes_equal(0x00556E30, kRegister, 6));
@@ -443,9 +456,9 @@ int vehicle_maps_selftest()
     }
     // vehicle_maps_remove() (a later slot patch failed) restores every site, the audio gate too.
     MAP_CHECK(vehicle_maps_install(true) && !bytes_equal(0x00556E30, kRegister, 6));
+    MAP_CHECK(!bytes_equal(kSpecSite, kSpecCall, sizeof kSpecCall));
     vehicle_maps_remove();
-    for (int i = 0; i < 3; i++) MAP_CHECK(bytes_equal(kSites[i], kCalls[i], 5));
-    MAP_CHECK(bytes_equal(0x00556E30, kRegister, 6) && !g_installed && !g_audio_installed);
+    MAP_CHECK(sites_restored() && !g_installed && !g_audio_installed);
     MAP_REQUIRE(vehicle_maps_install(true));
 
     // With the append hooked: 128 specs (45 inline, 83 on a page) all resolve to themselves,
@@ -477,6 +490,11 @@ int vehicle_maps_selftest()
         value[1] = 0;
     }
     MAP_CHECK(spec_pool[2] == 400 && spec_guard());
+    // get() resolves each to its own spec, in the inline nodes, the first page (nodes 46..215)
+    // and past it on the second and third pages.
+    wrong = 0;
+    for (int k = 0; k < 400; k++) wrong += spec_get(many[k]) != specs + 16 * (k % 128);
+    MAP_CHECK(wrong == 0 && spec_get(many[399]) == specs + 16 * (399 % 128));
     {
         int count = 0, last = -1;
         bool ordered = true;
@@ -580,9 +598,32 @@ int vehicle_maps_selftest()
     int cursor = pool[0];
     Map refusal = {};
     refusal.pool = pool;
+    refusal.node = kNodeBytes;  // the cursor is at the inline end: make_room asks new_page for a page
+    MAP_CHECK(cursor == (int)(uintptr_t)((uint8_t*)(pool + 3) + kInlineNodes * kNodeBytes));
     g_fail_allocation = true;
-    MAP_CHECK(!make_room(&refusal) && pool[0] == cursor && guard());
+    MAP_CHECK(!make_room(&refusal) && pool[0] == cursor && guard() && !refusal.pages);
     g_fail_allocation = false;
+    MAP_CHECK(make_room(&refusal) && refusal.pages && pool[0] == (int)(uintptr_t)refusal.pages->begin);
+    pool[0] = cursor;
+    // The same for the spec map's 24-byte nodes.
+    spec_reset();
+    for (int k = 0; k < 45; k++) spec_register(k);
+    Map spec_refusal = {};
+    spec_refusal.pool = spec_pool;
+    spec_refusal.node = kSpecNodeBytes;
+    cursor = spec_pool[0];
+    MAP_CHECK(cursor == (int)(uintptr_t)(spec_owner + 0x698));
+    g_fail_allocation = true;
+    MAP_CHECK(!make_room(&spec_refusal) && spec_pool[0] == cursor && spec_guard() && !spec_refusal.pages);
+    g_fail_allocation = false;
+    spec_reset();
+    for (Map* m : {&refusal, &spec_refusal})
+        for (Page* page = m->pages; page;) {
+            Page* next = page->next;
+            VirtualFree(page->begin, 0, MEM_RELEASE);
+            HeapFree(GetProcessHeap(), 0, page);
+            page = next;
+        }
 
     // Unrelated native map users retain the original path and 45-entry gate.
     ((Ctor)0x00556EE0)(audio);

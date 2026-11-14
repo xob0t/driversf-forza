@@ -15,16 +15,36 @@ from dsfforza.game import traffic_ai
 if TYPE_CHECKING:
     from dsfforza.build.traffic import TrafficControl
 
-MAGIC = b"DSFPOOL1"
-HEADER = struct.Struct("<8sIII")  # magic, record count, choice count, package-ID count
-ROW = struct.Struct("<8If")  # set hash, frequency, native start/count/hash, choice start/count, live cap, total
+MAGIC = b"DSFPOOL2"
+# magic, record count, choice count, package-ID count, the vehicle slots the caps were planned for
+HEADER = struct.Struct("<8sIIII")
+# set hash, frequency, native start/count/hash, choice start/count, live cap, reserve, total.
+# reserve: the slots the rest of the cap rule holds (live_reserve); the plugin lowers live cap to
+# slots - reserve when the game has fewer slots than planned (mod_traffic.cpp live_cap).
+ROW = struct.Struct("<9If")
 PAIR = struct.Struct("<IfI")  # model ID, weight, flags: package=1, extra native model=2
 POOL_FILE = Path("dsfcars") / "traffic" / "pools.bin"
-MARKER = b"DSFCARS-TRAFFIC-POOLS: 1"
+MARKER = b"DSFCARS-TRAFFIC-POOLS: 2"
 # 005A6D20: the nontraffic loaded-node storage is +5B0..+998, 20 bytes/node.
 MISSION_NODES = (0x998 - 0x5B0) // 20
 # 007EB860: native interesting-vehicle desired count is capped at ten models.
 MAX_IV_MODELS = 10
+
+
+def live_reserve(loaded: int, pot: int) -> int:
+    """The spool slots a set's streaming budget leaves to others: its native list (loaded models),
+    the mission pot, the player's car and the interesting vehicles."""
+    return loaded + pot + 1 + MAX_IV_MODELS
+
+
+def live_cap(slots: int, loaded: int, pot: int, ports: object = None) -> int:
+    """The streaming budget: what the spool slots and the 50 nontraffic nodes leave after
+    live_reserve, at most a numeric ports setting. dsfcars.asi applies the same rule with the slots
+    the game got (min(cap, slots - reserve)), which equals this when they are fewer than planned."""
+    cap = max(0, min(slots - live_reserve(loaded, pot), MISSION_NODES - live_reserve(0, pot)))
+    if isinstance(ports, int):
+        cap = min(cap, max(ports, 0))
+    return cap
 
 
 def supported(plugin: Path) -> bool:
@@ -85,17 +105,11 @@ def build(control: TrafficControl) -> tuple[bytes, list[Report]]:
         wanted = [key_ids[key] for key in pool]
         baseline = len(set(ts.lists.get(0, [])))
         pot = pots.get(name, traffic.POT_CAP)
-        limit = max(0, min(slots - baseline - pot - 1 - MAX_IV_MODELS, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
-        if isinstance(settings["ports"], int):
-            limit = min(limit, max(settings["ports"], 0))
+        limit = live_cap(slots, baseline, pot, settings["ports"])
         reports.append(Report(name, len(pool), baseline, limit, []))
         for frequency, loaded in ts.lists.items():
-            live_cap = max(
-                0,
-                min(slots - len(set(loaded)) - pot - 1 - MAX_IV_MODELS, MISSION_NODES - pot - 1 - MAX_IV_MODELS),
-            )
-            if isinstance(settings["ports"], int):
-                live_cap = min(live_cap, max(settings["ports"], 0))
+            cap = live_cap(slots, len(set(loaded)), pot, settings["ports"])
+            reserve = live_reserve(len(set(loaded)), pot)
             for index in sorted(ai.road_ranges(ts, frequency)):
                 native = ai.weighted(index)
                 if not native:
@@ -118,12 +132,13 @@ def build(control: TrafficControl) -> tuple[bytes, list[Report]]:
                         native_fingerprint(ai, index),
                         shared[packed],
                         len(choices),
-                        live_cap,
+                        cap,
+                        reserve,
                         sum(choices.values()),
                     )
                 )
     ids = struct.pack(f"<{len(package_ids)}I", *package_ids)
-    return HEADER.pack(MAGIC, len(rows), len(pairs) // PAIR.size, len(package_ids)) + ids + b"".join(
+    return HEADER.pack(MAGIC, len(rows), len(pairs) // PAIR.size, len(package_ids), slots) + ids + b"".join(
         rows
     ) + pairs, reports
 
@@ -162,9 +177,7 @@ def preview(control: TrafficControl, name: str, ambient: dict) -> tuple[dict[int
     slots, pots = control.facts()
     baseline = len(set(ts.lists.get(0, [])))
     pot = pots.get(name, traffic.POT_CAP)
-    limit = max(0, min(slots - baseline - pot - 1 - MAX_IV_MODELS, MISSION_NODES - pot - 1 - MAX_IV_MODELS))
-    if isinstance(settings["ports"], int):
-        limit = min(limit, max(settings["ports"], 0))
+    limit = live_cap(slots, baseline, pot, settings["ports"])
     for index in ai.road_ranges(ts, 0):
         weights = ai.weighted(index)
         if weights:

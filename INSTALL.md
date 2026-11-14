@@ -126,8 +126,17 @@ interesting vehicles. `cars.cmd traffic ambient --pool all --ports fill`
 enables the whole roster in every chapter without its own override. A small
 loaded-model limit can still leave little or no streaming room in a chapter;
 the preview reports that separately from the pool size. The plugin defaults
-to `[archive] vehicle_slots=35`. Raising that limit requires the native
-provider-map capacity fix in [PR #590](https://github.com/xob0t/driversf-forza/pull/590).
+to `[archive] vehicle_slots=35`, and at 35 slots a chapter has little or no
+streaming room. The plugin can raise the limit (up to 60) and keeps the game's
+model ID maps working past their 45 entries; the raise is off by default
+because it can crash the game in free roam
+([#586](https://github.com/xob0t/driversf-forza/issues/586)). After changing
+`vehicle_slots`, run the car manager again so the pools are planned for the
+new count. If the game gets fewer slots than the pools were planned for (the
+raise didn't apply), the plugin lowers each chapter's streaming budget to what
+those slots hold and says so in `dsfcars.log`. `[traffic] runtime_pool=0` in
+`dsfcars.ini` switches live pools off; the car manager then writes the static
+traffic sets instead.
 `cars.cmd traffic ambient --off` restores vanilla ambient selection.
 
 The settings are kept in `dsfcars\cars\manager.json` (they survive a
