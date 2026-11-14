@@ -28,24 +28,34 @@ that kind's measured peak (port_batch.WORKER_RAM, LINT_RAM, RENDER_RAM, DIFF_RAM
 and it reserves that much for as long as it is held. A slot is granted only while
 
     the host's available RAM - what busy slots' jobs may still grow - what the test VMs
-        still need - SPARE (the owner's programs) - what earlier waiters want  >=  the peak
+        that series hold still need - SPARE (the owner's programs) - what earlier waiters
+        want  >=  the peak
 
 Every term is read at grant time, under pool.lock: the host's available RAM
-(GlobalMemoryStatusEx: the owner's programs and the VMs count as they are now), the private
-working set of each busy slot's job (its peak less that is what it may still take), and the
-VMs' working sets (VM_RAM each less what they hold: a VM that is off may power on at any
-time). So the host's available RAM stays above SPARE plus the VMs' unmet need, whatever
+(GlobalMemoryStatusEx: the owner's programs and any running VM count as they are now), the
+private working set of each busy slot's job (its peak less that is what it may still take),
+and for each VM a series holds (RAM holds, below), VM_RAM less what that VM's processes hold
+now. So the host's available RAM stays above SPARE plus the held VMs' unmet need, whatever
 builds run in whichever worktree, as long as each job stays under its kind's peak. Every
 slot is checked, a process's first too.
 
-Holds. tools\\wsb\\run-series.ps1 (Wait-CpuGate) writes holds\\series-<pid>.json before it
-launches the game: {"pid", "since", "until", "cpus", "runs", "prefix"}. While it holds,
-the pool hands out `cpus` fewer slots (the VM's vCPUs; all of them for a host run), and
-the gate waits until that many are free. The hold ends when the run's events.json (in
-<runs>\\<prefix>*, a folder made after "since") says the Story world is ready, when the
-run has a result.json, at "until", or when the series' process is gone.
+Holds. tools\\wsb\\run-series.ps1 writes two kinds to holds\\:
 
-    uv run dsff jobpool status        # slots, holders, holds
+- CPU holds (Wait-CpuGate, before it launches the game): series-<pid>-<time>.json,
+  {"pid", "since", "until", "cpus", "runs", "prefix"}. While it holds, the pool hands out
+  `cpus` fewer slots (the VM's vCPUs; all of them for a host run), and the gate waits until
+  that many are free. The hold ends when the run's events.json (in <runs>\\<prefix>*, a
+  folder made after "since") says the Story world is ready, when the run has a result.json,
+  at "until", or when the series' process is gone.
+- RAM holds (Wait-RamGate, before it powers the VM on or uses it): ram-<pid>-<time>.json,
+  {"pid", "since", "until", "cpus": 0, "vmx"}. While it holds, the pool reserves VM_RAM for
+  that VM less its processes' working set now (vm_need: a VM that is up already holds most
+  of it), so no new job is granted against it, and the gate (`jobpool vm-gate`) waits until
+  the running jobs leave that much free. It ends at "until" or when the series' process is
+  gone. A VM nobody holds reserves nothing: an idle VM that is up counts as the host's
+  used RAM, one that is off as nothing.
+
+    uv run dsff jobpool status        # slots, holders, holds, the RAM budget
 """
 
 from __future__ import annotations
@@ -73,7 +83,7 @@ SPARE = 3 * GB
 # One test VM in game: vmware-vmx working set 7.0 to 7.2 GB plus mksSandbox 0.5 GB at 4 GB of guest
 # RAM and 1 GB of graphics memory (research/in-game-tests.md, "Host cost"; both VMs together: 14.2 GB
 # plus 0.7 GB). The guest RAM is in the vmx's working set within 80 s of power-on, plus 1.4 GB of
-# overhead and the 3D part ("Memory measured"), so a VM that is off still needs all of it.
+# overhead and the 3D part once the game renders ("Memory measured"): a RAM hold reserves this.
 VM_RAM = int(7.7 * GB)
 VM_IMAGES = ("vmware-vmx.exe", "mkssandbox.exe")  # the processes that hold a VM's RAM (lower case)
 
@@ -158,11 +168,13 @@ def _slot_busy(path: Path) -> bool:
 
 
 def size(cpus: int | None = None, ram: int | None = None, *, gentle_on: bool | None = None) -> int:
-    """Slots without holds: port_batch.default_jobs (a slot per logical CPU, as many as
-    WORKER_RAM each fits in the RAM), at most gentle.CORES while out/gentle is on."""
+    """Slots without holds: a slot per logical CPU (the RAM budget bounds what they hold), at
+    most gentle.CORES while out/gentle is on. With the RAM check off, port_batch.default_jobs
+    (as many as WORKER_RAM each fits in the RAM). Every process must count the same slot
+    files: older code sized the pool with a 1.9 GB WORKER_RAM, 16 slots here as now."""
     from dsfforza.build import gentle, port_batch
 
-    n = port_batch.default_jobs(cpus, ram)
+    n = port_batch.default_jobs(cpus, ram) if _ram_off() else max(1, cpus or os.cpu_count() or 2)
     on = gentle.anywhere() if gentle_on is None else gentle_on
     return min(n, gentle.CORES) if on else n
 
@@ -254,7 +266,7 @@ def capacity(folder: Path | None = None, total: int | None = None) -> int:
     reserved = 0
     for hold in holds(folder):
         try:
-            reserved += int(hold.get("cpus", total))
+            reserved += int(hold.get("cpus", 0 if hold.get("vmx") else total))
         except (TypeError, ValueError):
             reserved += total
     return max(0, total - reserved)
@@ -313,31 +325,50 @@ def processes() -> dict[int, Proc]:
     return out
 
 
-_VMS: list = []  # the test VMs' count, read once per process (vm_count)
+def vm_pid(vmx: str, procs: dict[int, Proc]) -> int | None:
+    """The running vmware-vmx process of a VM (None: it is off). Its vmware.log, next to the
+    .vmx, starts "<UTC time> ... Log for VMware Workstation pid=<pid> ..." when the VM powers
+    on; the pid counts while a vmware-vmx.exe of that pid started within a minute of that time
+    (a later process may reuse the pid of a VM that is off)."""
+    import datetime
+    import re
+
+    try:
+        with (Path(vmx).parent / "vmware.log").open(encoding="utf-8", errors="replace") as f:
+            first = f.readline()
+    except OSError:
+        return None
+    found = re.match(r"(\S+?)Z?\s.*Log for VMware Workstation pid=(\d+)", first)
+    if not found:
+        return None
+    proc = procs.get(int(found.group(2)))
+    if proc is None or proc.name.lower() != "vmware-vmx.exe":
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(found.group(1)).replace(tzinfo=datetime.UTC)
+    except ValueError:
+        return None
+    epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.UTC)  # CreateTime: 100 ns units since 1601
+    started = epoch + datetime.timedelta(microseconds=proc.created / 10)
+    return proc.pid if abs((started - when).total_seconds()) < 60 else None
 
 
-def vm_count() -> int:
-    """The test VMs of this PC: DSF_VMS's .vmx paths, else those of tools/wsb/vm-common.ps1's
-    $VmDefaultPool that exist (as its Get-VmPool counts them). Read once per process: a
-    process a fingerprint records takes its slot, and so reads this, before it records."""
-    if _VMS:
-        return _VMS[0]
-    value = os.environ.get("DSF_VMS")
-    if value is not None:
-        paths = [p.strip() for p in value.split(";") if p.strip()]
-    else:
-        import re
+def vm_need(hold: dict, procs: dict[int, Proc]) -> int:
+    """What a RAM hold's VM still needs (bytes): VM_RAM less the working set of its vmware-vmx
+    and that process's children (its mksSandbox) now. The hold's "vm_pid", else vm_pid()."""
+    pid = hold.get("vm_pid") or vm_pid(str(hold.get("vmx", "")), procs)
+    return max(0, VM_RAM - sum(p.ws for p in tree(procs, pid)))
 
-        from dsfforza import REPO
 
-        try:
-            text = (REPO / "tools" / "wsb" / "vm-common.ps1").read_text(encoding="utf-8-sig")
-        except OSError:
-            text = ""
-        line = re.search(r"^\$VmDefaultPool\s*=(.*)$", text, re.MULTILINE)
-        paths = re.findall(r"'([^']+)'", line.group(1)) if line else []
-    _VMS.append(sum(1 for p in paths if Path(p).exists()))
-    return _VMS[0]
+def ram_holds(folder: Path | None) -> list[dict]:
+    """The active RAM holds (holds() with a "vmx"), one per VM (the earliest), oldest first."""
+    seen, out = set(), []
+    for hold in sorted(holds(folder) if folder is not None else [], key=lambda h: (h.get("since", 0), h["file"])):
+        key = str(hold.get("vmx", "")).lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(hold)
+    return out
 
 
 def spare() -> int:
@@ -363,7 +394,7 @@ def _slot_infos(folder: Path, total: int) -> list[dict]:
     return out
 
 
-def budget(slots: list[dict], avail: int | None, procs: dict[int, Proc], vms: int, keep: int) -> dict:
+def budget(slots: list[dict], avail: int | None, procs: dict[int, Proc], vm_holds: list[dict], keep: int) -> dict:
     """The RAM a new slot may reserve now ("headroom", bytes; None when the host's available
     RAM is unknown) and its terms:
 
@@ -371,16 +402,34 @@ def budget(slots: list[dict], avail: int | None, procs: dict[int, Proc], vms: in
       less the private working set of the process that holds the job's memory ("mem_pid",
       the holder's "pid" in the slot texts of older code); the whole reservation while that
       process isn't there (not started yet, or gone while its slot is still held);
-    - "vms": VM_RAM for each of `vms` test VMs, less the working sets of the VMs' processes;
+    - "vms": what the VMs of `vm_holds` (ram_holds()) still need (vm_need);
     - "spare": `keep`, for the owner's programs."""
     growing = 0
     for s in slots:
         ram = int(s.get("ram") or 0)
         growing += max(0, ram - tree_private_ws(procs, _mem_pid(s)))
-    resident = sum(p.ws for p in procs.values() if p.name.lower() in VM_IMAGES)
-    vm_need = max(0, vms * VM_RAM - resident)
-    headroom = None if avail is None else avail - growing - vm_need - keep
-    return {"available": avail, "growing": growing, "vms": vm_need, "spare": keep, "headroom": headroom}
+    vms = sum(vm_need(h, procs) for h in vm_holds)
+    headroom = None if avail is None else avail - growing - vms - keep
+    return {"available": avail, "growing": growing, "vms": vms, "spare": keep, "headroom": headroom}
+
+
+def vm_gate(hold_file: str, folder: Path | None = None, free=None, procs=None) -> dict:
+    """Whether a RAM hold's VM may start now: its need (vm_need) fits in the host's available
+    RAM less what the busy jobs may still grow, SPARE, and what the VMs of earlier RAM holds
+    still need. run-series.ps1's RAM gate asks this until it does ("ok")."""
+    folder = folder if folder is not None else root()
+    avail, table = _host(free, procs)
+    earlier, mine = [], None
+    for hold in ram_holds(folder):
+        if hold["file"] == hold_file:
+            mine = hold
+            break
+        earlier.append(hold)
+    if mine is None or avail is None or _ram_off():
+        return {"ok": True, "need": 0, "free": avail}
+    room = budget(_slot_infos(folder, size()), avail, table, earlier, spare())
+    need = vm_need(mine, table)
+    return {"ok": room["headroom"] >= need, "need": need, "free": room["headroom"], **room}
 
 
 def tree(procs: dict[int, Proc], pid: int | None) -> list[Proc]:
@@ -559,7 +608,7 @@ def try_acquire(
     queue: bool = True,
     child: bool = False,
     procs=None,
-    vms: int | None = None,
+    vm_holds: list[dict] | None = None,
 ) -> Slot | None:
     """A slot for a job whose measured peak is `ram` bytes, or None: the pool is at capacity
     (or holds reserve it), the free slots go to processes that have waited longer, or the
@@ -568,7 +617,7 @@ def try_acquire(
     slot reserves `ram` while it is held. The job's memory is this process's, or with
     `child`, a process it starts next and names with Slot.attach (until then the slot counts
     its whole reservation). free(): bytes available now (default port_batch.free_ram);
-    procs(): processes() (default); vms: vm_count() (default). Without a slot the process
+    procs(): processes() (default); vm_holds: ram_holds() (default). Without a slot the process
     joins the queue (unless `queue` is False: it will not ask again soon). With the pool
     off, always a slot (that holds nothing)."""
     folder = folder if folder is not None else root()
@@ -585,7 +634,8 @@ def try_acquire(
             fits = True
             if ram and not _ram_off():
                 avail, table = _host(free, procs)
-                room = budget(_slot_infos(folder, total), avail, table, vm_count() if vms is None else vms, spare())
+                held_vms = ram_holds(folder) if vm_holds is None else vm_holds
+                room = budget(_slot_infos(folder, total), avail, table, held_vms, spare())
                 fits = room["headroom"] is None or room["headroom"] - wanted >= ram
             if cap - len(busy) <= waiting or not fits:
                 if queue:
@@ -730,6 +780,14 @@ def die_with_me(proc) -> None:
         kernel32.AssignProcessToJobObject(_JOB[0], wintypes.HANDLE(int(proc._handle)))
 
 
+def adopt(slot: Slot, proc) -> None:
+    """A child process (subprocess.Popen) a slot was taken for (try_acquire(child=True)): it
+    ends with this process (die_with_me), and the pool counts its memory against the slot
+    (Slot.attach)."""
+    die_with_me(proc)
+    slot.attach(proc.pid)
+
+
 # --- status ------------------------------------------------------------------------------------
 
 
@@ -751,7 +809,7 @@ def status(folder: Path | None = None, total: int | None = None) -> dict:
         "capacity": capacity(folder, total),
         "busy": slots,
         "holds": holds(folder),
-        "ram": None if _ram_off() else budget(slots, avail, procs, vm_count(), spare()),
+        "ram": None if _ram_off() else budget(slots, avail, procs, ram_holds(folder), spare()),
         "waiting": waiting,
         "waiting_ram": wanted,
     }
@@ -783,7 +841,7 @@ def watch(out: Path, every: float = 2.0, seconds: float = 0.0, folder: Path | No
             while not seconds or time.time() - t0 < seconds:
                 slots = _slot_infos(folder, total) if folder is not None else []
                 avail, procs = _host()
-                room = budget(slots, avail, procs, vm_count(), spare())
+                room = budget(slots, avail, procs, ram_holds(folder), spare())
                 kinds: dict[str, int] = {}
                 for s in slots:
                     kind = _kind(str(s.get("label", "")))
@@ -835,7 +893,17 @@ def main(argv: list[str] | None = None) -> None:
     w.add_argument("--out", type=Path, required=True, help="the .csv")
     w.add_argument("--every", type=float, default=2.0, help="seconds between samples")
     w.add_argument("--seconds", type=float, default=0.0, help="stop after (default: Ctrl+C)")
+    g = sub.add_parser("vm-gate", help="exit 0 when a RAM hold's VM fits in the RAM now, 1 while it doesn't")
+    g.add_argument("--hold", required=True, help=r"the hold's file name in holds\ (ram-<pid>-<time>.json)")
     args = parser.parse_args(argv)
+    if args.cmd == "vm-gate":
+        gate = vm_gate(args.hold)
+        free = gate.get("free")
+        print(
+            f"VM needs {gate['need'] / GB:.1f} GB, {'none known' if free is None else f'{free / GB:.1f} GB'} free for it"
+            + (f" ({gate['growing'] / GB:.1f} GB the running jobs may still take)" if gate.get("growing") else "")
+        )
+        sys.exit(0 if gate["ok"] else 1)
     if args.cmd == "watch":
         found = watch(args.out, args.every, args.seconds)
         low = found["lowest_available"]
@@ -856,6 +924,9 @@ def main(argv: list[str] | None = None) -> None:
             f"  slot {s_['slot']:2d}: pid {s_.get('pid')} {s_.get('label', '')} ({age:.0f} s{mem}) {s_.get('cwd', '')}"
         )
     for h in st["holds"]:
+        if h.get("vmx"):
+            print(f"  hold {h['file']}: RAM of {h['vmx']} for pid {h.get('pid')} while its series runs")
+            continue
         print(
             f"  hold {h['file']}: {h.get('cpus')} CPUs for pid {h.get('pid')} until the world loads ({h.get('prefix')})"
         )

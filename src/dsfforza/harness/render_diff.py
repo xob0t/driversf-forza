@@ -268,15 +268,17 @@ def run(
                 for c in todo
             ]
             jobs = max(1, min(jobs, len(todo)))
-            chunks = [todo[i::jobs] for i in range(jobs)]
             if jobs == 1:
                 results = _worker((str(before), str(after), todo, str(out), views, size))
             else:
                 from dsfforza.build import jobpool
                 from dsfforza.build.port_batch import DIFF_RAM
 
-                with jobpool.executor(jobs, "render_compare diff", DIFF_RAM) as pool:
-                    args = [(str(before), str(after), c, str(out), views, size) for c in chunks]
+                # A process per car, each on a pool slot (DIFF_RAM, one car's peak): a process's
+                # memory grows over the cars it draws (3.5 GB after 20), and a car is the
+                # longest a test VM's RAM gate waits for it (research/batch.md, "Job pool", "RAM").
+                with jobpool.executor(jobs, "render_compare diff", DIFF_RAM, max_tasks_per_child=1) as pool:
+                    args = [(str(before), str(after), [c], str(out), views, size) for c in todo]
                     results = [r for part in pool.map(_worker, args) for r in part]
         finally:
             for a in archives:

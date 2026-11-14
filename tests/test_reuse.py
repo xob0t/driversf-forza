@@ -393,6 +393,8 @@ def test_workers_run_with_one_blas_thread():
     seen = []
 
     class FakeProc:
+        pid = 0  # jobpool.adopt names it in the worker's slot
+
         def poll(self):
             return 0
 

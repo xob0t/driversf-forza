@@ -87,6 +87,8 @@ param(
     [int]$CpuGate = 70,           # before each game launch, wait until the host's competing CPU (processes above below-normal
                                   # priority) stays under this percent for 15 s; 0: don't wait
     [int]$CpuGateSeconds = 600,   # longest wait at the CPU gate; the run starts anyway after it
+    [int]$RamGateSeconds = 2700,  # -Vm: longest wait at the RAM gate (the job pool's running jobs leaving the VM's RAM free,
+                                  # research/batch.md "Job pool", "RAM"); 45 min, a conversion worker's time limit
     [switch]$OnHost,
     [switch]$Vm,
     [string]$VmId,                # with -Vm: this VM only (1, 2, or a name; vm-common.ps1)
@@ -364,6 +366,45 @@ function Enter-PoolHold {
     $cpus
 }
 
+function Enter-RamHold {
+    # -Vm: the job pool's RAM hold for this series' VM (src\dsfforza\build\jobpool.py, "RAM holds"):
+    # holds\ram-<pid>-<time>.json naming the .vmx. While it lasts the pool reserves what the VM
+    # still needs (jobpool.VM_RAM less its processes' working set) and grants no job against it.
+    # It lasts the whole series: the pool ends it when this process is gone (or at "until").
+    # Returns the hold's file name ($null: no pool).
+    $folder = if ($env:DSFFORZA_POOL) { $env:DSFFORZA_POOL } else { Join-Path $env:LOCALAPPDATA 'dsfforza\pool' }
+    if ($folder -match '^(off|0)$') { return $null }
+    $holds = Join-Path $folder 'holds'
+    New-Item -ItemType Directory -Force -Path $holds | Out-Null
+    Get-ChildItem -LiteralPath $holds -Filter "ram-$PID-*.json" -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $name = "ram-$PID-$now.json"
+    [ordered]@{ pid = $PID; since = $now; until = $now + 24 * 3600; cpus = 0; vmx = $vmTarget.Vmx } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $holds $name) -Encoding ASCII
+    $name
+}
+
+function Wait-RamGate {
+    # -Vm, before the VM is started or used: hold its RAM (Enter-RamHold), then wait until the
+    # pool says it fits (`dsff jobpool vm-gate`: the host's available RAM less what the running
+    # jobs may still take, the spare and earlier holds' VMs), at most -RamGateSeconds. No new job
+    # starts against the hold meanwhile, so the wait is the running jobs' rest. Returns the line to log.
+    if ($RamGateSeconds -le 0) { return $null }
+    $name = Enter-RamHold
+    if (-not $name) { return $null }
+    $start = Get-Date; $said = $false; $last = ''
+    while ($true) {
+        $last = (& uv run --project $repo dsff jobpool vm-gate --hold $name 2>$null | Select-Object -Last 1)
+        $code = $LASTEXITCODE
+        $waited = [math]::Round(((Get-Date) - $start).TotalSeconds)
+        if ($code -eq 0) { return "RAM gate: passed after $waited s ($last)" }
+        if ($code -ne 1) { return "RAM gate: jobpool vm-gate failed (exit $code); going on" }
+        if ($waited -ge $RamGateSeconds) { return "RAM gate: $last after $waited s; starting anyway" }
+        if (-not $said -or $waited % 300 -lt 10) { "  RAM gate: $last; waiting for the job pool's running jobs" | Write-Host; $said = $true }
+        Start-Sleep -Seconds 10
+    }
+}
+
 function Get-PoolSlots {
     # [busy slots, CPUs the live holds reserve] of the job pool: a slot is busy while a process
     # holds a lock on its file at byte 1 GiB (jobpool.LOCK_AT).
@@ -411,7 +452,9 @@ function Test-LoadFailure($r) {
 }
 try {
     if (-not $OnHost) { Restore-DeadHostSession }
-    if ($OnHost) { Wait-HostPause; Enter-HostSession } elseif ($Vm) { Confirm-Vm } else { Confirm-Sandbox }
+    if ($OnHost) { Wait-HostPause; Enter-HostSession }
+    elseif ($Vm) { $ramGate = Wait-RamGate; if ($ramGate) { "  $ramGate" }; Confirm-Vm }
+    else { Confirm-Sandbox }
     # Each archive once; a run that fails while the world loads is retried once,
     # right after, from a new game start.
     $queue = [System.Collections.Generic.List[object]]::new()

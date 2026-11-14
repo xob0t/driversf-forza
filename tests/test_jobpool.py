@@ -119,7 +119,7 @@ def _ram_check():
 
 def test_every_slot_waits_for_ram_the_first_of_a_process_too():
     with _ram_check(), tempfile.TemporaryDirectory() as tmp:
-        kw = {"folder": Path(tmp), "total": 4, "vms": 0, "procs": dict}
+        kw = {"folder": Path(tmp), "total": 4, "vm_holds": [], "procs": dict}
         assert jobpool.held() == 0  # this process holds none: no exception for it (#613)
         # 4 GB available less 3 GB spare: 1 GB for jobs.
         assert jobpool.try_acquire("a", ram=2 * GB, free=lambda: 4 * GB, queue=False, **kw) is None
@@ -136,13 +136,15 @@ def test_every_slot_waits_for_ram_the_first_of_a_process_too():
 def test_a_slot_counts_what_its_job_holds_once():
     with _ram_check(), tempfile.TemporaryDirectory() as tmp:
         folder, me = Path(tmp), os.getpid()
-        slot = jobpool.try_acquire("a", ram=4 * GB, free=lambda: 10 * GB, folder=folder, total=4, vms=0, procs=dict)
+        slot = jobpool.try_acquire(
+            "a", ram=4 * GB, free=lambda: 10 * GB, folder=folder, total=4, vm_holds=[], procs=dict
+        )
         infos = jobpool._slot_infos(folder, 4)
         # The job holds 3 of its 4 GB, which the host's 7 GB available already leave out.
-        room = jobpool.budget(infos, 7 * GB, {me: _proc(me, 3 * GB)}, vms=0, keep=3 * GB)
+        room = jobpool.budget(infos, 7 * GB, {me: _proc(me, 3 * GB)}, vm_holds=[], keep=3 * GB)
         assert room["growing"] == 1 * GB and room["headroom"] == 3 * GB
         # Past its reservation it adds nothing more.
-        room = jobpool.budget(infos, 5 * GB, {me: _proc(me, 5 * GB)}, vms=0, keep=3 * GB)
+        room = jobpool.budget(infos, 5 * GB, {me: _proc(me, 5 * GB)}, vm_holds=[], keep=3 * GB)
         assert room["growing"] == 0 and room["headroom"] == 2 * GB
         slot.release()
 
@@ -150,12 +152,12 @@ def test_a_slot_counts_what_its_job_holds_once():
 def test_a_child_job_reserves_all_until_attached_then_counts_its_process_tree():
     with _ram_check(), tempfile.TemporaryDirectory() as tmp:
         folder, me = Path(tmp), os.getpid()
-        kw = {"folder": folder, "total": 4, "vms": 0, "procs": dict, "free": lambda: 10 * GB}
+        kw = {"folder": folder, "total": 4, "vm_holds": [], "procs": dict, "free": lambda: 10 * GB}
         slot = jobpool.try_acquire("car", ram=2 * GB, child=True, **kw)
         assert jobpool._slot_infos(folder, 4)[0]["mem_pid"] is None
         # The build process is large: none of it counts for its child's slot.
         assert (
-            jobpool.budget(jobpool._slot_infos(folder, 4), 10 * GB, {me: _proc(me, 5 * GB)}, 0, 0)["growing"] == 2 * GB
+            jobpool.budget(jobpool._slot_infos(folder, 4), 10 * GB, {me: _proc(me, 5 * GB)}, [], 0)["growing"] == 2 * GB
         )
         slot.attach(900)
         info = jobpool._slot_infos(folder, 4)[0]
@@ -168,36 +170,97 @@ def test_a_child_job_reserves_all_until_attached_then_counts_its_process_tree():
             902: _proc(902, 1 * GB, parent=900, created=50),
         }
         assert jobpool.tree_private_ws(procs, 900) == int(1.5 * GB) + (10 << 20)
-        assert jobpool.budget([info], 10 * GB, procs, 0, 0)["growing"] == 2 * GB - int(1.5 * GB) - (10 << 20)
+        assert jobpool.budget([info], 10 * GB, procs, [], 0)["growing"] == 2 * GB - int(1.5 * GB) - (10 << 20)
         slot.release()
 
 
-def test_the_vms_unmet_need_is_reserved():
-    vmx, mks = int(7.2 * GB), int(0.5 * GB)
-    one_vm = {1: _proc(1, 0, name="vmware-vmx.exe", ws=vmx), 2: _proc(2, 0, name="mksSandbox.exe", ws=mks)}
-    off = jobpool.budget([], 20 * GB, {}, vms=2, keep=3 * GB)
-    assert off["vms"] == 2 * jobpool.VM_RAM and off["headroom"] == 20 * GB - 2 * jobpool.VM_RAM - 3 * GB
-    assert jobpool.budget([], 13 * GB, one_vm, vms=2, keep=3 * GB)["vms"] == 2 * jobpool.VM_RAM - vmx - mks
-    assert jobpool.budget([], 13 * GB, one_vm, vms=1, keep=3 * GB)["vms"] == 0  # in game: it holds its need
+def test_a_ram_hold_reserves_what_its_vm_still_needs():
+    vmx, mks, idle = int(7.2 * GB), int(0.5 * GB), int(5.5 * GB)
+    procs = {
+        1: _proc(1, 0, name="vmware-vmx.exe", ws=vmx),
+        2: _proc(2, 0, parent=1, name="mksSandbox.exe", ws=mks),
+        3: _proc(3, 0, name="vmware-vmx.exe", ws=idle),  # another VM, up and idle, no hold: just used RAM
+    }
+    off = jobpool.budget([], 20 * GB, procs, vm_holds=[{"vmx": "a", "vm_pid": 99}], keep=3 * GB)
+    assert off["vms"] == jobpool.VM_RAM and off["headroom"] == 20 * GB - jobpool.VM_RAM - 3 * GB
+    in_game = jobpool.budget([], 13 * GB, procs, vm_holds=[{"vmx": "a", "vm_pid": 1}], keep=3 * GB)
+    assert in_game["vms"] == jobpool.VM_RAM - vmx - mks  # not counted twice: it holds most of it
+    up = jobpool.budget([], 13 * GB, procs, vm_holds=[{"vmx": "b", "vm_pid": 3}], keep=3 * GB)
+    assert up["vms"] == jobpool.VM_RAM - idle  # an idle VM that is up: the rest of its need
+    assert jobpool.budget([], 13 * GB, procs, vm_holds=[], keep=3 * GB)["vms"] == 0  # nobody holds: nothing
+
+
+def test_vm_pid_from_vmware_log():
+    with tempfile.TemporaryDirectory() as tmp:
+        vmx = Path(tmp) / "t.vmx"
+        (Path(tmp) / "vmware.log").write_text(
+            '2026-11-14T06:24:55.221Z -INFO vmware-vmx.exe 7712 [ws@4413 threadName="vmx"] Log for VMware '
+            "Workstation pid=7712 version=26.0.1 build=25688693 option=Release\n",
+            encoding="utf-8",
+        )
+        import datetime
+
+        epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.UTC)
+        at = datetime.datetime(2026, 11, 14, 6, 24, 50, tzinfo=datetime.UTC)
+        created = int((at - epoch).total_seconds() * 10_000_000)
+        assert jobpool.vm_pid(str(vmx), {7712: _proc(7712, 0, name="vmware-vmx.exe", created=created)}) == 7712
+        # The VM is off and the pid is another process now, or a vmx started much later.
+        assert jobpool.vm_pid(str(vmx), {7712: _proc(7712, 0, name="chrome.exe", created=created)}) is None
+        late = created + 3600 * 10_000_000
+        assert jobpool.vm_pid(str(vmx), {7712: _proc(7712, 0, name="vmware-vmx.exe", created=late)}) is None
+        assert jobpool.vm_pid(str(Path(tmp) / "none" / "x.vmx"), {}) is None
+
+
+def test_vm_gate_waits_for_running_jobs_and_earlier_holds():
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        first = _hold(folder, cpus=0, vmx="C:/VMs/a/a.vmx", since=time.time() - 5)
+        second = _hold(folder, cpus=0, vmx="C:/VMs/b/b.vmx")
+        assert jobpool.capacity(folder, 4) == 4  # a RAM hold reserves no CPU
+        assert [h["file"] for h in jobpool.ram_holds(folder)] == [first.name, second.name]
+        # 14 GB available less 3 spare: the first VM's 7.7 GB fits, both don't.
+        gate = jobpool.vm_gate(first.name, folder, free=lambda: 14 * GB, procs=dict)
+        assert gate["ok"] and gate["need"] == jobpool.VM_RAM
+        assert not jobpool.vm_gate(second.name, folder, free=lambda: 14 * GB, procs=dict)["ok"]
+        assert jobpool.vm_gate(second.name, folder, free=lambda: 19 * GB, procs=dict)["ok"]
+        # While they hold, no job is granted against them.
+        kw = {"folder": folder, "total": 4, "procs": dict, "queue": False}
+        assert jobpool.try_acquire("job", ram=2 * GB, free=lambda: 19 * GB, **kw) is None
+        slot = jobpool.try_acquire("job", ram=2 * GB, free=lambda: 21 * GB, **kw)
+        assert slot is not None
+        # A running job's growth comes before the VM: 14 GB now waits for the 2 GB it may take.
+        first.unlink()
+        second_gate = jobpool.vm_gate(second.name, folder, free=lambda: 12 * GB, procs=dict)
+        assert not second_gate["ok"] and second_gate["growing"] == 2 * GB
+        slot.release()
+        assert jobpool.vm_gate(second.name, folder, free=lambda: 12 * GB, procs=dict)["ok"]
 
 
 def test_concurrent_jobs_keep_the_floor():
-    """Jobs of three sizes ask, start, grow to their peaks and end: the host's available RAM
-    stays above the floor (SPARE plus a VM's need) throughout, with the owner's 8 GB used."""
+    """Jobs of three sizes ask, start, grow to their peaks and end, with the owner's 8 GB
+    used and a series holding a VM that is off: the host's available RAM stays above SPARE
+    plus the VM's need throughout. When the VM is up and in game, above SPARE."""
     with _ram_check(), tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         holding: dict[int, int] = {}  # fake pid -> bytes it holds now
+        vm = {"ws": 0}
+        hold = {"vmx": "a", "vm_pid": 5}
 
         def avail():
-            return 32 * GB - 8 * GB - sum(holding.values())
+            return 32 * GB - 8 * GB - sum(holding.values()) - vm["ws"]
 
         def procs():
-            return {pid: _proc(pid, held) for pid, held in holding.items()}
+            table = {pid: _proc(pid, held) for pid, held in holding.items()}
+            if vm["ws"]:
+                table[5] = _proc(5, 0, name="vmware-vmx.exe", ws=vm["ws"])
+            return table
 
         running, granted, refused = [], 0, 0
         for step in range(90):
+            if step == 45:  # the VM powers on and the game renders: it holds its whole need
+                vm["ws"] = jobpool.VM_RAM
             ram = (4 * GB, int(1.9 * GB), int(2.6 * GB))[step % 3]
-            kw = {"free": avail, "procs": procs, "folder": folder, "total": 16, "vms": 1, "child": True}
+            kw = {"free": avail, "procs": procs, "folder": folder, "total": 16, "vm_holds": [hold], "child": True}
             slot = jobpool.try_acquire(f"job{step}", ram, queue=False, **kw)
             if slot is None:
                 refused += 1
@@ -208,7 +271,7 @@ def test_concurrent_jobs_keep_the_floor():
                 holding[pid] = 0
                 running.append((slot, pid, ram))
             holding.update({pid: peak for _, pid, peak in running})  # each running job grows to its peak
-            assert avail() >= jobpool.SPARE + jobpool.VM_RAM, step
+            assert avail() >= jobpool.SPARE + jobpool.VM_RAM - vm["ws"], step
             if step % 5 == 4 and running:  # one ends now and then
                 slot, pid, _ = running.pop(0)
                 holding.pop(pid)
@@ -229,13 +292,13 @@ time.sleep(60)
 
 
 def test_a_later_smaller_job_leaves_the_ram_an_earlier_waiter_wants():
-    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+    with _ram_check(), tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         folder = Path(tmp)
         (folder / "queue").mkdir()
         waiter = subprocess.Popen([sys.executable, "-c", TICKET, str(folder)], stdout=subprocess.PIPE, text=True)
         try:
             assert waiter.stdout.readline().strip() == "queued"
-            kw = {"folder": folder, "total": 4, "vms": 0, "procs": dict, "queue": False, "free": lambda: 9 * GB}
+            kw = {"folder": folder, "total": 4, "vm_holds": [], "procs": dict, "queue": False, "free": lambda: 9 * GB}
             # 9 GB available less 3 spare: 6 GB, of which the earlier waiter wants 4.
             assert jobpool.try_acquire("small", ram=3 * GB, **kw) is None
             small = jobpool.try_acquire("small", ram=2 * GB, **kw)
@@ -257,7 +320,7 @@ def _hold(folder: Path, **values) -> Path:
     (folder / "holds").mkdir(parents=True, exist_ok=True)
     now = time.time()
     hold = {"pid": os.getpid(), "since": now, "until": now + 600, "cpus": 3, **values}
-    path = folder / "holds" / f"series-{hold['pid']}-{int(now)}.json"
+    path = folder / "holds" / f"series-{hold['pid']}-{time.time_ns()}.json"
     path.write_text(json.dumps(hold), encoding="utf-8")
     return path
 
