@@ -136,15 +136,18 @@ def _open(path: Path) -> int:
 
 @contextlib.contextmanager
 def _pool_lock(folder: Path, timeout: float = 30.0):
-    """pool.lock, held while slots are counted and taken (a few milliseconds)."""
+    """pool.lock, held while slots are counted and taken (a few milliseconds). Yields whether
+    it got the lock: after `timeout` it goes on without (a holder that hangs; a slot more at
+    worst), and a caller that must not (Slot.attach) checks."""
     fd = _open(folder / "pool.lock")
     deadline = time.monotonic() + timeout
+    locked = False
     try:
-        while not _try_lock(fd):
-            if time.monotonic() > deadline:  # a holder that hangs: go on without (a slot more at worst)
+        while not (locked := _try_lock(fd)):
+            if time.monotonic() > deadline:
                 break
             time.sleep(0.02)
-        yield
+        yield locked
     finally:
         _unlock(fd)
         os.close(fd)
@@ -500,16 +503,21 @@ class Slot:
     def __init__(self, path: Path | None, fd: int | None, label: str):
         self.path, self.fd, self.label = path, fd, label
 
-    def attach(self, pid: int) -> None:
+    def attach(self, pid: int, timeout: float = 30.0) -> bool:
         """Name the process that holds this slot's job's memory, when it is a child the holder
         started (port_batch's conversion workers and lint processes): budget() counts that
-        process's private working set against the slot's reservation."""
+        process's private working set against the slot's reservation. False: not named (no
+        pool, or pool.lock not got within `timeout`), so the slot still counts all of it."""
         if self.fd is None or self.path is None:
-            return
+            return False
         # Under pool.lock, as every reader that counts the slot's reservation (try_acquire,
-        # vm_gate): none of them sees the file half written. It is written over in place, padded
-        # to its old length, and cut only after, so it never holds less than a whole text.
-        with contextlib.suppress(OSError, ValueError), _pool_lock(self.path.parent):
+        # vm_gate): none of them sees the file half written. Without the lock (a holder that
+        # hangs) it isn't written at all: the slot keeps "mem_pid": null, its whole reservation.
+        # It is written over in place, padded to its old length, and cut only after, so it
+        # never holds less than a whole text.
+        with contextlib.suppress(OSError, ValueError), _pool_lock(self.path.parent, timeout) as locked:
+            if not locked:
+                return False
             os.lseek(self.fd, 0, os.SEEK_SET)
             old = os.read(self.fd, 1 << 16)
             info = json.loads(old.decode() or "{}")
@@ -518,6 +526,8 @@ class Slot:
             os.lseek(self.fd, 0, os.SEEK_SET)
             os.write(self.fd, text.ljust(len(old)))
             os.ftruncate(self.fd, len(text))
+            return True
+        return False
 
     def release(self) -> None:
         if self.fd is not None:

@@ -195,6 +195,11 @@ def test_attach_keeps_the_reservation_readable():
         assert done.wait(30)
         info = jobpool._slot_infos(folder, 4)[0]
         assert info["mem_pid"] == 7 and info["ram"] == 2 * GB
+        # A holder that keeps pool.lock past the timeout: attach doesn't write without it, and
+        # the slot keeps counting what it counted (#619).
+        with jobpool._pool_lock(folder):
+            assert slot.attach(9, timeout=0.2) is False
+        assert jobpool._slot_infos(folder, 4)[0]["mem_pid"] == 7
         slot.attach(123456)  # longer and shorter texts both read back whole
         slot.attach(8)
         assert json.loads(slot.path.read_text(encoding="utf-8"))["mem_pid"] == 8
