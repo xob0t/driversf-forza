@@ -153,6 +153,27 @@ bool ready_models(uint8_t* s, uint8_t* ready)
     return p == head;
 }
 
+// 005A6EA0's tests (above) say a model is listed: requested and owned. Vehicle
+// construction 008D1380 needs more. It builds the vehicle from the spec that the
+// spec manager [Engine+0x778] get(id) (vtable +0x14, 0086B9E0) returns, and it
+// requests that spec's model ([[spec+0x4850]+0x14], 0088C8F0; 008D144A, 008D1475).
+// A model's spec registers only once its UPVH has loaded (0086C0C0 -> vtable
+// +0x48), and until then get() returns the first listed spec, the lowest resident
+// ID (research/traffic.md, "Vehicle spec manager map"). Vanilla traffic never asks
+// for such a model, since a set is fully loaded before traffic starts.
+bool spec_ready(uint32_t id)
+{
+    using SpecGet = void**(__thiscall*)(void*, void**, uint32_t);
+    uint8_t* e = engine();
+    void* manager = e ? *(void**)(e + 0x778) : nullptr;
+    if (!manager) return true;  // no manager: nothing to check against; native readiness stands
+    void* spec = nullptr;
+    ((SpecGet)0x0086B9E0)(manager, &spec, id);
+    if (!spec) return false;
+    uint8_t* info = *(uint8_t**)((uint8_t*)spec + 0x4850);
+    return info && *(uint32_t*)(info + 0x14) == id;
+}
+
 bool valid_model(uint32_t id, bool package)
 {
     if (id >= kModels) return false;
@@ -247,9 +268,12 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     // draw isn't reused as a biased fallback draw. Cold groups fall back to
     // the other group until a model is ready. Retired models cannot fill a
     // loading gap; otherwise the first ready model populates whole roads.
+    // A listed model is spawnable only once the spec manager resolves it: until
+    // its spec registers, construction would build the first listed spec instead.
     int group = chosen ? (chosen->package != 0) : -1;
     for (uint32_t i = 0; i < row->size; ++i)
-        if (choices[i].package && g_retiring[choices[i].id]) ready[choices[i].id] = 0;
+        if ((choices[i].package && g_retiring[choices[i].id]) || (ready[choices[i].id] && !spec_ready(choices[i].id)))
+            ready[choices[i].id] = 0;
     const Pair* fallback = chosen && ready[chosen->id] ? chosen :
             sample(choices,row->size,row->total,seed,valid,ready,group,true);
     if (!fallback && group != -1) fallback = sample(choices,row->size,row->total,seed,valid,ready,!group,true);
@@ -494,6 +518,35 @@ int mod_traffic_selftest()
         if((actual>=700)!=(expected>=700) || actual==701) {
             LIVE_CHECK((actual>=700)==(expected>=700) && actual!=701); break;
         }
+    }
+    // A listed model whose spec hasn't registered yet is not spawnable: the spec
+    // manager (its map laid out as 0086BFA0 does, models registered through
+    // operator[] 0086BE10) would hand construction the first listed spec instead.
+    {
+        static uint8_t manager[0x6A4 + 0x20];
+        static uint8_t specs[0x4850 + 4 * 16];
+        static uint32_t infos[4][6];
+        memset(manager, 0, sizeof manager);
+        *(uint8_t**)(manager + 0x254) = manager + 0x260;
+        *(uint8_t**)(manager + 0x698) = manager + 0x698;
+        *(uint8_t**)(manager + 0x69C) = manager + 0x698;
+        uint32_t ids[4] = {1, 2, 700, 701};
+        auto add = [&](int k) {
+            infos[k][5] = ids[k];
+            *(uint32_t**)(specs + 0x4850 + 16 * k) = infos[k];
+            int* value = ((int*(__thiscall*)(void*, const uint32_t*))0x0086BE10)(manager + 0x254, &ids[k]);
+            value[0] = (int)(uintptr_t)(specs + 16 * k); value[1] = 0;
+        };
+        add(0); add(1);
+        *(void**)(e + 0x778) = manager;
+        bool listed_only = false;
+        for(uint32_t seed=0;seed<10000 && !listed_only;++seed) listed_only = decide(&range,nullptr,seed)==700;
+        LIVE_CHECK(!listed_only && !spec_ready(700) && spec_ready(1));
+        add(2);
+        bool spawned = false;
+        for(uint32_t seed=0;seed<10000 && !spawned;++seed) spawned = decide(&range,nullptr,seed)==700;
+        LIVE_CHECK(spawned && spec_ready(700));
+        *(void**)(e + 0x778) = nullptr; g_selected = -1; g_rotate_selected = false;
     }
     // A ready first model must not fill whole roads while its peers load.
     // After its first actual birth it drains, retaining the vehicle's owner.
