@@ -15,8 +15,8 @@ Selection (combinable; a list keeps its order, filters keep roster order):
     --exclude NAME ...          --diverse N (round-robin over body classes, N cars)  --max N
 
 Every car is built by port_car.build_car in its own worker process (Below
-Normal priority, at most --jobs at a time, a new one only while 1.9 GB of RAM
-is free), which writes the car's three VEHC entries to work/<media>.chnk and
+Normal priority, at most --jobs at a time, a new one only while the job pool's RAM
+budget has its peak, WORKER_RAM; jobpool.py), which writes the car's three VEHC entries to work/<media>.chnk and
 a report. The merge then registers them into one copy of the vanilla archive
 (SSLP/VSCT records), checks the root entry limit (--root-limit, default 1100:
 150 vanilla cars plus at most 215 new ones; dsfcars.asi's archive module lifts
@@ -99,13 +99,18 @@ from dsfforza.game import game_paths
 GARAGE_IDS = range(1, 62)  # garage loop covers 0..303; 0 is left alone, vanilla starts at 62
 HIGH_FIRST_ID = 304
 WORKER_TIMEOUT = 45 * 60
-# Most conversion workers peak under 1.8 GB, the slowest supercars (KOE_CCXR_09 and the like) at
-# about 3.1 GB; a garage-picture render process at about 1.6 GB (it holds the archive's tree, 573
-# cars). Peaks of the job objects, 32- and 30-car builds, 2026-10-30.
-WORKER_RAM = 1900 << 20
-RENDER_RAM = 1700 << 20
-LINT_RAM = 2600 << 20  # a lint-many process: the archive's tree and its tables, 2.5 GB at 573 cars
-FREE_RAM_FOR_WORKER = WORKER_RAM
+# Each job kind's RAM in the job pool (jobpool.py): what its slot reserves while held. The kind's
+# highest measured peak private bytes (the kernel's PeakPagefileUsage over the job's process tree),
+# rounded up to 100 MiB (research/batch.md, "Job pool", "RAM measured", 2026-11-14).
+WORKER_RAM = 3300 << 20  # a conversion worker: 3264 MiB VIP_Viper_13, 3.0 GiB AST_V12Zagato_12; most cars 0.9-1.1
+RENDER_RAM = 1700 << 20  # a garage-picture render process: 1650 MiB over the 573-car archive
+LINT_RAM = 3100 << 20  # an upvh lint-many process: 3036 MiB merging the 721-car roster's plan in memory
+DIFF_RAM = 2900 << 20  # a render_compare diff process, one car each: 2805 MiB over 80 cars (one drawing 20: 3381)
+COMPARE_RAM = 1200 << 20  # a render_compare run process: 1123 MiB on the roster build (4 large cars)
+RESCORE_RAM = 800 << 20  # a render_compare rescore process: 736 MiB
+MEMO_RAM = 1200 << 20  # a door-count memo process (fingerprint.Memo.fill): 1153 MiB, the roster's 716 cars
+COCKPIT_SURVEY_RAM = 800 << 20  # a cockpit_survey process: 711 MiB (the six largest cars and 8 others)
+PLATES_SURVEY_RAM = 1200 << 20  # a plates_survey process: 1172 MiB (12 cars, the largest among them)
 BELOW_NORMAL = 0x00004000
 DEFAULT_PORT_OPTIONS = "--mdxn-limit 0x2C0000 --damage"
 
@@ -143,8 +148,9 @@ def total_ram() -> int | None:
 def default_jobs(cpus: int | None = None, ram: int | None = None) -> int:
     """Worker processes: one per logical CPU, as many as WORKER_RAM each fits in the PC's
     RAM. More than one per core still helps: 32 cars converted in 374 s with 8 workers,
-    345 s with 12 and 323 s with 16 on an 8-core, 16-thread PC (2026-10-30). A new worker
-    also waits for FREE_RAM_FOR_WORKER, so other programs' memory is left alone."""
+    345 s with 12 and 323 s with 16 on an 8-core, 16-thread PC (2026-10-30). With the job
+    pool on, a new worker also waits until its RAM budget has WORKER_RAM (jobpool.budget),
+    so other programs' and the test VMs' memory is left alone."""
     cpus = cpus if cpus is not None else os.cpu_count()
     ram = ram if ram is not None else total_ram()
     jobs = max(1, cpus or 2)
@@ -850,9 +856,9 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
     try:
         while pending or running:
             while pending and len(running) < parallel:
-                # A slot of the job pool all builds and surveys share (jobpool.py): it waits for
-                # FREE_RAM_FOR_WORKER unless this process holds none yet.
-                slot = jobpool.try_acquire(pending[0]["media"], FREE_RAM_FOR_WORKER)
+                # A slot of the job pool all builds and surveys share (jobpool.py), reserving
+                # WORKER_RAM for the worker process started next (attach).
+                slot = jobpool.try_acquire(pending[0]["media"], WORKER_RAM, child=True)
                 if slot is None:
                     if not running and not waiting:
                         log("  job pool: every slot is busy; waiting (uv run dsff jobpool status)")
@@ -868,7 +874,7 @@ def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress
                     log(f"  FAILED to start {job['media']}: {error}")
                     emit(progress, "car_done", media=job["media"], report=results[job["media"]], log=None)
                     continue
-                jobpool.die_with_me(proc)  # its slot is this process's: it ends with it
+                jobpool.adopt(slot, proc)  # it ends with this process, its memory counts against the slot
                 running[job["media"]] = (proc, time.time(), log_file)
                 slots[job["media"]] = slot
                 log(f"  start {job['media']} (ID {job['spool_id']}); {len(running)} running, {len(pending)} queued")
@@ -1452,10 +1458,12 @@ def lint_all(
     flags = gentle.creation_flags(BELOW_NORMAL if os.name == "nt" else 0)
     processes = max(1, min(parallel, -(-len(cars) // LINT_GROUP)))
     # Slots of the machine's job pool (jobpool.py): one waited for, the rest as free now.
-    slots = jobpool.lease("lint", processes, LINT_RAM, log=log)
+    slots = jobpool.lease("lint", processes, LINT_RAM, log=log, child=True)
     processes = len(slots)
     size = -(-len(cars) // processes) if cars else 1
     groups = [cars[k : k + size] for k in range(0, len(cars), size)]
+    for extra in slots[max(1, len(groups)) :]:  # fewer groups than slots: no process for these
+        extra.release()
     procs = []
     try:
         for n, group in enumerate(groups):
@@ -1484,7 +1492,7 @@ def lint_all(
                     ),
                 )
             )
-            jobpool.die_with_me(procs[-1][2])
+            jobpool.adopt(slots[n], procs[-1][2])  # it ends with this process, its memory counts against its slot
         return _lint_results(procs, records, log)
     finally:
         for slot in slots:
@@ -2906,9 +2914,10 @@ def build_parser() -> argparse.ArgumentParser:
                 "--jobs",
                 type=int,
                 default=default_jobs(),
-                help="worker processes of this build at most (default: one per logical CPU, as many as 1.9 GB "
-                f"each fits in the RAM: {default_jobs()} here; out/gentle caps it at 2). Every build and "
-                "survey on the PC takes its slots from one job pool of that size (jobpool.py)",
+                help="worker processes of this build at most (default: one per logical CPU, as many as "
+                f"{WORKER_RAM / (1 << 30):.1f} GB each fits in the RAM: {default_jobs()} here; out/gentle caps it "
+                "at 2). Every build and survey on the PC takes its slots from one job pool, as its RAM budget "
+                "allows (jobpool.py)",
             )
             p.add_argument("--port", help=f"port_car options for every car (default: {DEFAULT_PORT_OPTIONS!r})")
             p.add_argument("--gui", action="store_true", help="also build gui.sp, Fonts.fchunk and hud.lua")

@@ -385,6 +385,12 @@ was up.
     other elevated ones) count. The series prints the gate's line and puts it
     in the run folder (`cpu-gate.txt`). The run's result wait grows with
     `-StorySeconds`.
+  - `run-series.ps1 -Vm`: a RAM gate before the VM is started or used
+    (2026-11-14, #613). The series holds the VM's RAM in the job pool for its
+    whole length (`holds\ram-<pid>-<time>.json`): 7.7 GB less what the VM
+    holds already, and no build job is granted against it; it waits until the
+    running jobs leave that much free, at most `-RamGateSeconds` (2700), then
+    starts anyway (research/batch.md, "Job pool", "The floor and the wait").
   - `run-series.ps1`: a run that fails while the world loads (stalled, capped,
     crash dialog, game exited in the frontend) is run again once, at once, on
     the same VM in a new run folder ("the world didn't load; retrying once").

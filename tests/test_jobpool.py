@@ -6,6 +6,7 @@ uv run python -m tests jobpool
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -98,23 +99,307 @@ def test_a_freed_slot_goes_to_who_waited_longest():
         jobpool.leave_queue()
 
 
-def test_a_second_slot_waits_for_ram():
-    with tempfile.TemporaryDirectory() as tmp:
-        folder = Path(tmp)
-        first = jobpool.try_acquire("a", ram=1 << 40, free=lambda: 1 << 20, folder=folder, total=4)
-        assert first is not None  # a process holding none gets one whatever the RAM
-        assert jobpool.try_acquire("b", ram=1 << 40, free=lambda: 1 << 20, folder=folder, total=4, queue=False) is None
-        second = jobpool.try_acquire("b", ram=1 << 20, free=lambda: 1 << 30, folder=folder, total=4)
+GB = jobpool.GB
+
+
+def _proc(pid: int, private_ws: int, parent: int = 0, name: str = "python.exe", created: int = 0, ws: int = 0):
+    return jobpool.Proc(pid, parent, name, (ws, 0, 0, 0, private_ws), created)
+
+
+@contextlib.contextmanager
+def _ram_check():
+    """The RAM budget on (the test run turns it off for its own builds: tests/__main__.py),
+    with the default SPARE whatever the owner set."""
+    saved = {name: os.environ.pop(name, None) for name in (jobpool.RAM_ENV, jobpool.SPARE_ENV)}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is not None:
+                os.environ[name] = value
+
+
+def test_every_slot_waits_for_ram_the_first_of_a_process_too():
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        kw = {"folder": Path(tmp), "total": 4, "vm_holds": [], "procs": dict}
+        assert jobpool.held() == 0  # this process holds none: no exception for it (#613)
+        # 4 GB available less 3 GB spare: 1 GB for jobs.
+        assert jobpool.try_acquire("a", ram=2 * GB, free=lambda: 4 * GB, queue=False, **kw) is None
+        first = jobpool.try_acquire("a", ram=2 * GB, free=lambda: 6 * GB, **kw)
+        assert first is not None
+        # The first job reserves its 2 GB before it uses any: 6 - 2 - 3 = 1 GB left.
+        assert jobpool.try_acquire("b", ram=2 * GB, free=lambda: 6 * GB, queue=False, **kw) is None
+        second = jobpool.try_acquire("b", ram=1 * GB, free=lambda: 6 * GB, **kw)
         assert second is not None
         first.release()
         second.release()
+
+
+def test_a_slot_counts_what_its_job_holds_once():
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder, me = Path(tmp), os.getpid()
+        slot = jobpool.try_acquire(
+            "a", ram=4 * GB, free=lambda: 10 * GB, folder=folder, total=4, vm_holds=[], procs=dict
+        )
+        infos = jobpool._slot_infos(folder, 4)
+        # The job holds 3 of its 4 GB, which the host's 7 GB available already leave out.
+        room = jobpool.budget(infos, 7 * GB, {me: _proc(me, 3 * GB)}, vm_holds=[], keep=3 * GB)
+        assert room["growing"] == 1 * GB and room["headroom"] == 3 * GB
+        # Past its reservation it adds nothing more.
+        room = jobpool.budget(infos, 5 * GB, {me: _proc(me, 5 * GB)}, vm_holds=[], keep=3 * GB)
+        assert room["growing"] == 0 and room["headroom"] == 2 * GB
+        slot.release()
+
+
+def test_growth_between_the_two_samples_is_not_credited_twice():
+    """A job that grows between the reads of the processes and of the available RAM: its
+    memory is out of the available RAM or still in its slot's reservation, at least once."""
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder, me = Path(tmp), os.getpid()
+        kw = {"folder": folder, "total": 4, "vm_holds": [], "queue": False}
+        job = jobpool.try_acquire("job", ram=4 * GB, free=lambda: 10 * GB, procs=dict, **kw)
+        assert job is not None
+        grown = []  # the job takes its 4 GB right after the first of the two reads
+
+        def free():
+            avail = 5 * GB if grown else 9 * GB
+            grown.append(1)
+            return avail
+
+        def procs():
+            table = {me: _proc(me, 4 * GB if grown else 0)}
+            grown.append(1)
+            return table
+
+        # 9 GB, the job holding nothing yet, or 5 GB, the job holding its 4: 2 GB either way, but
+        # 9 GB with the job holding 4 would credit its 4 GB twice (6 GB).
+        assert jobpool.try_acquire("next", ram=4 * GB, free=free, procs=procs, **kw) is None
+        assert jobpool.vm_gate("none.json", folder, free=free, procs=procs)["ok"]  # no hold: nothing to check
+        job.release()
+
+
+def test_attach_keeps_the_reservation_readable():
+    """Slot.attach rewrites the slot text under pool.lock, which grants read it under."""
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        kw = {"folder": folder, "total": 4, "vm_holds": [], "procs": dict, "free": lambda: 10 * GB}
+        slot = jobpool.try_acquire("car", ram=2 * GB, child=True, **kw)
+        with jobpool._pool_lock(folder):
+            # While another process holds pool.lock (counting slots), attach waits for it.
+            import threading
+
+            done = threading.Event()
+            threading.Thread(target=lambda: (slot.attach(7), done.set()), daemon=True).start()
+            assert not done.wait(0.5)
+            assert jobpool._slot_infos(folder, 4)[0]["mem_pid"] is None
+        assert done.wait(30)
+        info = jobpool._slot_infos(folder, 4)[0]
+        assert info["mem_pid"] == 7 and info["ram"] == 2 * GB
+        # A holder that keeps pool.lock past the timeout: attach doesn't write without it, and
+        # the slot keeps counting what it counted (#619).
+        with jobpool._pool_lock(folder):
+            assert slot.attach(9, timeout=0.2) is False
+        assert jobpool._slot_infos(folder, 4)[0]["mem_pid"] == 7
+        slot.attach(123456)  # longer and shorter texts both read back whole
+        slot.attach(8)
+        assert json.loads(slot.path.read_text(encoding="utf-8"))["mem_pid"] == 8
+        # The readers fail closed the same way: past the lock's timeout a RAM-checked grant gets
+        # no slot and the VM gate says not ok; a grant without a RAM check still goes on.
+        with jobpool._pool_lock(folder):
+            assert jobpool.try_acquire("car", ram=GB, queue=False, lock_timeout=0.2, **kw) is None
+            gate = jobpool.vm_gate("x.json", folder, free=kw["free"], procs=dict, lock_timeout=0.2)
+            assert not gate["ok"] and gate["locked"] is False
+            plain = jobpool.try_acquire("tool", queue=False, lock_timeout=0.2, **kw)
+            assert plain is not None
+        plain.release()
+        slot.release()
+
+
+def test_a_child_job_reserves_all_until_attached_then_counts_its_process_tree():
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder, me = Path(tmp), os.getpid()
+        kw = {"folder": folder, "total": 4, "vm_holds": [], "procs": dict, "free": lambda: 10 * GB}
+        slot = jobpool.try_acquire("car", ram=2 * GB, child=True, **kw)
+        assert jobpool._slot_infos(folder, 4)[0]["mem_pid"] is None
+        # The build process is large: none of it counts for its child's slot.
+        assert (
+            jobpool.budget(jobpool._slot_infos(folder, 4), 10 * GB, {me: _proc(me, 5 * GB)}, [], 0)["growing"] == 2 * GB
+        )
+        slot.attach(900)
+        info = jobpool._slot_infos(folder, 4)[0]
+        assert info["mem_pid"] == 900 and info["label"] == "car" and info["ram"] == 2 * GB
+        # 900 is a venv launcher whose interpreter, 901, holds the memory. 902 is older than 900:
+        # an earlier process of that pid started it, so it isn't counted.
+        procs = {
+            900: _proc(900, 10 << 20, parent=me, created=100),
+            901: _proc(901, int(1.5 * GB), parent=900, created=101),
+            902: _proc(902, 1 * GB, parent=900, created=50),
+        }
+        assert jobpool.tree_private_ws(procs, 900) == int(1.5 * GB) + (10 << 20)
+        assert jobpool.budget([info], 10 * GB, procs, [], 0)["growing"] == 2 * GB - int(1.5 * GB) - (10 << 20)
+        slot.release()
+
+
+def test_a_ram_hold_reserves_what_its_vm_still_needs():
+    vmx, mks, idle = int(7.2 * GB), int(0.5 * GB), int(5.5 * GB)
+    procs = {
+        1: _proc(1, 0, name="vmware-vmx.exe", ws=vmx),
+        2: _proc(2, 0, parent=1, name="mksSandbox.exe", ws=mks),
+        3: _proc(3, 0, name="vmware-vmx.exe", ws=idle),  # another VM, up and idle, no hold: just used RAM
+    }
+    off = jobpool.budget([], 20 * GB, procs, vm_holds=[{"vmx": "a", "vm_pid": 99}], keep=3 * GB)
+    assert off["vms"] == jobpool.VM_RAM and off["headroom"] == 20 * GB - jobpool.VM_RAM - 3 * GB
+    in_game = jobpool.budget([], 13 * GB, procs, vm_holds=[{"vmx": "a", "vm_pid": 1}], keep=3 * GB)
+    assert in_game["vms"] == jobpool.VM_RAM - vmx - mks  # not counted twice: it holds most of it
+    up = jobpool.budget([], 13 * GB, procs, vm_holds=[{"vmx": "b", "vm_pid": 3}], keep=3 * GB)
+    assert up["vms"] == jobpool.VM_RAM - idle  # an idle VM that is up: the rest of its need
+    assert jobpool.budget([], 13 * GB, procs, vm_holds=[], keep=3 * GB)["vms"] == 0  # nobody holds: nothing
+
+
+def test_vm_pid_from_vmware_log():
+    with tempfile.TemporaryDirectory() as tmp:
+        vmx = Path(tmp) / "t.vmx"
+        (Path(tmp) / "vmware.log").write_text(
+            '2026-11-14T06:24:55.221Z -INFO vmware-vmx.exe 7712 [ws@4413 threadName="vmx"] Log for VMware '
+            "Workstation pid=7712 version=26.0.1 build=25688693 option=Release\n",
+            encoding="utf-8",
+        )
+        import datetime
+
+        epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.UTC)
+        at = datetime.datetime(2026, 11, 14, 6, 24, 50, tzinfo=datetime.UTC)
+        created = int((at - epoch).total_seconds() * 10_000_000)
+        assert jobpool.vm_pid(str(vmx), {7712: _proc(7712, 0, name="vmware-vmx.exe", created=created)}) == 7712
+        # The VM is off and the pid is another process now, or a vmx started much later.
+        assert jobpool.vm_pid(str(vmx), {7712: _proc(7712, 0, name="chrome.exe", created=created)}) is None
+        late = created + 3600 * 10_000_000
+        assert jobpool.vm_pid(str(vmx), {7712: _proc(7712, 0, name="vmware-vmx.exe", created=late)}) is None
+        assert jobpool.vm_pid(str(Path(tmp) / "none" / "x.vmx"), {}) is None
+
+
+def test_vm_gate_waits_for_running_jobs_and_earlier_holds():
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        first = _hold(folder, cpus=0, vmx="C:/VMs/a/a.vmx", since=time.time() - 5)
+        second = _hold(folder, cpus=0, vmx="C:/VMs/b/b.vmx")
+        assert jobpool.capacity(folder, 4) == 4  # a RAM hold reserves no CPU
+        assert [h["file"] for h in jobpool.ram_holds(folder)] == [first.name, second.name]
+        # 14 GB available less 3 spare: the first VM's 7.7 GB fits, both don't.
+        gate = jobpool.vm_gate(first.name, folder, free=lambda: 14 * GB, procs=dict)
+        assert gate["ok"] and gate["need"] == jobpool.VM_RAM
+        assert not jobpool.vm_gate(second.name, folder, free=lambda: 14 * GB, procs=dict)["ok"]
+        assert jobpool.vm_gate(second.name, folder, free=lambda: 19 * GB, procs=dict)["ok"]
+        # While they hold, no job is granted against them.
+        kw = {"folder": folder, "total": 4, "procs": dict, "queue": False}
+        assert jobpool.try_acquire("job", ram=2 * GB, free=lambda: 19 * GB, **kw) is None
+        slot = jobpool.try_acquire("job", ram=2 * GB, free=lambda: 21 * GB, **kw)
+        assert slot is not None
+        # A running job's growth comes before the VM: 14 GB now waits for the 2 GB it may take.
+        first.unlink()
+        second_gate = jobpool.vm_gate(second.name, folder, free=lambda: 12 * GB, procs=dict)
+        assert not second_gate["ok"] and second_gate["growing"] == 2 * GB
+        slot.release()
+        assert jobpool.vm_gate(second.name, folder, free=lambda: 12 * GB, procs=dict)["ok"]
+
+
+def test_vm_gate_checks_a_hold_an_earlier_one_of_the_same_vm_shadows():
+    """A series that ended and left its hold (its PowerShell session still alive): the next
+    series' hold of that VM is still checked, its need counted once."""
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        _hold(folder, cpus=0, vmx="C:/VMs/a/a.vmx", since=time.time() - 60)
+        mine = _hold(folder, cpus=0, vmx="C:/VMs/A/a.vmx")
+        assert [h["file"] for h in jobpool.ram_holds(folder)] != [mine.name]  # shadowed in the budget
+        gate = jobpool.vm_gate(mine.name, folder, free=lambda: 9 * GB, procs=dict)
+        assert not gate["ok"] and gate["need"] == jobpool.VM_RAM and gate["vms"] == 0
+        assert jobpool.vm_gate(mine.name, folder, free=lambda: 11 * GB, procs=dict)["ok"]
+
+
+def test_concurrent_jobs_keep_the_floor():
+    """Jobs of three sizes ask, start, grow to their peaks and end, with the owner's 8 GB
+    used and a series holding a VM that is off: the host's available RAM stays above SPARE
+    plus the VM's need throughout. When the VM is up and in game, above SPARE."""
+    with _ram_check(), tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        holding: dict[int, int] = {}  # fake pid -> bytes it holds now
+        vm = {"ws": 0}
+        hold = {"vmx": "a", "vm_pid": 5}
+
+        def avail():
+            return 32 * GB - 8 * GB - sum(holding.values()) - vm["ws"]
+
+        def procs():
+            table = {pid: _proc(pid, held) for pid, held in holding.items()}
+            if vm["ws"]:
+                table[5] = _proc(5, 0, name="vmware-vmx.exe", ws=vm["ws"])
+            return table
+
+        running, granted, refused = [], 0, 0
+        for step in range(90):
+            if step == 45:  # the VM powers on and the game renders: it holds its whole need
+                vm["ws"] = jobpool.VM_RAM
+            ram = (4 * GB, int(1.9 * GB), int(2.6 * GB))[step % 3]
+            kw = {"free": avail, "procs": procs, "folder": folder, "total": 16, "vm_holds": [hold], "child": True}
+            slot = jobpool.try_acquire(f"job{step}", ram, queue=False, **kw)
+            if slot is None:
+                refused += 1
+            else:
+                granted += 1
+                pid = 1000 + step
+                slot.attach(pid)
+                holding[pid] = 0
+                running.append((slot, pid, ram))
+            holding.update({pid: peak for _, pid, peak in running})  # each running job grows to its peak
+            assert avail() >= jobpool.SPARE + jobpool.VM_RAM - vm["ws"], step
+            if step % 5 == 4 and running:  # one ends now and then
+                slot, pid, _ = running.pop(0)
+                holding.pop(pid)
+                slot.release()
+        assert granted >= 10 and refused >= 10
+        for slot, _, _ in running:
+            slot.release()
+
+
+TICKET = """
+import sys, time
+from pathlib import Path
+from dsfforza.build import jobpool
+jobpool._join_queue(Path(sys.argv[1]), 4 << 30)
+print("queued", flush=True)
+time.sleep(60)
+"""
+
+
+def test_a_later_smaller_job_leaves_the_ram_an_earlier_waiter_wants():
+    with _ram_check(), tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        folder = Path(tmp)
+        (folder / "queue").mkdir()
+        waiter = subprocess.Popen([sys.executable, "-c", TICKET, str(folder)], stdout=subprocess.PIPE, text=True)
+        try:
+            assert waiter.stdout.readline().strip() == "queued"
+            kw = {"folder": folder, "total": 4, "vm_holds": [], "procs": dict, "queue": False, "free": lambda: 9 * GB}
+            # 9 GB available less 3 spare: 6 GB, of which the earlier waiter wants 4.
+            assert jobpool.try_acquire("small", ram=3 * GB, **kw) is None
+            small = jobpool.try_acquire("small", ram=2 * GB, **kw)
+            assert small is not None
+            small.release()
+        finally:
+            waiter.kill()
+            waiter.wait()
+
+
+def test_processes_reads_this_process():
+    if os.name != "nt":
+        return
+    me = jobpool.processes()[os.getpid()]
+    assert me.name.lower().startswith("python") and me.private_ws > 0 and me.peak_ws >= me.ws > 0
 
 
 def _hold(folder: Path, **values) -> Path:
     (folder / "holds").mkdir(parents=True, exist_ok=True)
     now = time.time()
     hold = {"pid": os.getpid(), "since": now, "until": now + 600, "cpus": 3, **values}
-    path = folder / "holds" / f"series-{hold['pid']}-{int(now)}.json"
+    path = folder / "holds" / f"series-{hold['pid']}-{time.time_ns()}.json"
     path.write_text(json.dumps(hold), encoding="utf-8")
     return path
 
@@ -167,6 +452,57 @@ def test_executor_processes_take_slots():
                 os.environ.pop(jobpool.POOL_ENV, None)
             else:
                 os.environ[jobpool.POOL_ENV] = saved
+
+
+LAST_TASK = """
+import functools, json, os, sys, time
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+from dsfforza.build import jobpool
+
+
+def task(folder, owner, last):
+    # The last task: a hold takes every slot, so no slot is granted after it (as a test VM's
+    # RAM hold refuses a DIFF_RAM grant).
+    held = jobpool.held()
+    if last:
+        now = time.time()
+        hold = {"pid": owner, "since": now, "until": now + 600, "cpus": 999}
+        (Path(folder) / "holds").mkdir(exist_ok=True)
+        (Path(folder) / "holds" / "series-test.json").write_text(json.dumps(hold), encoding="utf-8")
+    return held
+
+
+if __name__ == "__main__":
+    folder = sys.argv[1]
+    os.environ[jobpool.POOL_ENV] = folder
+    with ProcessPoolExecutor(max_workers=2, max_tasks_per_child=1) as pool:
+        run = functools.partial(jobpool.on_slot, "test", 0, task)
+        print(list(pool.map(run, [folder] * 3, [os.getpid()] * 3, [False, False, True])), flush=True)
+    print("shut down", jobpool.status(Path(folder))["busy"], flush=True)
+"""
+
+
+def test_one_task_processes_take_slots_per_task_and_shut_down_under_a_hold():
+    """render_compare diff's executor (max_tasks_per_child=1) starts a process after the last
+    task too; it takes no slot, so the executor shuts down while a hold refuses every grant
+    (#619). A slot taken in the process's initializer would wait there until the hold ends."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        script = Path(tmp) / "last_task.py"
+        script.write_text(LAST_TASK, encoding="utf-8")
+        pool = Path(tmp) / "pool"
+        pool.mkdir()
+        env = {**os.environ, jobpool.RAM_ENV: "off"}
+        done = subprocess.run(
+            [sys.executable, str(script), str(pool)], capture_output=True, text=True, timeout=120, env=env, check=True
+        )
+        assert done.stdout.splitlines() == ["[1, 1, 1]", "shut down []"], done.stdout + done.stderr
+    try:
+        jobpool.executor(2, "test", max_tasks_per_child=1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("jobpool.executor took max_tasks_per_child")
 
 
 def test_the_pool_is_no_input_of_a_fingerprint():

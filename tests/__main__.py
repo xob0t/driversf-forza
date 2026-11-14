@@ -104,6 +104,9 @@ def main(argv: list[str]) -> int:
     # The tests' builds and renders take slots of a job pool of their own, not the PC's
     # (src/dsfforza/build/jobpool.py): a full pool would make them wait.
     os.environ.setdefault("DSFFORZA_POOL", tempfile.mkdtemp(prefix="dsfforza-test-pool-"))
+    # Nor its RAM budget: the tests' few small jobs would wait on the PC's builds and the test
+    # VMs' reservation (test_jobpool's budget tests turn it on with their own figures).
+    os.environ.setdefault("DSFFORZA_POOL_RAM", "off")
     # Nor the PC's car store (carstore.py): the tests' stand-in cars would land in it.
     os.environ.setdefault("DSFFORZA_STORE", "off")
     # out/gentle (src/dsfforza/build/gentle.py): the test run and the processes it starts at

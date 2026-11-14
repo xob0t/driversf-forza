@@ -408,11 +408,12 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{len(jobs)} cars, versions {', '.join(n for n, _ in versions)}", flush=True)
     out.parent.mkdir(parents=True, exist_ok=True)
     from dsfforza.build import jobpool
+    from dsfforza.build.port_batch import PLATES_SURVEY_RAM
 
     # Each process on a slot of the machine's job pool (src/dsfforza/build/jobpool.py).
     with (
         out.open("a" if args.resume else "w", encoding="utf-8") as f,
-        jobpool.mp_pool(args.jobs, "plates_survey") as pool,
+        jobpool.mp_pool(args.jobs, "plates_survey", PLATES_SURVEY_RAM) as pool,
     ):
         for n, row in enumerate(pool.imap_unordered(survey_one, jobs), 1):
             f.write(json.dumps(row) + "\n")
