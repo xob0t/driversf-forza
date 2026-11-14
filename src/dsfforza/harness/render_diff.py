@@ -271,15 +271,21 @@ def run(
             if jobs == 1:
                 results = _worker((str(before), str(after), todo, str(out), views, size))
             else:
+                import functools
+                from concurrent.futures import ProcessPoolExecutor
+
                 from dsfforza.build import jobpool
                 from dsfforza.build.port_batch import DIFF_RAM
 
-                # A process per car, each on a pool slot (DIFF_RAM, one car's peak): a process's
-                # memory grows over the cars it draws (3.5 GB after 20), and a car is the
-                # longest a test VM's RAM gate waits for it (research/batch.md, "Job pool", "RAM").
-                with jobpool.executor(jobs, "render_compare diff", DIFF_RAM, max_tasks_per_child=1) as pool:
+                # A process per car, each car on a pool slot (DIFF_RAM, one car's peak): a
+                # process's memory grows over the cars it draws (3.5 GB after 20), and a car is
+                # the longest a test VM's RAM gate waits for it (research/batch.md, "Job pool",
+                # "RAM"). The slot is taken per car (jobpool.on_slot), not by the process: the
+                # executor starts a process after the last car too, which must not wait for one.
+                task = functools.partial(jobpool.on_slot, "render_compare diff", DIFF_RAM, _worker)
+                with ProcessPoolExecutor(max_workers=jobs, max_tasks_per_child=1) as pool:
                     args = [(str(before), str(after), [c], str(out), views, size) for c in todo]
-                    results = [r for part in pool.map(_worker, args) for r in part]
+                    results = [r for part in pool.map(task, args) for r in part]
         finally:
             for a in archives:
                 a.close()

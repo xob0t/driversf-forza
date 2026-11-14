@@ -51,8 +51,9 @@ Holds. tools\\wsb\\run-series.ps1 writes two kinds to holds\\:
   {"pid", "since", "until", "cpus": 0, "vmx"}. While it holds, the pool reserves VM_RAM for
   that VM less its processes' working set now (vm_need: a VM that is up already holds most
   of it), so no new job is granted against it, and the gate (`jobpool vm-gate`) waits until
-  the running jobs leave that much free. It ends at "until" or when the series' process is
-  gone. A VM nobody holds reserves nothing: an idle VM that is up counts as the host's
+  the running jobs leave that much free. The series removes it as it ends, before it lets go
+  of the VM; the pool ends it at "until" or when the series' process is gone (a series that
+  was killed). A VM nobody holds reserves nothing: an idle VM that is up counts as the host's
   used RAM, one that is off as nothing.
 
     uv run dsff jobpool status        # slots, holders, holds, the RAM budget
@@ -418,16 +419,24 @@ def vm_gate(hold_file: str, folder: Path | None = None, free=None, procs=None) -
     RAM less what the busy jobs may still grow, SPARE, and what the VMs of earlier RAM holds
     still need. run-series.ps1's RAM gate asks this until it does ("ok")."""
     folder = folder if folder is not None else root()
-    avail, table = _host(free, procs)
-    earlier, mine = [], None
-    for hold in ram_holds(folder):
-        if hold["file"] == hold_file:
-            mine = hold
-            break
-        earlier.append(hold)
-    if mine is None or avail is None or _ram_off():
-        return {"ok": True, "need": 0, "free": avail}
-    room = budget(_slot_infos(folder, size()), avail, table, earlier, spare())
+    if folder is None or _ram_off():
+        return {"ok": True, "need": 0, "free": None}
+    with _pool_lock(folder):  # the slot texts as try_acquire reads them (Slot.attach writes under it)
+        avail, table = _host(free, procs)
+        mine = next((h for h in holds(folder) if h["file"] == hold_file), None)
+        if mine is None or avail is None:
+            return {"ok": True, "need": 0, "free": avail}
+        # The earlier holds of the other VMs. An earlier hold of this VM (a series that ended
+        # without removing it: one series uses a VM at a time) doesn't let this one pass
+        # unchecked: the VM's need counts once, here.
+        key, order = str(mine.get("vmx", "")).lower(), (mine.get("since", 0), mine["file"])
+        earlier = [
+            h
+            for h in ram_holds(folder)
+            if str(h.get("vmx", "")).lower() != key and (h.get("since", 0), h["file"]) < order
+        ]
+        slots = _slot_infos(folder, size())
+    room = budget(slots, avail, table, earlier, spare())
     need = vm_need(mine, table)
     return {"ok": room["headroom"] >= need, "need": need, "free": room["headroom"], **room}
 
@@ -473,10 +482,13 @@ def _ram_off() -> bool:
 
 def _host(free=None, procs=None) -> tuple[int | None, dict[int, Proc]]:
     """The host's available RAM now (free(), default port_batch.free_ram) and its processes
-    (procs(), default processes())."""
+    (procs(), default processes()). The processes are read first: memory a job takes between
+    the two reads is then out of the available RAM and still in its slot's "growing", counted
+    twice until the next grant, never credited twice (#619)."""
     if free is None:
         from dsfforza.build.port_batch import free_ram as free
-    return free(), (processes() if procs is None else procs())
+    table = processes() if procs is None else procs()
+    return free(), table
 
 
 # --- slots -----------------------------------------------------------------------------------
@@ -492,15 +504,20 @@ class Slot:
         """Name the process that holds this slot's job's memory, when it is a child the holder
         started (port_batch's conversion workers and lint processes): budget() counts that
         process's private working set against the slot's reservation."""
-        if self.fd is None:
+        if self.fd is None or self.path is None:
             return
-        with contextlib.suppress(OSError, ValueError):
+        # Under pool.lock, as every reader that counts the slot's reservation (try_acquire,
+        # vm_gate): none of them sees the file half written. It is written over in place, padded
+        # to its old length, and cut only after, so it never holds less than a whole text.
+        with contextlib.suppress(OSError, ValueError), _pool_lock(self.path.parent):
             os.lseek(self.fd, 0, os.SEEK_SET)
-            info = json.loads(os.read(self.fd, 1 << 16).decode() or "{}")
+            old = os.read(self.fd, 1 << 16)
+            info = json.loads(old.decode() or "{}")
             info["mem_pid"] = int(pid)
+            text = json.dumps(info).encode()
             os.lseek(self.fd, 0, os.SEEK_SET)
-            os.ftruncate(self.fd, 0)
-            os.write(self.fd, json.dumps(info).encode())
+            os.write(self.fd, text.ljust(len(old)))
+            os.ftruncate(self.fd, len(text))
 
     def release(self) -> None:
         if self.fd is not None:
@@ -708,9 +725,24 @@ def _start_process(label: str, ram: int, init, initargs: tuple) -> None:
         init(*initargs)
 
 
+def on_slot(label: str, ram: int, fn, *args):
+    """fn(*args) on a pool slot taken for it (waited for) and freed when it returns: for a
+    process that runs one task, like ProcessPoolExecutor(max_tasks_per_child=1)'s. Such an
+    executor starts a process after each one ends, the last one's too (CPython 3.13
+    concurrent.futures.process, _ExecutorManagerThread.run -> _adjust_process_count), and
+    shutdown waits for it: a process that took its slot in its initializer could wait there
+    for a slot (a RAM hold) with no task left, and the executor with it (#619). Use as
+    functools.partial(jobpool.on_slot, label, ram, fn)."""
+    with acquire(label, ram):
+        return fn(*args)
+
+
 def executor(jobs: int, label: str, ram: int = 0, initializer=None, initargs: tuple = (), **kwargs):
     """A ProcessPoolExecutor of up to `jobs` processes, each holding a pool slot for its
-    life: a process waits for its slot before it takes work, and its slot goes with it."""
+    life: a process waits for its slot before it takes work, and its slot goes with it.
+    Not with max_tasks_per_child (on_slot instead)."""
+    if kwargs.get("max_tasks_per_child"):
+        raise ValueError("jobpool.executor: a slot per process; with max_tasks_per_child use on_slot")
     from concurrent.futures import ProcessPoolExecutor
 
     return ProcessPoolExecutor(

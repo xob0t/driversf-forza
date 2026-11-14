@@ -155,6 +155,7 @@ $passThrough = @((Get-Command $runTest).Parameters.Keys | Where-Object {
 $runMutex = New-Object System.Threading.Mutex($false, 'Local\dsfforza-wsb-run')
 $script:ownsMutex = $false
 $script:vmHeld = $null
+$script:ramHold = $null   # the job pool RAM hold's path while this series holds one (Enter-RamHold)
 function Enter-RunMutex([TimeSpan]$Timeout) {
     try { $script:ownsMutex = $runMutex.WaitOne($Timeout) } catch [System.Threading.AbandonedMutexException] { $script:ownsMutex = $true }
     return $script:ownsMutex
@@ -361,7 +362,7 @@ function Enter-PoolHold {
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $hold = [ordered]@{ pid = $PID; since = $now; until = $now + $CpuGateSeconds + $StorySeconds + 600; cpus = $cpus
         runs = (Join-Path $outputHost 'runs'); prefix = $(if ($Vm) { "vm$($vmTarget.Id)-" } else { 'host-' }) }
-    $hold | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $holds "series-$PID-$now.json") -Encoding ASCII
+    $hold | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $holds "series-$PID-$now.json") -Encoding UTF8
     $script:poolFolder = $folder
     $cpus
 }
@@ -370,7 +371,10 @@ function Enter-RamHold {
     # -Vm: the job pool's RAM hold for this series' VM (src\dsfforza\build\jobpool.py, "RAM holds"):
     # holds\ram-<pid>-<time>.json naming the .vmx. While it lasts the pool reserves what the VM
     # still needs (jobpool.VM_RAM less its processes' working set) and grants no job against it.
-    # It lasts the whole series: the pool ends it when this process is gone (or at "until").
+    # It lasts the whole series: the series removes it as it ends (the finally block, before it
+    # lets go of the VM), and the pool ends it at "until" or when this process is gone (a series
+    # killed). $PID alone isn't the series' life: from an interactive PowerShell it is the
+    # session's. UTF-8, as holds() reads it (utf-8-sig): the .vmx path may hold any character.
     # Returns the hold's file name ($null: no pool).
     $folder = if ($env:DSFFORZA_POOL) { $env:DSFFORZA_POOL } else { Join-Path $env:LOCALAPPDATA 'dsfforza\pool' }
     if ($folder -match '^(off|0)$') { return $null }
@@ -379,8 +383,9 @@ function Enter-RamHold {
     Get-ChildItem -LiteralPath $holds -Filter "ram-$PID-*.json" -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $name = "ram-$PID-$now.json"
+    $script:ramHold = Join-Path $holds $name
     [ordered]@{ pid = $PID; since = $now; until = $now + 24 * 3600; cpus = 0; vmx = $vmTarget.Vmx } |
-        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $holds $name) -Encoding ASCII
+        ConvertTo-Json | Set-Content -LiteralPath $script:ramHold -Encoding UTF8
     $name
 }
 
@@ -600,6 +605,8 @@ try {
                 Set-Content -LiteralPath $stampFile $seriesStamp
             } catch { $idle = -1; "  idle stop not armed: $($_.Exception.Message)" }
         }
+        # The RAM hold goes before the VM does: a later series' hold of this VM is the only one then.
+        if ($script:ramHold) { Remove-Item -LiteralPath $script:ramHold -ErrorAction SilentlyContinue; $script:ramHold = $null }
         Exit-RunMutex
         if ($idle -ge 0) { Start-Detached $vmScript "StopIdle -Vm $($vmTarget.Id) -IdleMinutes $idle -Stamp $seriesStamp" }
     }

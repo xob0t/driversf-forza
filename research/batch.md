@@ -363,7 +363,8 @@ pool for the whole PC (`src/dsfforza/build/jobpool.py`): the conversion workers 
 `upvh lint-many` processes (the build process holds their slots), the garage-picture
 render processes, `render_compare` (run, diff, rescore), `cockpit_survey`,
 `plates_survey` and the door-count memo of the plan (each process holds its own slot,
-taken in its initializer before it takes work).
+taken in its initializer before it takes work; a `render_compare diff` process one per car,
+`jobpool.on_slot`, below).
 
 - **Slots.** `%LOCALAPPDATA%\dsfforza\pool\slot-NN.lock` (`DSFFORZA_POOL` names another
   folder; `off` turns the pool off). A process holds a slot while it holds a lock on a
@@ -397,11 +398,15 @@ taken in its initializer before it takes work).
   is ready (run-test.ps1's "story world ready" note), when the run has a `result.json`,
   at its time limit (gate + `-StorySeconds` + 600 s), or when the series' process is gone.
 - **VM RAM.** A `-Vm` series holds its VM's RAM before it starts or uses the VM
-  (`Wait-RamGate`): `holds\ram-<pid>-<time>.json` with the `.vmx`, for the whole series.
+  (`Wait-RamGate`): `holds\ram-<pid>-<time>.json` with the `.vmx`, for the whole series
+  (its `finally` removes it before it lets go of the VM; the pool ends a killed series'
+  hold when its process is gone or at its 24 h limit).
   While it lasts the pool reserves `jobpool.VM_RAM` (7.7 GB) less what that VM's
   vmware-vmx and its mksSandbox hold now (`vm_need`; the vmx pid is the one vmware.log's
   first line names, if a vmware-vmx of that pid started then), so a VM that is up isn't
-  counted twice, and no new job is granted against it. The gate asks `dsff jobpool vm-gate`
+  counted twice, and no new job is granted against it. The processes are read before the
+  available RAM, so memory a job takes between the two reads is counted twice, never left out.
+  The gate asks `dsff jobpool vm-gate`
   every 10 s until the VM's need fits in what the running jobs leave (at most
   `-RamGateSeconds`, then it starts anyway and says so, as the CPU gate does). A VM nobody
   holds reserves nothing: an idle VM that is up is the host's used RAM, one that is off
@@ -467,7 +472,11 @@ largest outputs; KOE_CCXR_09, the largest and slowest car of the last full build
 1.0 GB here). A diff process drew a whole chunk of cars before (676 cars at `--jobs 16`:
 about 42 each), and its memory grew over them, to the 3.8 to 4.4 GB of #613; it now draws
 one car per process (`max_tasks_per_child=1`): the same 20 cars, the same scores, 311 s at
-4 processes against 708 s in one.
+4 processes against 708 s in one. Its slot is the car's (`jobpool.on_slot`), not the
+process's: CPython 3.13's executor starts a new process after each one ends, the last one's
+too, and shutdown waits for it. A process that took its slot in its initializer waited there
+while a RAM hold refused the grant, with no car left, and `diff.json` waited with it (#619;
+`test_one_task_processes_take_slots_per_task_and_shut_down_under_a_hold`).
 
 #### The floor and the wait
 
