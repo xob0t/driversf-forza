@@ -451,7 +451,7 @@ second and keeps the highest; the sums over the tree count the interpreter a ven
 | conversion worker | 12 cars `--no-store`: the 7 slowest and largest of the last full build (KOE_CCXR_09, AST_V12Zagato_12, CHR_JeepGCSRT8_09, HYU_GenesisCoupeRMR_10, VIP_Viper_13, MER_S65AMG_12, LAM_LP7004_12) and 5 median ones | 12 | 3264 (VIP_Viper_13); AST 3165, LAM 2033, HYU 1737; the other 8 930 to 1359 | 2982 | `WORKER_RAM` 3300 |
 | `upvh lint-many` | 45 cars of the 721-car roster, `--plan` (the cars merged in memory, as a roster build lints) | 1 | 3036 | 2563 | `LINT_RAM` 3100 |
 | garage-picture render | the 573-car archive of a full build, 77 pictures in 420 s | 2 | 1650, 1627 | 1206 | `RENDER_RAM` 1700 |
-| `render_compare diff`, a process per car | 20 changed cars of #608 (two full-roster builds) | 20 | 1460 to 2355 | 1793 | `DIFF_RAM` 2400 |
+| `render_compare diff`, a process per car | 80 changed cars of #608 (two full-roster builds: the first 20, then 60 in the check below) | 80 | 1460 to 2805; 2382 or more for 5 of the 60 | 2053 | `DIFF_RAM` 2900 |
 | `render_compare diff`, one process for 20 cars | the same 20 cars, `--jobs 1` | 1 | 3381 (it rose from 2.0 to 3.1 GB over the cars, falling back between) | 2774 | |
 | `render_compare run` | 4 large cars of a roster build | 1 | 1123 | 615 | `COMPARE_RAM` 1200 |
 | `render_compare rescore` | the 12-car run | 2 | 736 | 235 | `RESCORE_RAM` 800 |
@@ -497,8 +497,26 @@ one car per process (`max_tasks_per_child=1`): the same 20 cars, the same scores
   such step still running when the hold starts. `-RamGateSeconds` (2700, the conversion
   worker's limit) caps it: after that the series starts anyway and says so.
 - **Cost.** With no hold, the pool can use what the owner leaves less 3 GB: 19 GB on
-  2026-11-14 with both VMs off, about 5 conversion workers at once or 7 diff processes.
+  2026-11-14 with both VMs off, about 5 conversion workers at once or 6 diff processes.
   While a series holds a VM that is off, 7.7 GB less.
+
+Checked 2026-11-14 11:08 to 11:27, both VMs off, the owner's programs running (22 GB
+available before): a RAM hold for a VM that is off (a stand-in for `Enter-RamHold`, so
+the floor was 3 + 7.7 = 10.7 GB), then at once `render_compare diff --jobs 16 --limit 60`
+(the #608 builds) and, 20 s later, `port_batch build --jobs 16 --no-store` of the 12 cars
+above, `jobpool watch --every 1` logging (`out/mem/check.csv` in the worktree of #613's PR):
+
+- Host available RAM never fell below 16.8 GB (lowest at 11:11:50); no sample under the
+  floor. Commit charge at most 32.0 GB.
+- The pool queued: at most 6 slots busy (4 diff processes, or 1 conversion worker and 3
+  diff processes, or 3 conversion workers), up to 17 processes waiting (16 diff processes
+  and the build) for up to 40.7 GB; the headroom for new jobs stayed between -0.5 and
+  3.7 GB. Before, all 16 diff processes and the build's conversion workers would each
+  have passed the check.
+- The diff drew its 60 cars in 1025 s, the build converted its 12 in 1063 s, 0 failed.
+  When both ended, `jobpool vm-gate` passed for the held VM (7.7 GB needed, 18.4 GB free).
+- The headroom went below 0 once: diff processes on these 60 cars peaked at up to 2805
+  MiB, past the 2400 the first 20 cars gave `DIFF_RAM`; it is 2900 now.
 
 ### Selective rebuild
 
