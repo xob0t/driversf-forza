@@ -6,6 +6,7 @@ are the host interior's own (#459).
 
 from __future__ import annotations
 
+import itertools
 import math
 
 from dsfforza.convert import glass
@@ -140,6 +141,33 @@ def test_deeper_than_the_window_reaches():
     host = [_host_window((0, 5), 1.4, 0.7, z, [crack])]
     g = _windscreen(0.4, 0.7, z, host)
     assert {r for _, r in g.triangles()} == {"surface"}
+
+
+def test_a_crack_line_moves_as_one_piece():
+    """A crack line of slivers sharing vertices, rooted at the host's left edge and running
+    in towards the centre at an angle, keeps its shape on a smaller window: the slivers
+    stay joined, as vanilla windscreens that share a crack pattern keep them (#459)."""
+    z = 1.0
+    line = [(0.70 - 0.03 * i, 0.30 + 0.012 * i) for i in range(9)]  # 24 cm, 22 degrees off the axis
+    crack = []
+    for (x0, y0), (x1, y1) in itertools.pairwise(line):
+        crack.append((((x0, y0, z), (x1, y1, z), (x1, y1 + 0.003, z)), CRACK_UV, (0.5,) * 3))
+    host = [_host_window((0, 5), 1.4, 0.7, z, crack)]
+    g = _windscreen(1.0, 0.5, z, host)
+    tris = [[c[0] for c in corners] for corners, r in g.triangles() if r == "crack"]
+    assert len(tris) == len(crack)
+    for a, b in itertools.pairwise(tris):
+        assert math.dist(a[1], b[0]) < 1e-6  # still joined
+    ends = (tris[0][0], tris[-1][1])
+    assert abs(math.dist(*ends) - math.dist(line[0], line[-1])) < 1e-6  # same length
+
+
+def test_pieces():
+    """Triangles sharing a corner (within PIECE_TOL) are one piece; others apart."""
+    a = ((0, 0, 0), (1, 0, 0), (0, 1, 0))
+    b = ((1.0001, 0, 0), (2, 0, 0), (1, 1, 0))
+    c = ((5, 5, 0), (6, 5, 0), (5, 6, 0))
+    assert sorted(sorted(p) for p in glass._pieces([a, b, c], tol=0.0005)) == [[0, 1], [2]]
 
 
 def test_cockpit_glass_takes_the_lexan_binding():
