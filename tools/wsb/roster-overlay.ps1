@@ -34,6 +34,15 @@ try {
     if (-not $GamePath) { throw 'Set DSF_GAME_DIR (or pass -GamePath) to your Driver: San Francisco folder.' }
     if (-not (Test-Path -LiteralPath (Join-Path $Build 'packages'))) { throw "no packages\ in $Build (port_batch --packages)" }
     if (-not (Test-Path -LiteralPath $AsiPath)) { throw "no plugin at $AsiPath (tools\asi\build.ps1)" }
+    # $Out is deleted first: refuse one that is, holds or lies in an input.
+    $full = { param($p) $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p).TrimEnd('') }
+    $outFull = & $full $Out
+    foreach ($inputPath in @($GamePath, $Build, $AsiPath)) {
+        $inFull = & $full $inputPath
+        if ($outFull -ieq $inFull -or $outFull.StartsWith("$inFull\", 'OrdinalIgnoreCase') -or $inFull.StartsWith("$outFull\", 'OrdinalIgnoreCase')) {
+            throw "-Out $Out overlaps $inputPath"
+        }
+    }
     if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Recurse -Force }
     $game = New-Item -ItemType Directory -Force -Path (Join-Path $Out 'game')
 

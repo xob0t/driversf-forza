@@ -495,6 +495,9 @@ if ($OnHost) { [DsfGuest]::SetThreadExecutionState([uint32]2147483651) | Out-Nul
 $result = [ordered]@{ archive = $Archive; hook = [bool]$Hook; probe = [bool]$Probe; stage = 'start' }
 if (-not $ShotLabel) { $ShotLabel = $Archive -replace "^$([regex]::Escape($RepoDir))\\", '' }
 try {
+    # First events.json line before anything is stopped or removed: run-series.ps1 -Vm takes an
+    # events.json as "the guest's run started" and then never starts a second one in this folder.
+    Note 'run-test started'
     Get-Process Driver -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 500
 

@@ -108,7 +108,8 @@ static HRESULT STDMETHODCALLTYPE HkIb(IDirect3DDevice9 *d, UINT len, DWORD u, D3
 
 // A 5-byte jmp at the function's start to our hook; the trampoline runs the moved prologue and
 // jumps back. A prologue that is already a jmp rel32 (dsf_enhanced's DLSS5 detours) is followed.
-static void *Detour(void *fn, void *hook, const char *what) {
+static void Detour(void *fn, void *hook, void **orig, const char *what) {
+    // *orig is set before the jmp goes in: a call that arrives right after finds its trampoline.
     unsigned char *p = (unsigned char *)fn;
     unsigned char *tramp = (unsigned char *)VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     int moved = 0;
@@ -122,8 +123,10 @@ static void *Detour(void *fn, void *hook, const char *what) {
         tramp[5] = 0xE9; *(int *)(tramp + 6) = (int)((p + 5) - (tramp + 10));
     } else {
         Log("%s: unknown prologue %02X %02X %02X %02X %02X %02X; not hooked", what, p[0], p[1], p[2], p[3], p[4], p[5]);
-        return nullptr;
+        return;
     }
+    *(void *volatile *)orig = tramp;
+    MemoryBarrier();
     DWORD old;
     VirtualProtect(p, 5, PAGE_EXECUTE_READWRITE, &old);
     unsigned char jmp[5]; jmp[0] = 0xE9; *(int *)(jmp + 1) = (int)((unsigned char *)hook - (p + 5));
@@ -131,7 +134,6 @@ static void *Detour(void *fn, void *hook, const char *what) {
     VirtualProtect(p, 5, old, &old);
     FlushInstructionCache(GetCurrentProcess(), p, 5);
     Log("detoured %s at %p (moved %d bytes)", what, fn, moved);
-    return tramp;
 }
 
 static DWORD WINAPI Worker(LPVOID) {
@@ -153,12 +155,12 @@ static DWORD WINAPI Worker(LPVOID) {
     HRESULT hr = d9->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, w, D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE, &pp, &dev);
     if (FAILED(hr)) { Log("dummy CreateDevice -> 0x%08X %s", (unsigned)hr, Name(hr)); d9->Release(); return 0; }
     void **vt = *(void ***)dev;
-    oTcl = (TclFn)Detour(vt[3], (void *)HkTcl, "TestCooperativeLevel");
-    oReset = (ResetFn)Detour(vt[16], (void *)HkReset, "Reset");
-    oPresent = (PresentFn)Detour(vt[17], (void *)HkPresent, "Present");
-    oTex = (CreateTexFn)Detour(vt[23], (void *)HkTex, "CreateTexture");
-    oVb = (CreateVbFn)Detour(vt[26], (void *)HkVb, "CreateVertexBuffer");
-    oIb = (CreateIbFn)Detour(vt[27], (void *)HkIb, "CreateIndexBuffer");
+    Detour(vt[3], (void *)HkTcl, (void **)&oTcl, "TestCooperativeLevel");
+    Detour(vt[16], (void *)HkReset, (void **)&oReset, "Reset");
+    Detour(vt[17], (void *)HkPresent, (void **)&oPresent, "Present");
+    Detour(vt[23], (void *)HkTex, (void **)&oTex, "CreateTexture");
+    Detour(vt[26], (void *)HkVb, (void **)&oVb, "CreateVertexBuffer");
+    Detour(vt[27], (void *)HkIb, (void **)&oIb, "CreateIndexBuffer");
     dev->Release(); d9->Release(); DestroyWindow(w);
     Log("hooks in; logging changes of result and a summary every 5 s");
     for (;;) {

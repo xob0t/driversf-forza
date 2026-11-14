@@ -460,6 +460,7 @@ try {
             $vmArgs = @(ConvertTo-ArgList $guestValues -CommandLine) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles',
                 '-GameRootFrom', "C:\Output\runs\$stamp\host-game")
             $timeout = $resultSeconds + 300
+            $guestKept = $false
             try { & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
             catch {
                 if (Test-Path (Join-Path $runDir 'result.json')) { "  vm exec: $($_.Exception.Message)" }
@@ -469,6 +470,7 @@ try {
                     # run-test in the same folder would stop this one's game and overwrite its results
                     # (vm1-20261114-052005), so wait for its result.json below instead.
                     "  vm exec: $($_.Exception.Message); the guest's run had started, waiting for its result"
+                    $guestKept = $true
                 }
                 else {
                     # The VM died or was stopped: bring it up again and retry once.
@@ -494,7 +496,16 @@ try {
         $deadline = (Get-Date).AddSeconds($resultSeconds)
         while (-not (Test-Path $result) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
         "=== $archive -> $runDir"
-        if (-not (Test-Path $result)) { "  no result after $resultSeconds s"; continue }
+        if (-not (Test-Path $result)) {
+            "  no result after $resultSeconds s"
+            if ($Vm -and $guestKept) {
+                # That run-test may still be going in the guest; another one would rebuild C:\Run and
+                # stop its game. vmrun can't reach the guest to stop it, so end the series here.
+                "  the guest's run may still be going and vmrun can't reach it: ending the series"
+                break
+            }
+            continue
+        }
         if ($Vm -and $overlayDir) {
             # The run's copy of -Overlay (a full roster's is 4.3 GB) has done its job once the run has a
             # result: the guest laid it into C:\Run, and result.json "overlay" says what it held. The
