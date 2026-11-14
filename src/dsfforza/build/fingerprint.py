@@ -801,10 +801,11 @@ class Memo:
         if not todo or self.recorder is not None or any(sys.monitoring.get_tool(t) == TOOL_NAME for t in range(6)):
             return
         from dsfforza.build import jobpool
+        from dsfforza.build.port_batch import MEMO_RAM
 
         self.tree = self.tree or package_hashes()
         # Each process on a slot of the machine's job pool (jobpool.py).
-        with jobpool.executor(max(1, min(jobs, len(todo))), "memo") as pool:
+        with jobpool.executor(max(1, min(jobs, len(todo))), "memo", MEMO_RAM) as pool:
             results = pool.map(_memo_task, [f for _, f, _ in todo], [a for _, _, a in todo], chunksize=4)
             for (key, _, _), (value, files, dirs, wanted, complete) in zip(todo, results, strict=True):
                 for module, names in wanted.items():

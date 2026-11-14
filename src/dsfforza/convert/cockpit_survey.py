@@ -174,13 +174,16 @@ def main(argv: list[str] | None = None) -> None:
         names = names[: args.limit]
     args.work.mkdir(parents=True, exist_ok=True)
     from dsfforza.build import jobpool
+    from dsfforza.build.port_batch import COCKPIT_SURVEY_RAM
 
     tasks = [_task(cars, key, args.work, dbs) for key in names]
     if args.jobs > 1 and len(tasks) > 1:
-        pool = jobpool.executor(min(args.jobs, len(tasks)), "cockpit_survey", initializer=_below_normal)
+        pool = jobpool.executor(
+            min(args.jobs, len(tasks)), "cockpit_survey", COCKPIT_SURVEY_RAM, initializer=_below_normal
+        )
         results = pool.map(_survey_task, tasks)
     else:
-        pool = jobpool.acquire("cockpit_survey", log=print)  # this process's slot
+        pool = jobpool.acquire("cockpit_survey", COCKPIT_SURVEY_RAM, log=print)  # this process's slot
         results = map(_survey_task, tasks)
     rows = []
     with pool:

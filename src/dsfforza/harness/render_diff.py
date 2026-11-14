@@ -273,9 +273,9 @@ def run(
                 results = _worker((str(before), str(after), todo, str(out), views, size))
             else:
                 from dsfforza.build import jobpool
-                from dsfforza.build.port_batch import RENDER_RAM
+                from dsfforza.build.port_batch import DIFF_RAM
 
-                with jobpool.executor(jobs, "render_compare diff", RENDER_RAM) as pool:
+                with jobpool.executor(jobs, "render_compare diff", DIFF_RAM) as pool:
                     args = [(str(before), str(after), c, str(out), views, size) for c in chunks]
                     results = [r for part in pool.map(_worker, args) for r in part]
         finally:
