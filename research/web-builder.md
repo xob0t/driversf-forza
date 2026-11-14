@@ -198,14 +198,18 @@ Scripts (`tools/web-builder/`):
   new folder (warm run), or only the decoded WAVs (`--only-wav`, cold run).
 - `chnk_diff.py`: the CHNK leaves of two files that differ.
 
-Steps (from the worktree; Pyodide is installed under `out/`, not in the repo):
+Steps (from the worktree, in PowerShell or bash; Pyodide is installed under `out/`, not in
+the repo). `run-car.mjs` mounts the vanilla archive from `out/vanilla`, which
+`tools/worktree-setup.ps1` links; a native build that took the game's archive instead
+doesn't need it, but the runner does. A cold run needs an empty cache folder:
+`seed_cache.py` keeps the files already in its destination, and a run fills the cache, so
+reusing the folder makes the next run warm. Use a new `--to` folder for each cold run.
 
 ```
 npm install --prefix out/web-builder pyodide@314.0.8
 uv run dsff port_batch build --out out/native-nodmg --car VW_Beetle_04@fh1 --no-store --jobs 1 --port "--mdxn-limit 0x2C0000"
-uv run python tools/web-builder/seed_cache.py out/native-nodmg/work/VW_Beetle_04.fp.json --cache out/cache --to out/web-builder/cache-cold --only-wav
-uv run python tools/web-builder/pool_run.py --label web-cold -- node tools/web-builder/run-car.mjs \
-    --job out/native-nodmg/work/VW_Beetle_04.job.json --cache out/web-builder/cache-cold --out out/web-builder/run-cold
+uv run python tools/web-builder/seed_cache.py out/native-nodmg/work/VW_Beetle_04.fp.json --cache out/cache --to out/web-builder/cache-cold-1 --only-wav
+uv run python tools/web-builder/pool_run.py --label web-cold -- node tools/web-builder/run-car.mjs --job out/native-nodmg/work/VW_Beetle_04.job.json --cache out/web-builder/cache-cold-1 --out out/web-builder/run-cold
 uv run python tools/web-builder/chnk_diff.py out/native-nodmg/work/VW_Beetle_04.chnk out/web-builder/run-cold/work/VW_Beetle_04.chnk
 ```
 

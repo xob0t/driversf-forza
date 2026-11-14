@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 from pathlib import Path
 
 from dsfforza.formats.chnk import read_chunk, walk
@@ -39,7 +40,12 @@ def main() -> None:
     a, b = leaves(args.a), leaves(args.b)
     print(f"{len(a)} and {len(b)} leaves")
     same = 0
-    for (pa, sa, da), (pb, sb, db) in zip(a, b):
+    for left, right in itertools.zip_longest(a, b):
+        if left is None or right is None:  # past the shorter tree's end
+            pa, sa, da = left or right
+            print(f"{pa} {sa:#x}: only in {'a' if right is None else 'b'}")
+            continue
+        (pa, sa, da), (pb, sb, db) = left, right
         if pa == pb and da == db:
             same += 1
             continue

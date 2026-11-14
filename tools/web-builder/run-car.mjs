@@ -138,6 +138,7 @@ const stats = {
   files,
 };
 fs.writeFileSync(path.join(out, "web-stats-js.json"), JSON.stringify(stats, null, 1));
-log.end();
+await new Promise((resolve) => log.end(resolve)); // the worker log, exception text included, is on disk first
 console.log(JSON.stringify({ ...stats, files: files.slice(0, 15) }, null, 1));
-process.exit(code === 0 ? 0 : 1);
+process.exitCode = code === 0 ? 0 : 1;
+process.exit();
