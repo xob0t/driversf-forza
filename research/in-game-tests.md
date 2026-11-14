@@ -569,6 +569,7 @@ above, "roster" is `roster-overlay.ps1`'s 721 cars with master's plugin, plain s
 | 1 | `vm1-20261114-071537` | roster | 353 MB | 1118 MB | 204 of 204 | none |
 | 2 | `vm2-20261114-070959` | heavy | 587 MB | 1941 MB | 204 of 204 | none |
 | 2 | `vm2-20261114-071948` | roster | 346 MB | 1116 MB | 204 of 204 | none |
+| 2 | `vm2-20261114-093013` | plain short probe (ID 304, vanilla) | 343 MB | 1068 MB | (no drive) | none |
 
 d3dlog ran in the heavy runs: no device loss. Two more roster runs ran while workers'
 builds held the host at 73 to 91 % CPU: `vm1-20261114-054741` (320 MB; the car stopped
