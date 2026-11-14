@@ -830,6 +830,57 @@ menu/Story/replay transitions, the Epilogue (#584), and broader 60-slot
 coverage (#566) remain unverified. The VM audio is muted; registration
 and lookup checks are not an audible test of every car.
 
+### Vehicle spec manager map
+
+**Confirmed-static, 2026-11-14** (`dsff xref dis`, Driver.exe 1.04 as above).
+The vehicle spec manager is the class-0xEC object at `[Engine+0x778]`
+(factory 0x0086C070 registered for class 0x1DE by 0x00DB51D0; constructor
+0x0086BFA0; vtable 0x00E395D0; 0x6A4 bytes). It is "provider 1" of the
+resource-provider table in section 4, which lists only its first pool
+(the wrappers at `+0x18`). It has a second pool: the **ID->spec map** at
+`+0x254`, `{next, free count, used}` and then **45 nodes of 24 bytes** from
+`+0x260` to the sentinel at `+0x698` (`(0x698 - 0x260) / 24 = 45`). A node is
+`{prev, next, key = model ID, spec, state, flag}`, the list is sorted by ID,
+and the first node is `[+0x69C]`.
+
+- Registration (vtable +0x48, 0x0086BCF0, from the UPVH resource's load
+  0x0086C0C0) inserts through operator[] 0x0086BE10, whose only append is
+  the call at 0x0086BE67 to 0x008CCAA0: the generic 24-byte pool append,
+  which bumps the cursor by 0x18 (0x008CCAFA) with no end check. Removal
+  0x0086BE90 unlinks and pushes the node on the free list.
+- `get(id)` (vtable +0x14, 0x0086B9E0) returns the node's spec when the ID
+  is found and its state is not above 0. **Otherwise it returns the first
+  listed spec whose state is not above 0**, and null only when none is.
+- Vehicle construction 0x008D1380 calls `get(id)` (0x008D1405), stores the
+  spec at `vehicle+0x5B4` (0x008D1418), reads the spec's model ID
+  (`[[spec+0x4850]+0x14]`, 0x0088C8F0, at 0x008D144A) and requests **that**
+  ID's model reference (0x008D1475). So the spawner's model only reaches the
+  vehicle if `get()` finds it; otherwise the car is built as the first listed
+  model.
+
+So node 46 lands on the sentinel, and its value (`+0x6A0..+0x6AF`) runs
+past the 0x6A4-byte object, as the ED/EF case does. The append then links
+the sentinel in as an ordinary node: when the new ID K sits between two
+others, the sentinel's next becomes K's successor P, and every ID below K
+is cut off from the list. Their lookups miss and `get()` returns P's spec.
+The native fixture runs the shipped code on this layout (a model 3, then
+100, 102, ..., then 151 as the 46th): 27 of the 45 earlier models, all
+those below 151, resolve to 152.
+
+In vanilla the map can't overflow: 35 kind-0 slots stay under 45 specs, and
+ambient traffic draws only loaded set models, so `get()` finds every model
+it is asked for (section 1). The plugin's `vehicle_slots` above 35, and the
+live pools' turnover (`runtime-traffic-pools.md`), reach 46.
+
+**Implementation.** `vehicle_maps.cpp` also hooks the call at 0x0086BE67.
+For an owner with the spec manager's vtable and class tag it moves a full
+cursor to page storage before the native append, as for ED/EF. Nodes are
+24 bytes, and a 4 KiB page holds 170 whole ones. Lookup, ordering, removal,
+the free list and `get()`'s fallback stay native. The preflight checks the
+call, the constructor's layout (0x0086BFC2, 0x0086BFD6, 0x0086BFE2,
+0x0086BFE8), the lookup's sentinel (0x0086BDC6) and the append's bump
+(0x008CCAA0, 0x008CCAFA).
+
 The 40-model ambient-roster bound is retained. Traffic Extension's separate
 50-entry notification, parked-cache and replay-snapshot findings concern
 larger rosters; expanding them is outside this fix. The 35-slot default
