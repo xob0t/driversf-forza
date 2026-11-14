@@ -245,11 +245,14 @@ CELL = 0.01  # occupancy grid of a window in its own plane (m)
 LIFT = 0.002  # cracks and shards sit this far inside the glass (m)
 MIN_WINDOW_AREA = 0.02  # smaller panes (and lamp covers) get the surface only
 RIM_BINS = 180  # directions round a window's centre in which its rim is measured (2 degrees each)
-# Host crack and shard triangles whose corners are this close share a vertex and
-# move as one piece. Vanilla windscreens that share these triangles keep such
-# vertices together (99% within 1.1 mm across 5,789 pairs; research/vehicle-model.md,
-# "Broken glass moves in pieces").
-PIECE_TOL = 0.0005
+# Host crack and shard triangles that share a vertex move as one piece. Interior
+# positions are int16 x, y, z in steps of 1/4096 m (vehicle_mesh.POSITION_SCALE). Two
+# corners are one vertex when no coordinate differs by more than one step: on vanilla
+# windscreens that share these triangles, corners that decode bit-identical (7.4M) or
+# one step apart (67k) stay together on the partner window (in-plane median 0, p99
+# 0.0 and 0.5 mm); two steps apart, 2.8% move more than 5 mm apart
+# (research/vehicle-model.md, "Broken glass moves in pieces").
+PIECE_STEP = 1 / 4096
 
 
 def interior_block(uvs, tol: float = 0.001) -> str | None:
@@ -703,7 +706,7 @@ class InteriorGlass:
         rim = _Rim(pane)
         out = []
         flat_tris = [[(_dot(p, ha), _dot(p, hb)) for p in pts] for pts, _, _ in host.overlay]
-        for piece in _pieces([[(*q, 0.0) for q in tri] for tri in flat_tris]):
+        for piece in _pieces([pts for pts, _, _ in host.overlay]):
             corners_h = [c for n in piece for c in flat_tris[n]]
             g = (sum(x for x, _ in corners_h) / len(corners_h), sum(y for _, y in corners_h) / len(corners_h))
             theta, rho = hrim.polar(g)
@@ -738,9 +741,10 @@ class InteriorGlass:
         return [(vertices, interior_block(uvs))]
 
 
-def _pieces(tris, tol: float = PIECE_TOL) -> list[list[int]]:
-    """Indices of tris (three points each) grouped into pieces: triangles that
-    share a vertex (two corners within tol) are one piece."""
+def _pieces(tris, step: float = PIECE_STEP) -> list[list[int]]:
+    """Indices of tris (three points each, decoded host positions) grouped into
+    pieces: triangles that share a vertex (two corners no coordinate of which
+    differs by more than one position step) are one piece."""
     parent = list(range(len(tris)))
 
     def root(i):
@@ -749,17 +753,16 @@ def _pieces(tris, tol: float = PIECE_TOL) -> list[list[int]]:
             i = parent[i]
         return i
 
-    cells: dict[tuple, list] = defaultdict(list)
+    cells: dict[tuple, list[int]] = defaultdict(list)
     for n, tri in enumerate(tris):
         for p in tri:
-            key = tuple(math.floor(c / tol) for c in p)
+            key = tuple(round(c / step) for c in p)
             for d in itertools.product((-1, 0, 1), repeat=3):
-                for m, other in cells.get(tuple(a + b for a, b in zip(key, d)), ()):
-                    if math.dist(p, other) <= tol:
-                        a, b = root(n), root(m)
-                        if a != b:
-                            parent[a] = b
-            cells[key].append((n, p))
+                for m in cells.get(tuple(a + b for a, b in zip(key, d)), ()):
+                    a, b = root(n), root(m)
+                    if a != b:
+                        parent[a] = b
+            cells[key].append(n)
     groups: dict[int, list[int]] = defaultdict(list)
     for n in range(len(tris)):
         groups[root(n)].append(n)
