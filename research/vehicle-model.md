@@ -336,17 +336,66 @@ vanilla interiors don't put it on a fixed side of z = 0: +1.0 on the 212, -0.04
 on the 248); the rear window with the host's rear glass. Roof glass takes none.
 Nearest centres pair first, and each host window goes to one window only (the cockpit's sections
 first, then the shell's): vanilla windows carry their own, and the vanilla
-212's quarter lights have none. Each triangle keeps its shape, UVs and sky
-terms. Its centroid goes in the same direction from the window's box centre,
+212's quarter lights have none. The host triangles move in pieces
+(triangles that share a vertex, `glass._pieces`; "Broken glass moves in
+pieces" below), each triangle keeping its shape, UVs and sky terms. A
+piece's centroid goes in the same direction from the window's box centre,
 in units of the box's half extents (so corners go to corners), and the same
 depth inside the rim, in metres, along that direction (the rim per 2°
-direction, `_Rim`). The triangle turns with the direction and is lifted onto
-the converted glass, on the window's own s9. A triangle is left out when that
-depth is past the centre of a smaller window, or when a corner lands more than
-one grid cell (1 cm) outside the window. Windows the host has no crack
+direction, `_Rim`). The piece turns with the direction as one body and its
+triangles are lifted onto the converted glass, on the window's own s9. A
+piece is left out when its depth is past the centre of a smaller window; a
+triangle, when its centroid lands outside the window or a corner more than
+one grid cell (1 cm) outside it. Windows the host has no crack
 and shard triangles for keep the surface only, as on the host (the vanilla
 Challenger 172's cockpit has no side glass; the Charger 176's rear side
 glass is smear only).
+
+**Broken glass moves in pieces** (confirmed-static, 2026-11-14; owner's
+report on the installed master 73830ef4: the Solstice GXP port, spool 620 on
+host 278, broken windscreen from the cockpit, "broken glass is lumped
+together"). The #459 rule above first moved each host triangle on its own:
+its centroid by direction and depth, then turned by the change of direction
+at that centroid. A shard cluster or crack line is many triangles sharing
+vertices, and neighbours sit in different 2° directions at different depths,
+so they moved and turned apart: shards fanned into spiky stars and crack
+lines broke into scattered slivers (`out/ws/ws3.png`, `eye3-s23.png` in the
+fix worktree: master, fix and vanilla 278 drawn in states 0–3).
+
+Evidence from vanilla (`out/ws/shared.py`, `rigid2.py`, `shape.py`): 150
+vanilla interiors have 130 distinct windscreen crack/shard sets, and many
+windscreens share most of their triangles with another (same UV triples;
+5,789 pairs with 100 or more shared and a median move of 5 mm or more). DSF
+moved them between windows as pieces: vertices two triangles share on one
+window stay shared on the other (spread median 0.0, p99 1.1 mm), and each
+piece (triangles joined by shared vertices, 21 per windscreen at the median)
+moves rigidly (rigid fit residual median 2.4 mm, p90 11 mm). Applied to the
+same pairs, the per-triangle rule tears those vertices apart (median 5.7,
+p90 29, p99 120 mm) and bends the pieces (shape residual median 9.0 mm, p90
+34 mm); moving each piece as one body by the same direction-and-depth rule
+at its centroid gives 2.6 mm (p90 15 mm). Where pieces land on the window is
+the same as before (median vertex error over the pairs 70 to 74 mm for every
+placement tried: per triangle, per piece, anchored at the piece's rim
+vertex, or box-normalised), so only the pieces' shape changes, not where
+they sit. The clusters at the corners and edges are the host's own: vanilla
+278 shows the same five clusters in state 3 (`ws3.png`).
+
+Survey (`out/ws/tear.py`: each port crack/shard triangle matched to its host
+triangle by UV triple, then every host vertex two triangles share measured on
+the port): on the installed master roster (721 cars) 2,406 of the 2,424
+windows with host layers, on 683 cars, had shared vertices torn more than
+1 cm apart (193,225 of 577,282; max per window median 73 mm, up to 15 cm);
+every one of the 680 windscreens. After: 0 (the four test cars: max 0.4 mm,
+`tear-4fix.json`).
+
+Not reproduced: the owner's shot also shows a grainy, milky surface over the
+whole windscreen. In state 3 the smear block is texkilled (table above) and
+the converted surface is gone on master as on vanilla (offline, `ws3.png`
+state 3). In game the glass ladder's front hits lift the bonnet over the
+windscreen in state 3 on the port and on vanilla 278 alike (VM run
+`vm1-20261114-134333`), so the run doesn't show it; in states 0–2 the port's
+windscreen centre is clear there. The owner's game runs DLSS 5
+(`dsf_enhanced.ini` `[DLSS5] Helper=1`), which the VM guests have off. Crack layers at state 0 stay hidden (texkill; `ws3.png` state 0).
 
 A cockpit carbin can name a window glass<suffix> where the main carbin says
 lexan<suffix> (the MC12: cockpit glassF/LF/RF, body lexanF/LF/RF).
