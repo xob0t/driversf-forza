@@ -274,33 +274,98 @@ frames), then emitted in the vanilla layout on each window's own s9:
   v 0.008–0.052, inset from the strip edges); windscreens of 0.3 m² or more
   keep only the part outside `WINDSCREEN_OPEN` (s 0.06–0.94, t below 0.22 of
   the window's frame), cut exactly along those lines;
-- cracks: random walks (2–5 cm steps) from the rim inward, each segment a
-  3 mm quad lifted onto the glass 2 mm inside it, UVs in `CRACK_LIGHT`
-  (v 0.19–0.244) or `CRACK_HEAVY` (v 0.131–0.174); budgets per √m² of window
-  (`CRACK_BUDGET`: windscreen 1.0 + 0.8 m, rear 0.5 + 0.4, sides 0.3 +
-  0.25), state 2 lengthening most state-1 cracks first;
-- shards: teeth 1.2–3.5 cm wide and 0.5–2.5 cm deep every 3.5 cm along the
-  rim, deeper round a few cluster points, 60% on `SHARD_BRIGHT`, the rest
-  one `SHARD_DULL` texel each. The rim is the border of the window's 1 cm
-  occupancy grid with the outside (flood fill from the grid edge), so gaps
-  between Forza triangles never sprout shards mid-window.
+- cracks and shards: the host interior's own (`glass.host_windows`, read
+  before the interior is rebuilt; #459, below).
 
-`cockpit.GlassSight` (a 128² depth cube of the opaque cockpit from the head
-camera) restricts crack starts and shards to rim the driver can see: a
-Forza windscreen runs well below the dash, and without it most of the
-budget landed out of sight. Windows the driver cannot see keep the surface
-only. Output is deterministic per car (seeded by the builder UID prefix and
-the window). The per-window summary is in the car's report
-(`entry.cockpit.interior.glass_windows`) and the log line `interior glass:`.
-Offline (`out/cockpitglass/compare-a.png`, `compare-b.png`: vanilla 147 and
-227, then M5, RX-7, 370Z and Challenger before and after, states 0–3 from
-the head camera) the converted cockpits follow the vanilla progression. In
-game: see `cockpit.md`, "Cockpit glass damage".
+Every host triangle that lands on its window is kept, whether or not the
+driver's eye sees it: the port draws the layers its host draws, and the
+host carries them on its rear window too (135 roster hosts below). (The
+first version of this rule ran them through a depth-cube test from the head
+camera, `cockpit.GlassSight`, which master had used to place its generated
+rim shards. On the full roster it dropped every host layer of 135 cars' rear
+windows; with it off, all 16 rebuilt took their host's rear layers, 49 to 755
+triangles. The test and its plumbing are gone.) The per-window summary is in the car's
+report (`entry.cockpit.interior.glass_windows`: `host_window`,
+`crack_triangles`, `shard_triangles`) and the log line `interior glass:`.
+In game: see `cockpit.md`, "Cockpit glass damage".
 
 Lint (`glass.check`, so `upvh.py lint` and `port_batch`): every interior
-glass triangle inside one of the regions (or one exterior slot), and an
-interior with surface glass must have state-1 and state-2 cracks and rim
-shards. Old builds fail the second rule.
+glass triangle inside one block of the strip (or one exterior slot), and an
+interior with surface glass must have crack or shard triangles, unless no
+window took any (`port_batch.plain_glass`).
+
+**The strip's blocks** (confirmed-static, from the texture,
+`out/i459` in the #459 worktree). The strip is 64 texels of the 512-wide
+texture, cut on 32/64-texel lines. Share of each block's texels that survive
+the texkill (blue ≥ 0.01) in states 0/1/2/3:
+
+| Block | u | v (band 0) | 0 | 1 | 2 | 3 |
+| --- | --- | --- | --- | --- | --- | --- |
+| surface (smear) | 0–0.125 | 0–0.0625 | 1.00 | 1.00 | 1.00 | 0.01 |
+| shard_dull | 0–0.125 | 0.0625–0.125 | 0.04 | 0.03 | 0.04 | 0.96 |
+| crack | 0–0.0625 | 0.125–0.25 | 0.01 | 0.55 | 1.00 | 0.00 |
+| shard_bright | 0.0625–0.125 | 0.125–0.25 | 0.01 | 0.03 | 0.09 | 0.94 |
+
+Fleet survey (`fleet.py`, every vanilla interior): 237,817 of 240,822
+interior glass triangles lie inside one block; the other 3,005 are on
+exterior slots (quarter and rear-door glass) or straddle. 143 of 150
+interiors have crack and shard triangles on at least one window, each window
+on its own s9 group; 6 have no interior glass.
+
+**Shattered windscreens from the cockpit (#459, 2026-11-13).** The report
+(Gallardo LP570 port, spool 474 on host 212; vanilla Charger 176 for
+comparison) showed spiky shards along the A-pillar. Cause (confirmed-static):
+the converter generated the cracks and shards (random-walk cracks, then
+teeth 1.2–3.5 cm wide and 0.5–2.5 cm deep, up to 8.5 cm near "cluster
+points", every 3.5 cm all round the rim). Vanilla's are different: on the
+vanilla 212 windscreen 354 shard triangles, 3 mm wide at the median (p90
+10 mm), longest edge 2.2 cm (p90 5.5 cm), in a few irregular clusters at
+the corners and edges; the master port had 62 teeth 17 mm wide in a regular
+comb (`out/i459/ws-ortho.png`, states 0–3 drawn on the window's plane;
+`eye-gallardo.png`, `eye-m5.png` from the head camera). No windscreen moves
+its vertices: interior glass has s12 = position on vanilla 212, 176, 147,
+227, 266 and on the ports, and windscreens sit on the chassis transform
+(slot 0), so the damage is texture only on both.
+
+Rule (`glass.InteriorGlass`): each converted window takes the crack and
+shard triangles (crack, shard_dull and shard_bright blocks) of the host
+interior's matching window. A pair is of one kind: side glass (most of the
+window's area projects onto the y-z plane) on the same side of the car; the
+windscreen with the host's windscreen (its frontmost other window by centre z;
+vanilla interiors don't put it on a fixed side of z = 0: +1.0 on the 212, -0.04
+on the 248); the rear window with the host's rear glass. Roof glass takes none.
+Nearest centres pair first, and each host window goes to one window only (the cockpit's sections
+first, then the shell's): vanilla windows carry their own, and the vanilla
+212's quarter lights have none. Each triangle keeps its shape, UVs and sky
+terms. Its centroid goes in the same direction from the window's box centre,
+in units of the box's half extents (so corners go to corners), and the same
+depth inside the rim, in metres, along that direction (the rim per 2°
+direction, `_Rim`). The triangle turns with the direction and is lifted onto
+the converted glass, on the window's own s9. A triangle is left out when that
+depth is past the centre of a smaller window, or when a corner lands more than
+one grid cell (1 cm) outside the window. Windows the host has no crack
+and shard triangles for keep the surface only, as on the host (the vanilla
+Challenger 172's cockpit has no side glass; the Charger 176's rear side
+glass is smear only).
+
+A cockpit carbin can name a window glass<suffix> where the main carbin says
+lexan<suffix> (the MC12: cockpit glassF/LF/RF, body lexanF/LF/RF).
+`interior_glass_skin` gives the cockpit pane the lexan section's panel binding
+(the same window, #411), so its layers follow the windscreen's crack state,
+not the chassis'.
+
+Survey (293 of the 721 roster cars, the rest not built; `out/i459/survey.txt`
+in the #459 worktree): 899 windows take host layers, against 1,103 with
+generated ones on master. The 479 without are rear doors and quarter lights
+whose host side glass has none or went to the front door (348); lexan wraps and
+small panes beside a window that took the layers (94); rear windows whose host has
+no rear layers, or (before the sight test went) whose layers all fell out of the driver's sight (34); and three windscreens
+(hosts 161 and 217 have none; the MC12's coincident cockpit pane takes them).
+No interior needed decimation; `glass.check` passes on all 293. In game
+(`vm1-20261113-191025` master, `vm1-20261113-195620` this rule): the M5 on 176
+shows small clusters at the windscreen's top left after the glass ladder,
+where master showed teeth along the A-pillar; vanilla 176 shows clusters at
+its left and bottom edges.
 
 The rear
 window now shows the vanilla defroster lines when clean. Rebuilt M5, S65, Supra and Jeep (`out/glassfix/`, IDs

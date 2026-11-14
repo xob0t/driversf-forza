@@ -250,7 +250,7 @@ compares on random inputs):
 - `damage.Grid.nearest` and `DamagePlan._vote`: occupied cells only past
   the first rings; the vote scores many triangles at once
   (`closest_on_triangles`, the branches of `closest_on_triangle` as masks).
-- `cockpit.visible_triangles` and `GlassSight`: the cube-face ID and depth
+- `cockpit.visible_triangles` (and `GlassSight`, since removed, #459): the cube-face ID and depth
   buffers rasterised with numpy (per pixel the nearest fragment, the
   earliest triangle among equal depths, as the strict `>` of the loop did).
 - `xds.untile`, `xds.decode_rgba`, `gui_assets.untile32`, the DXT1/DXT5

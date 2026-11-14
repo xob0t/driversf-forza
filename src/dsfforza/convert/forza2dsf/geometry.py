@@ -58,7 +58,7 @@ def add_geometry(
     keep=None,
     wheel_fit: tuple[float, float] = (1.0, 1.0),
     exposed: bool = False,
-    glass_sight=None,
+    host_glass=None,
 ) -> list[NewSub]:
     """Add every subsection of `sections` at Forza `lod`, one DSF submodel per
     (section, material), and return the submodels.
@@ -86,8 +86,8 @@ def add_geometry(
     each window onto its slot of the glass texture (glass.SlotMapper); another
     rectangle squashes Forza's glass UVs into it, except INTERIOR_GLASS_RECT
     (the interior entry), which lays each window out like vanilla interior glass
-    (glass.InteriorGlass; per-window report in builder.interior_glass);
-    glass_sight (cockpit.GlassSight) tells it which glass the driver sees."""
+    (glass.InteriorGlass; per-window report in builder.interior_glass), with the
+    cracks and shards of the host interior's windows (host_glass: glass.host_windows)."""
     textured = textures is not None
     tyre_map = skies = None
     if wheel:
@@ -139,8 +139,8 @@ def add_geometry(
                             slots.add(section.name, [place.point(pool[i].position) for i in tri], sub.material)
     # Interior glass (glass_rect=INTERIOR_GLASS_RECT): collected per window and
     # rebuilt in the vanilla interior layout (glass.InteriorGlass: smear surface,
-    # crack lines for states 1-2, rim shards for state 3), each window on its
-    # own s9 so the panel's crack state shows from the cockpit.
+    # and the host window's crack lines for states 1-2 and rim shards for state 3),
+    # each window on its own s9 so the panel's crack state shows from the cockpit.
     interior_glass = not wheel and glass_rect == INTERIOR_GLASS_RECT
     added = []
     for groups in batches:
@@ -151,7 +151,7 @@ def add_geometry(
             if interior_glass and material in glass_materials:
                 from dsfforza.convert import glass
 
-                window = glass.InteriorGlass(seed=builder.uid_prefix.hex(), sight=glass_sight)
+                window = glass.InteriorGlass(host=host_glass)
 
             def flush():  # called within this iteration only
                 if tris:  # noqa: B023

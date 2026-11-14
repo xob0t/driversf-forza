@@ -7,6 +7,7 @@ import struct
 from dataclasses import dataclass, field
 
 from dsfforza.convert import forza_materials as fm
+from dsfforza.convert import glass
 from dsfforza.convert.cockpit.displays import VIRTUAL_NEEDLE_COLOURS
 from dsfforza.convert.cockpit.geometry import (
     DIGITAL_TECHNIQUES,
@@ -29,7 +30,6 @@ from dsfforza.convert.cockpit.geometry import (
 )
 from dsfforza.convert.cockpit.visibility import (
     CULL_OFFSETS,
-    GlassSight,
     cull_sections,
     decimate_section,
     shell_closes,
@@ -410,8 +410,9 @@ def convert_interior(
     def gloss_filter(section, sub) -> bool:  # chrome takes the shared chrome (CockpitBinding)
         return outside(section) and fm.classify(sub.material)[0] != fm.CHROME
 
-    # What the driver sees of the glass: crack lines start and rim shards sit there.
-    sight = GlassSight(sections, cf.camera or cf.eye, place)
+    # The host interior's own windows, before its geometry is replaced: their crack lines
+    # and rim shards go onto the converted windows (glass.InteriorGlass, #459).
+    host_glass = glass.host_windows(stream, interior)
     shell_lod = opts.shell_lod
     # Step to finer shell LODs while the shell closes the windscreen or the cockpit.
     while shell and shell_lod > 1:
@@ -466,6 +467,7 @@ def convert_interior(
             layout.update(dict.fromkeys(gloss.values(), dm.STRIDES[dm.LIGHTS_MAT]))
         binding = CockpitBinding(t, mats, paint_uv, gloss, outside)
         builder = forza2dsf.Builder(seed[:3] + bytes([seed[3] ^ 0x55]), layout=layout)
+        host_left = list(host_glass)  # each host window to one converted window, cockpit sections first
         cabin = forza2dsf.add_geometry(
             builder,
             current,
@@ -478,7 +480,7 @@ def convert_interior(
             skin={**(glass_skin or {}), "steering_wheel": wheel_skin},
             glass_links=glass_links,
             glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
-            glass_sight=sight,
+            host_glass=host_left,
         )
         lod = max((l for l in shell_lods if l <= shell_lod), default=shell_lods[0] if shell_lods else 0)
         if shell:
@@ -494,7 +496,7 @@ def convert_interior(
                 glass_links=glass_links,
                 glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
                 skin=glass_skin,
-                glass_sight=sight,
+                host_glass=host_left,
             )
         needle_subs = []
         for family, g in animated.items():
@@ -593,7 +595,11 @@ def convert_interior(
         "interior glass: "
         + ", ".join(
             f"{g} s9 {w['s9']} {w['surface_m2']} m2"
-            + (f", cracks {w['crack_m']} m, {w['shard_triangles']} shards" if "crack_m" in w else "")
+            + (
+                f", host window {w['host_window']}: {w['crack_triangles']} crack, {w['shard_triangles']} shard triangles"
+                if "host_window" in w
+                else ""
+            )
             for g, w in sorted(glass_windows.items())
         )
     )

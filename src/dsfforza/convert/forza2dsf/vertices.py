@@ -225,7 +225,15 @@ def interior_glass_skin(dmg, car, opts) -> dict[str, bytes]:
             votes.setdefault(owner[sid], Counter())[pair] += 1
     # dmg.bound: door glass keeps the door's crack state but not its swing,
     # like the exterior door it sits in (damage.DamagePlan.bound).
-    return {name: bytes((*dmg.bound(c.most_common(1)[0][0]), 0, 1)) for name, c in votes.items()}
+    skin = {name: bytes((*dmg.bound(c.most_common(1)[0][0]), 0, 1)) for name, c in votes.items()}
+    # A race car's cockpit carbin can name its glazing glass<suffix> where the main
+    # carbin says lexan<suffix> (the Maserati MC12: cockpit glassF/LF/RF, body lexanF/
+    # LF/RF): the same window (glass_name), so it takes that panel's binding, not
+    # the chassis' (#459).
+    for name in list(skin):
+        if name.lower().startswith("lexan"):
+            skin.setdefault("glass" + name[5:], skin[name])
+    return skin
 
 
 @dataclass
