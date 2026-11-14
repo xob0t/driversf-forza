@@ -859,18 +859,47 @@ and the first node is `[+0x69C]`.
   model.
 
 So node 46 lands on the sentinel, and its value (`+0x6A0..+0x6AF`) runs
-past the 0x6A4-byte object, as the ED/EF case does. The append then links
-the sentinel in as an ordinary node: when the new ID K sits between two
-others, the sentinel's next becomes K's successor P, and every ID below K
-is cut off from the list. Their lookups miss and `get()` returns P's spec.
-The native fixture runs the shipped code on this layout (a model 3, then
-100, 102, ..., then 151 as the 46th): 27 of the 45 earlier models, all
-those below 151, resolve to 152.
+past the 0x6A4-byte object, as in the ED/EF case. The append then links the
+sentinel in as an ordinary node. The native fixture runs the shipped code on
+this layout (model 3 registered first, then 100, 102, ..., 186, then a 46th):
 
-In vanilla the map can't overflow: 35 kind-0 slots stay under 45 specs, and
-ambient traffic draws only loaded set models, so `get()` finds every model
-it is asked for (section 1). The plugin's `vehicle_slots` above 35, and the
-live pools' turnover (`runtime-traffic-pools.md`), reach 46.
+| 46th ID | Result |
+| --- | --- |
+| 50, 101, 151 (between two others) | the sentinel's next becomes the successor; every lower ID is cut off and resolves to it (1, 2 and 27 of 45 models; 3 resolves to 100, 102, 152) |
+| 185 (below the last) | 44 of 45 resolve to 186 |
+| 1 or 300 (below or above every ID) | the list is empty and `get()` returns null for all 45 |
+
+**The first listed spec is the lowest resident ID (confirmed-runtime).** The
+map is sorted, so the fallback is the lowest registered model, and with the
+owner's install that is the player's RX-7, ID 3 (IDs 1 and 2 weren't
+resident). Every census in the runs below logs `first key 3`. In
+`vm1-20261114-151912` the probe spawned three cars ahead (`-AheadIds 4,5,6`)
+whose spool requests were refused, so their models never loaded. The probe's
+Lua spawner (`006707E4`) built them anyway: `get(4)`, `get(5)` and `get(6)`
+returned model 3's spec (from `00670183`, `00670949`, then construction's
+`008D1407`), and three RX-7s were born.
+
+**A listed model is not a spawnable one (confirmed-runtime).** Spooler test
+0x005A6EA0 says a model is in the resident traffic list or in the nontraffic
+list with references above 0. A request adds the node and its reference at
+once, before the package has loaded and before its UPVH registers the spec.
+In `vm2-20261114-151915`, model 116 was read again at 15:28:27.616 by a
+native request (no live-pool request preceded it). The live picker took it as
+ready from 15:28:27.919, and the spec manager hadn't registered it yet, so
+for 21 s every pick of 116 by ambient traffic (`0077AE6A`, with `get()`
+called from `0077AC7B`, `0077ACEA`, `0077AD6A` and `008D1407`) and by the
+IV spawner (`007EBBF2`, `get()` from `007EBB72`) came out as model 3: 71
+births of model 3, with the spec map at 44 to 45 nodes, so not the overflow.
+Since the birth was model 3, `retain()` never marked 116 as served, and the
+picker kept choosing it. The IV spawner also asked twice for model 159 at
+15:26:49 while 159 had no spec (6 births of model 3).
+
+In vanilla neither path is reached. A traffic set is fully loaded before
+traffic starts (`isChapterTrafficSpooled` waits for
+`AllTrafficVehiclesLoaded`, section 1), so ambient traffic draws only
+models with a spec. At 35 kind-0 slots the map stays under 45 (vanilla's
+own peak in the ID maps is 43, above). The plugin's `vehicle_slots` above
+35 and the live pools' turnover (`runtime-traffic-pools.md`) reach both.
 
 **Implementation.** `vehicle_maps.cpp` also hooks the call at 0x0086BE67.
 For an owner with the spec manager's vtable and class tag it moves a full
@@ -880,6 +909,12 @@ the free list and `get()`'s fallback stay native. The preflight checks the
 call, the constructor's layout (0x0086BFC2, 0x0086BFD6, 0x0086BFE2,
 0x0086BFE8), the lookup's sentinel (0x0086BDC6) and the append's bump
 (0x008CCAA0, 0x008CCAFA).
+
+The live picker (`mod_traffic.cpp`, `spec_ready`) counts a listed model as
+spawnable only when the spec manager's `get(id)` returns that model's own
+spec, the test construction applies. A model that is listed but not yet
+registered stays out of the draw (its group's other resident models fill
+in, as during any load) until its spec registers.
 
 The 40-model ambient-roster bound is retained. Traffic Extension's separate
 50-entry notification, parked-cache and replay-snapshot findings concern
