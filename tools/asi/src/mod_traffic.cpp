@@ -8,6 +8,7 @@
 #include <string.h>
 #include <float.h>
 #include <initializer_list>
+#include <intrin.h>
 #include "patch.h"
 
 bool archive_package_loaded(int id);
@@ -66,10 +67,11 @@ void forget(const char* reason, bool release)
     g_owner = nullptr; g_selected = -1; g_rotate_selected = false;
     uint32_t retiring = 0, first = kModels;
     for (uint32_t id = 0; id < kModels; ++id) if (g_retiring[id]) { ++retiring; if (first == kModels) first = id; }
-    // Diagnostic (the one-model roads after 18:19, 2026-11-13): a forget that clears retiring
-    // flags lets those still-resident models fill every fallback draw.
-    if (retiring) dsf_log("live-pool: forget (%s) clears %u retiring flags (first %u)", reason, retiring, first);
-    memset(g_retiring, 0, sizeof g_retiring);
+    if (retiring) dsf_log("live-pool: forget (%s) keeps %u retiring flags (first %u)", reason, retiring, first);
+    // Retiring flags stay: they track served models' native owners (vehicles
+    // that release through 008D4F8A -> 005A78D0), which none of these
+    // transitions cancels. decide() clears a flag only when the model has left
+    // the resident lists (005A6EA0's tests), as after a native reset.
     for (uint32_t id = 0; id < kModels; ++id) if (g_pending[id]) {
         g_pending[id] = 0;
         if (release && owner && owner == spooler() && *(uint32_t*)(owner + 0xDAC) != 5) {
@@ -286,37 +288,169 @@ __declspec(naked) void primary_pick()
     }
 }
 
-// Diagnostic: every vehicle construction (008D1475), from this picker or any native one,
-// summed per model every 30 s, so a road full of one model shows which picker made it.
-uint16_t g_births[kModels], g_births_picked[kModels];
+// Diagnostic: every vehicle construction (008D1475) and model change (008D8A9C), from
+// this picker or any native spawner, summed per model and spawner every 30 s, so a road
+// full of one model shows which system made it. The spawner is the return address of
+// the vehicle-creation call 008C5C80 (0077AE65 = ambient traffic, 007EBBED = IVs, ...).
+constexpr uint32_t kSites = 16;
+uint32_t g_site_va[kSites], g_site_count; // 0 = unknown
+volatile uint32_t g_spawn_site;
+void* g_create_original;
+uint16_t g_births[kModels][kSites], g_births_picked[kModels];
 ULONGLONG g_births_since;
-void count_birth(uint32_t id, bool picked)
+uint32_t g_birth_lines;
+uint32_t site_index(uint32_t va)
+{
+    for (uint32_t i = 0; i < g_site_count; ++i) if (g_site_va[i] == va) return i;
+    if (g_site_count < kSites) { g_site_va[g_site_count] = va; return g_site_count++; }
+    return kSites - 1;
+}
+// Vehicle spec pointer (vehicle +5B4, set at 008D1418 before the model request at 008D1475)
+// per model: two models born with one spec means an ID lookup aliases them.
+void* g_spec_of[kModels];
+uint32_t g_alias_lines;
+uint32_t player_model() { uint8_t* s = spooler(); return s ? *(uint32_t*)(s + 0xDB4) : 0xFFFFFFFF; }
+void spec_summary();
+void count_birth(uint32_t id, bool picked, uint32_t site_va, void* spec = nullptr)
 {
     if (id >= kModels) return;
-    ++g_births[id]; if (picked) ++g_births_picked[id];
+    if (spec) {
+        if (g_spec_of[id] != spec) {
+            for (uint32_t m = 0; m < kModels && g_alias_lines < 100; ++m)
+                if (m != id && g_spec_of[m] == spec) {
+                    ++g_alias_lines;
+                    dsf_log("live-pool: spec alias: model %u born with spec %p, last seen on model %u", id, spec, m);
+                }
+            g_spec_of[id] = spec;
+        }
+    }
+    uint32_t site = site_index(site_va);
+    ++g_births[id][site]; if (picked) ++g_births_picked[id];
+    if (!picked && g_packages[id] && g_birth_lines < 600) {
+        ++g_birth_lines;
+        uint8_t* s = spooler();
+        dsf_log("live-pool: birth %u via %08X (not this picker%s), refs %u, player model %d", id, site_va,
+                g_retiring[id] ? ", retiring" : "", s ? ((RefCount)0x005A6B00)(s, id) : 0, (int)player_model());
+    }
     ULONGLONG now = GetTickCount64();
     if (!g_births_since) g_births_since = now;
     if (now - g_births_since < 30000) return;
-    uint32_t total = 0, picked_total = 0, top[5] = {}, n = 0;
-    for (uint32_t m = 0; m < kModels; ++m) { total += g_births[m]; picked_total += g_births_picked[m]; }
-    for (uint32_t k = 0; k < 5; ++k) {
+    uint32_t total = 0, picked_total = 0, per_site[kSites] = {}, top[6] = {}, n = 0, sum[kModels];
+    for (uint32_t m = 0; m < kModels; ++m) {
+        sum[m] = 0;
+        for (uint32_t k = 0; k < kSites; ++k) { sum[m] += g_births[m][k]; per_site[k] += g_births[m][k]; }
+        total += sum[m]; picked_total += g_births_picked[m];
+    }
+    for (uint32_t k = 0; k < 6; ++k) {
         uint32_t best = kModels;
         for (uint32_t m = 0; m < kModels; ++m)
-            if (g_births[m] && (best == kModels || g_births[m] > g_births[best])) {
+            if (sum[m] && (best == kModels || sum[m] > sum[best])) {
                 bool used = false; for (uint32_t j = 0; j < n; ++j) used |= top[j] == m;
                 if (!used) best = m;
             }
         if (best == kModels) break;
         top[n++] = best;
     }
-    char text[256] = ""; size_t len = 0;
-    for (uint32_t k = 0; k < n; ++k)
-        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %u x%u (%u picked%s)", top[k],
-                           g_births[top[k]], g_births_picked[top[k]], g_retiring[top[k]] ? ", retiring" : "");
-    dsf_log("live-pool: births %llus: %u vehicles, %u from this picker; top:%s", (now - g_births_since) / 1000,
-            total, picked_total, text);
+    char text[900] = ""; size_t len = 0;
+    for (uint32_t k = 0; k < g_site_count; ++k) if (per_site[k])
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %08X:%u", g_site_va[k], per_site[k]);
+    len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, "; top:");
+    for (uint32_t k = 0; k < n; ++k) {
+        uint32_t m = top[k];
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, " %u x%u (%u picked%s%s", m, sum[m],
+                           g_births_picked[m], g_retiring[m] ? ", retiring" : "", g_packages[m] ? ", package" : "");
+        for (uint32_t j = 0; j < g_site_count; ++j) if (g_births[m][j])
+            len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, ", %08X:%u", g_site_va[j], g_births[m][j]);
+        len += _snprintf_s(text + len, sizeof text - len, _TRUNCATE, ")");
+    }
+    dsf_log("live-pool: births %llus: %u vehicles, %u from this picker, player model %d; by spawner:%s",
+            (now - g_births_since) / 1000, total, picked_total, (int)player_model(), text);
     memset(g_births, 0, sizeof g_births); memset(g_births_picked, 0, sizeof g_births_picked);
     g_births_since = now;
+    spec_summary();
+}
+
+// 008C5C80 entry (two 4-byte movs, no stack change): remember the caller, then run it.
+__declspec(naked) void create_entry()
+{
+    __asm {
+        mov eax, dword ptr [esp]
+        mov g_spawn_site, eax
+        jmp dword ptr [g_create_original]
+    }
+}
+
+// 008D88E0 changes a live vehicle's model (zap/car swap: target takes a source vehicle's
+// model). Its new reference is the call at 008D8A9C; count it as a birth of that model.
+bool __fastcall remodel(void* s, void*, uint32_t id)
+{
+    bool result = ((Request)0x005A7860)(s, id);
+    if (result) count_birth(id, false, 0x008D8A9C);
+    return result;
+}
+
+// Diagnostic: the vehicle spec manager [Engine+0x778] (class EC, vtable 00E395D0) get(id),
+// slot +0x14 = 0086B9E0. Its ID->spec map at +0x254 ({next, free count, used}, 45 nodes of
+// 24 B at +0x260, sentinel at +0x698, first = [+0x69C]) is sorted by ID. When the ID is
+// missing, or its node's +0x10 > 0, get() returns the first node's spec with +0x10 <= 0.
+// Vehicle construction 008D1380 then requests that spec's model (008D144A, 008D1475).
+using SpecGet = void**(__thiscall*)(void*, void**, uint32_t);
+uint32_t g_spec_fallbacks, g_spec_fallback_lines, g_spec_peak;
+uint32_t g_spec_asked[kModels];
+uint32_t spec_model(void* spec)
+{
+    if (!spec) return 0xFFFFFFFF;
+    uint8_t* info = *(uint8_t**)((uint8_t*)spec + 0x4850);
+    return info ? *(uint32_t*)(info + 0x14) : 0xFFFFFFFE;
+}
+void spec_census(uint8_t* m, char* text, size_t size)
+{
+    uint8_t* head = m + 0x698;
+    uint8_t* cursor = *(uint8_t**)(m + 0x254);
+    uint32_t free_count = *(uint32_t*)(m + 0x258), used = *(uint32_t*)(m + 0x25C), walked = 0, first = 0xFFFFFFFF;
+    uint8_t* p = *(uint8_t**)(head + 4);
+    if (p != head) first = *(uint32_t*)(p + 8);
+    for (; p != head && walked < 4096; p = *(uint8_t**)(p + 4)) ++walked;
+    _snprintf_s(text, size, _TRUNCATE, "used %u, free %u, cursor +%X%s, walk %u%s, first key %u (head key %u)", used,
+                free_count, (uint32_t)(cursor - m), cursor >= head ? " (past the inline nodes)" : "", walked,
+                p == head ? "" : " (no end)", first, *(uint32_t*)(head + 8));
+}
+void** __fastcall spec_get(uint8_t* m, void*, void** out, uint32_t id)
+{
+    void** r = ((SpecGet)0x0086B9E0)(m, out, id);
+    uint32_t used = *(uint32_t*)(m + 0x25C);
+    if (used > g_spec_peak) {
+        g_spec_peak = used;
+        if (used >= 40) {
+            char text[200]; spec_census(m, text, sizeof text);
+            dsf_log("live-pool: spec map peak: %s", text);
+        }
+    }
+    uint32_t got = spec_model(*r);
+    if (got != id) {
+        ++g_spec_fallbacks;
+        if (id < kModels) ++g_spec_asked[id];
+        if (g_spec_fallback_lines < 300) {
+            ++g_spec_fallback_lines;
+            char text[200]; spec_census(m, text, sizeof text);
+            dsf_log("live-pool: spec get %u returned model %u (caller %08X, spawner %08X, decided %d); map %s", id,
+                    got, (uint32_t)(uintptr_t)_ReturnAddress(), g_spawn_site, g_decided, text);
+        }
+    }
+    return r;
+}
+void spec_summary()
+{
+    uint8_t* e = engine();
+    uint8_t* m = e ? *(uint8_t**)(e + 0x778) : nullptr;
+    char text[200] = "none";
+    if (m) spec_census(m, text, sizeof text);
+    char asked[300] = ""; size_t len = 0;
+    for (uint32_t k = 0, n = 0; k < kModels && n < 12; ++k) if (g_spec_asked[k]) {
+        len += _snprintf_s(asked + len, sizeof asked - len, _TRUNCATE, " %u x%u", k, g_spec_asked[k]); ++n;
+    }
+    dsf_log("live-pool: spec fallbacks 30s: %u; asked:%s; map %s", g_spec_fallbacks, asked, text);
+    g_spec_fallbacks = 0; memset(g_spec_asked, 0, sizeof g_spec_asked);
 }
 
 bool __fastcall retain(void* s, void*, uint32_t id)
@@ -324,7 +458,12 @@ bool __fastcall retain(void* s, void*, uint32_t id)
     bool picked_here = GetCurrentThreadId() == g_thread && g_decided == (int)id;
     if (picked_here) g_decided = -1;
     bool result = ((Request)0x005A7860)(s, id);
-    if (result) count_birth(id, picked_here);
+    // 008D1390 mov ebp,ecx: the caller's ebp is the vehicle being constructed (saved at [ebp], /Oy-).
+    uint8_t* vehicle;
+    __asm { mov eax, [ebp] }
+    __asm { mov vehicle, eax }
+    if (result) count_birth(id, picked_here, g_spawn_site, vehicle ? *(void**)(vehicle + 0x5B4) : nullptr);
+    g_spawn_site = 0;
     if (GetCurrentThreadId() == g_thread && result && id < kModels && g_pending[id] && g_owner == s) {
         unsigned before = ((RefCount)0x005A6B00)(s, id);
         g_pending[id] = 0;
@@ -427,6 +566,8 @@ Site g_sites[] = {
     {0x0076FDF0,{0x81,0xEC,0xA0,0x00,0x00,0x00},6,(void*)set,false,(void**)&g_set},
     {0x0074B8B6,{0xE8,0x45,0xB2,0xE5,0xFF},5,(void*)capture_refs,true,nullptr},
     {0x0074BA20,{0x81,0xEC,0x74,0x02,0x00,0x00},6,(void*)restore,false,(void**)&g_restore},
+    {0x008C5C80,{0x8B,0x44,0x24,0x5C,0x8B,0x54,0x24,0x54},8,(void*)create_entry,false,&g_create_original},
+    {0x008D8A9C,{0xE8,0xBF,0xED,0xCC,0xFF},5,(void*)remodel,true,nullptr},
 };
 
 void* trampoline(const Site& site)
@@ -461,6 +602,8 @@ void mod_traffic_init()
     dsf_log("%s", kFeatureMarker);
     if (!cfg_bool("traffic", "runtime_pool", true) || !read_file()) return;
     dsf_log("live-pool: native runtime selection installed %d", install());
+    uint32_t original = 0x0086B9E0, hook = (uint32_t)(uintptr_t)spec_get;
+    dsf_log("live-pool: spec get diagnostic (00E395E4) installed %d", patch_bytes(0x00E395E4, &hook, 4, &original));
 }
 
 static bool __fastcall fixture_exists(void*, void*, uint32_t, uint32_t) { return true; }
@@ -607,6 +750,24 @@ int mod_traffic_selftest()
     }
     LIVE_CHECK(g_retiring[700] && g_retiring[701] && node[4]==1 && node2[4]==1);
     LIVE_CHECK(!g_pending[700] && !g_pending[701]);
+    // A lifecycle transition (replay restore, set change, owner change) drops
+    // only our leases. Served models keep their vehicles' references, so they
+    // must stay out of fallback draws: with their flags cleared, every added-
+    // group draw fell back to the resident served models (#592 host report).
+    uint32_t queuedBefore=*(uint32_t*)(s+0x9A8);
+    forget("lifecycle fixture",false);
+    LIVE_CHECK(g_retiring[700] && g_retiring[701]);
+    {
+        uint32_t added=0, reused=0;
+        for(uint32_t seed=0;seed<10000;++seed) {
+            added += ((Pick)0x00916870)(&range,seed)>=700;
+            reused += decide(&range,nullptr,seed)>=700;
+        }
+        LIVE_CHECK(added>0 && reused==0 && *(uint32_t*)(s+0x9A8)==queuedBefore);
+    }
+    // A flag clears once its model has left the resident lists.
+    g_retiring[702]=1; decide(&range,nullptr,0);
+    LIVE_CHECK(!g_retiring[702] && g_retiring[700] && g_retiring[701]);
     // Compare actual replay capture before/after the hook for both leases.
     // No transient model reference may survive restoration.
     trafficHead[0]=trafficHead[1]=(uint32_t)trafficHead;
@@ -636,8 +797,10 @@ int mod_traffic_selftest()
     g_force_skip=false;
     g_pending[700]=g_pending[701]=1; g_owner=s; ((Clear)0x005A7360)(s);
     LIVE_CHECK(!g_pending[700] && !g_pending[701] && *(uint32_t*)(s+0xDAC)==5);
+    // Native reset unloads the models; the flags clear once decide() sees them gone.
     g_retiring[700]=g_retiring[701]=1; ((Clear)0x005A7360)(s);
-    LIVE_CHECK(!g_retiring[700] && !g_retiring[701]);
+    LIVE_CHECK(g_retiring[700] && g_retiring[701]);
+    memset(g_retiring,0,sizeof g_retiring);
     for(const Site& site:g_sites) LIVE_CHECK(patch_bytes(site.address,site.bytes,site.size));
     LIVE_CHECK(patch_bytes(0x0059C620,existsBytes,5));
     LIVE_CHECK(patch_bytes(0x0059C5C0,capacityBytes,5));
