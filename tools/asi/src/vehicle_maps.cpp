@@ -19,6 +19,16 @@ constexpr uint32_t kNodeBytes = 16;
 constexpr uint32_t kInlineNodes = 45;
 constexpr uint32_t kHead = 12 + kInlineNodes * kNodeBytes;
 constexpr uint32_t kProviderVtable = 0x00E3966C;  // set by both ED/EF constructors
+// The vehicle spec manager [Engine+0x778] (class EC, factory 0086C070, constructor 0086BFA0,
+// vtable 00E395D0, 0x6A4 bytes) keeps its ID->spec map at +0x254 in the same pool layout with
+// 24-byte nodes {prev, next, key, spec, state, flag}: 45 of them from +0x260, the sentinel at
+// +0x698 ((0x698 - 0x260) / 24 = 45). Its only insert is operator[] 0086BE10's call 0086BE67 ->
+// 008CCAA0, a bump by 0x18 with no end check. Node 46 lands on the sentinel and past the object.
+constexpr uint32_t kSpecNodeBytes = 24;
+constexpr uint32_t kSpecMap = 0x254;
+constexpr uint32_t kSpecVtable = 0x00E395D0;
+constexpr uint32_t kSpecSite = 0x0086BE67;
+const uint8_t kSpecCall[] = {0xE8, 0x34, 0x0C, 0x06, 0x00};  // call 008CCAA0
 constexpr uint32_t kAudioVtable = 0x00DE3824;     // Engine+0x280's model-audio provider (factory 00557000)
 // Peaks are logged from 40 nodes: below vanilla's own peak of 43 at 35 slots
 // (research/traffic.md), so slots_trace at 35 shows them. A logging choice, not a limit.
@@ -27,6 +37,7 @@ constexpr uint32_t kLogFrom = 40;
 constexpr uint32_t kAudioLabel = 0xA0;
 using Insert = int**(__thiscall*)(int*, int**, int*, const int*);  // 007D7270, the map template's insert
 using Index = int*(__thiscall*)(int*, const int*);                  // 00556F60, operator[]
+using Append = int*(__thiscall*)(int*, const int*);                 // 008CCAA0, the 24-byte pool's node append
 
 struct Page {
     Page* next;
@@ -38,6 +49,7 @@ struct Map {
     int* pool;
     Page* pages;
     uint32_t peak;
+    uint32_t node;  // node bytes: 16 (ED/EF, model audio) or 24 (the spec map)
 };
 Map* g_maps = nullptr;
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -65,20 +77,28 @@ uint32_t map_kind(int* pool)
     return 0;
 }
 
-Map* find_map(int* pool)
+// The spec manager's map: the owner's vtable and class tag (0086BFA0: mov [esi+248h],0ECh).
+bool spec_map(int* pool)
+{
+    uint8_t* owner = (uint8_t*)pool - kSpecMap;
+    return readable_map(owner, 0x24C) && *(uint32_t*)owner == kSpecVtable && *(uint32_t*)(owner + 0x248) == 0xEC;
+}
+
+Map* find_map(int* pool, uint32_t node = kNodeBytes)
 {
     for (Map* m = g_maps; m; m = m->next)
-        if (m->pool == pool) return m;
+        if (m->pool == pool && m->node == node) return m;
     if (g_fail_allocation) return nullptr;
     Map* m = (Map*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Map));
     if (!m) return nullptr;
     m->pool = pool;
+    m->node = node;
     m->next = g_maps;
     g_maps = m;
     return m;
 }
 
-Page* new_page()
+Page* new_page(uint32_t node)
 {
     if (g_fail_allocation) return nullptr;
     Page* page = (Page*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Page));
@@ -91,7 +111,7 @@ Page* new_page()
         HeapFree(GetProcessHeap(), 0, page);
         return nullptr;
     }
-    page->end = page->begin + info.dwPageSize;
+    page->end = page->begin + info.dwPageSize / node * node;  // whole nodes only
     return page;
 }
 
@@ -103,17 +123,17 @@ bool make_room(Map* m)
     int* pool = m->pool;
     if (pool[1]) return true;
     uintptr_t cur = (uint32_t)pool[0];
-    uintptr_t begin = (uintptr_t)(pool + 3), end = (uintptr_t)pool + kHead;
+    uintptr_t begin = (uintptr_t)(pool + 3), end = begin + kInlineNodes * m->node;
     Page** next = &m->pages;
-    if (cur >= begin && cur < end && (cur - begin) % kNodeBytes == 0) return true;
+    if (cur >= begin && cur < end && (cur - begin) % m->node == 0) return true;
     if (cur != end) {
         Page* page = m->pages;
         while (page && !(cur >= (uintptr_t)page->begin && cur <= (uintptr_t)page->end)) page = page->next;
-        if (!page || (cur - (uintptr_t)page->begin) % kNodeBytes) return false;
+        if (!page || (cur - (uintptr_t)page->begin) % m->node) return false;
         if (cur < (uintptr_t)page->end) return true;
         next = &page->next;
     }
-    if (!*next) *next = new_page();
+    if (!*next) *next = new_page(m->node);
     if (!*next) return false;
     pool[0] = (int)(uintptr_t)(*next)->begin;
     return true;
@@ -149,6 +169,29 @@ int** __fastcall insert(int* pool, void*, int** out, int* pos, const int* kv)
     return result;
 }
 
+// 0086BE67: the spec map's node append. With 46 resident models the native append wrote
+// node 46 over the sentinel: lookups of lower IDs then miss, and get() 0086B9E0 hands
+// out its fallback, the first listed spec, so construction 008D1380 builds that model
+// (research/traffic.md, "Vehicle spec manager map").
+int* __fastcall spec_append(int* pool, void*, const int* value)
+{
+    if (!spec_map(pool)) return ((Append)0x008CCAA0)(pool, value);
+    AcquireSRWLockExclusive(&g_lock);
+    Map* m = find_map(pool, kSpecNodeBytes);
+    if (!m || !make_room(m)) {
+        ReleaseSRWLockExclusive(&g_lock);
+        map_failure(pool, 0xEC);
+    }
+    int* node = ((Append)0x008CCAA0)(pool, value);
+    uint32_t used = (uint32_t)pool[2];
+    bool peak = used > m->peak;
+    if (peak) m->peak = used;
+    ReleaseSRWLockExclusive(&g_lock);
+    if (peak && used >= kLogFrom)
+        dsf_log("slots: provider map %p class 0xec holds %u nodes (peak; %u inline)", pool, used, kInlineNodes);
+    return node;
+}
+
 // 00556E30: native registration calls map::operator[](key), then stores profile.
 // Replace its separate 45-entry gate only for the verified model-audio provider.
 void __fastcall audio_register(uint8_t* self, void*, int profile, int key)
@@ -182,6 +225,17 @@ const uint8_t kEfKind[] = {0xC7, 0x80, 0x34, 0x02, 0x00, 0x00, 0xEF, 0x00, 0x00,
 // factory 00557000 allocates 0x2F0 bytes (push 2F0h).
 const uint8_t kAudioLookup[] = {0x81, 0xC7, 0xE0, 0x02, 0x00, 0x00};
 const uint8_t kAudioFactory[] = {0x68, 0xF0, 0x02, 0x00, 0x00};
+// Spec manager layout, constructor 0086BFA0: mov dword [esi+248h],0ECh; mov dword [esi],00E395D0h;
+// lea eax,[esi+698h] (the sentinel); lea edx,[esi+260h] (the first node). Lookup 0086BDC0: lea
+// eax,[ecx+444h] (the sentinel from the map). Append 008CCAA0: cmp dword [ecx+4],0; mov eax,[ecx],
+// and its bump at 008CCAFA: add dword [ecx],18h.
+const uint8_t kSpecKind[] = {0xC7, 0x86, 0x48, 0x02, 0x00, 0x00, 0xEC, 0x00, 0x00, 0x00};
+const uint8_t kSpecVt[] = {0xC7, 0x06, 0xD0, 0x95, 0xE3, 0x00};
+const uint8_t kSpecSentinel[] = {0x8D, 0x86, 0x98, 0x06, 0x00, 0x00};
+const uint8_t kSpecFirst[] = {0x8D, 0x96, 0x60, 0x02, 0x00, 0x00};
+const uint8_t kSpecFind[] = {0x8D, 0x81, 0x44, 0x04, 0x00, 0x00};
+const uint8_t kSpecAppend[] = {0x83, 0x79, 0x04, 0x00, 0x8B, 0x01};
+const uint8_t kSpecBump[] = {0x83, 0x01, 0x18};
 // Vtable 00DE3824's slot 1 (at 00DE3828) is the registration 00556E30.
 constexpr uint32_t kAudioRegisterSlot = 0x00DE3828;
 bool g_audio_installed = false;
@@ -201,6 +255,13 @@ const char* preflight_mismatch()
         !check_bytes(0x00557000, kAudioFactory, sizeof kAudioFactory))
         return "the model-audio provider's layout";
     if (*(uint32_t*)kAudioRegisterSlot != 0x00556E30) return "vtable 00DE3824's registration slot";
+    if (!check_bytes(kSpecSite, kSpecCall, sizeof kSpecCall)) return "the spec map's append call 0086BE67";
+    if (!check_bytes(0x0086BFC2, kSpecKind, sizeof kSpecKind) || !check_bytes(0x0086BFD6, kSpecVt, sizeof kSpecVt) ||
+        !check_bytes(0x0086BFE2, kSpecSentinel, sizeof kSpecSentinel) ||
+        !check_bytes(0x0086BFE8, kSpecFirst, sizeof kSpecFirst) ||
+        !check_bytes(0x0086BDC6, kSpecFind, sizeof kSpecFind) ||
+        !check_bytes(0x008CCAA0, kSpecAppend, sizeof kSpecAppend) || !check_bytes(0x008CCAFA, kSpecBump, sizeof kSpecBump))
+        return "the spec manager's layout";
     return nullptr;
 }
 
@@ -214,6 +275,7 @@ bool preflight()
 void restore_sites()
 {
     for (int i = 0; i < 3; i++) patch_bytes(kSites[i], kCalls[i], 5);
+    patch_bytes(kSpecSite, kSpecCall, sizeof kSpecCall);
     patch_bytes(0x00556E30, kRegister, 6);
     g_installed = g_audio_installed = false;
 }
@@ -234,6 +296,11 @@ bool vehicle_maps_install(bool audio)
                 return false;
             }
         }
+        if (!patch_call(kSpecSite, (void*)spec_append, kSpecCall)) {
+            for (int j = 0; j < 3; j++) patch_bytes(kSites[j], kCalls[j], 5);
+            dsf_log("slots: patching the spec map's append 0086BE67 failed; the ID maps keep their 45 nodes");
+            return false;
+        }
         g_installed = true;
     }
     if (audio) {
@@ -243,7 +310,8 @@ bool vehicle_maps_install(bool audio)
             return false;
         }
         g_audio_installed = true;
-        dsf_log("slots: ED/EF and model-audio ID maps continue beyond 45 in page storage; native lookup/removal retained");
+        dsf_log("slots: ED/EF, spec and model-audio ID maps continue beyond 45 in page storage; native lookup/removal "
+                "retained");
     } else {
         dsf_log("slots_trace: the ID maps' peaks are logged from %u nodes; model audio keeps its 45-entry gate", kLogFrom);
     }
@@ -293,6 +361,68 @@ int vehicle_maps_selftest()
     MAP_CHECK(!guard() && pool[2] == 46);
     reset(0xEF);
 
+    // The spec manager's map, set up as 0086BFA0 does (without its class-factory call). Models
+    // register through operator[] 0086BE10 and are read back through get() 0086B9E0, as
+    // vehicle construction 008D1380 reads them. Spec k's model is [[spec + 4850h] + 14h]
+    // (0088C8F0): spec k sits at specs + 16k, so its +4850h is a pointer to infos[k].
+    using SpecIndex = int*(__thiscall*)(int*, const int*);   // 0086BE10: &node->spec
+    using SpecGet = void**(__thiscall*)(void*, void**, uint32_t);
+    using SpecErase = int(__thiscall*)(int*, const int*);   // 0086BE90
+    static uint8_t spec_owner[0x6A4 + 0x40];
+    static uint8_t specs[0x4850 + 128 * 16];
+    static uint32_t infos[128][6];
+    int* spec_pool = (int*)(spec_owner + kSpecMap);
+    auto spec_reset = [&]() {
+        memset(spec_owner, 0, sizeof spec_owner);
+        memset(spec_owner + 0x6A4, 0xAB, 0x40);  // past the 0x6A4-byte object (factory 0086C070)
+        *(uint32_t*)spec_owner = kSpecVtable;
+        *(uint32_t*)(spec_owner + 0x248) = 0xEC;
+        *(uint8_t**)(spec_owner + 0x254) = spec_owner + 0x260;
+        *(uint8_t**)(spec_owner + 0x698) = spec_owner + 0x698;
+        *(uint8_t**)(spec_owner + 0x69C) = spec_owner + 0x698;
+    };
+    auto spec_guard = [&]() {
+        for (int i = 0; i < 0x40; i++) if (spec_owner[0x6A4 + i] != 0xAB) return false;
+        return true;
+    };
+    // Model IDs: the player's car 3 registers first (the owner's RX-7 in vm1-20261114-132735),
+    // then traffic models 100, 102, ...; slot k holds model ids[k].
+    int ids[128];
+    for (int k = 0; k < 128; k++) {
+        ids[k] = k ? 98 + 2 * k : 3;
+        infos[k][5] = (uint32_t)ids[k];
+        *(uint32_t**)(specs + 0x4850 + 16 * k) = infos[k];
+    }
+    auto spec_register = [&](int k) {
+        int* value = ((SpecIndex)0x0086BE10)(spec_pool, &ids[k]);
+        value[0] = (int)(uintptr_t)(specs + 16 * k);
+        value[1] = 0;  // +10h: state; get() skips nodes above 0
+    };
+    auto spec_model = [&](int id) {
+        void* spec = nullptr;
+        ((SpecGet)0x0086B9E0)(spec_owner, &spec, (uint32_t)id);
+        return spec ? (int)*(uint32_t*)(*(uint8_t**)((uint8_t*)spec + 0x4850) + 0x14) : -1;
+    };
+    // As shipped: 45 models resolve to themselves; a 46th (here 151, between two others)
+    // overwrites the sentinel, and every lower ID then resolves to another model.
+    spec_reset();
+    for (int k = 0; k < 45; k++) spec_register(k);
+    int wrong = 0;
+    for (int k = 0; k < 45; k++) wrong += spec_model(ids[k]) != ids[k];
+    MAP_CHECK(wrong == 0 && spec_pool[2] == 45 && spec_guard());
+    {
+        int id46 = 151;
+        int* value = ((SpecIndex)0x0086BE10)(spec_pool, &id46);
+        value[0] = (int)(uintptr_t)(specs + 16 * 127);
+        value[1] = 0;
+    }
+    wrong = 0;
+    for (int k = 0; k < 45; k++) wrong += spec_model(ids[k]) != ids[k];
+    MAP_CHECK(wrong >= 27 && spec_model(3) != 3 && !spec_guard());
+    printf("vehicle maps: as shipped, 46 specs: %d of 45 earlier models resolve to another (model 3 -> %d)\n", wrong,
+           spec_model(3));
+    spec_reset();
+
     // A late preflight mismatch must leave every earlier site unmodified.
     *(uint8_t*)0x00556EBB ^= 1;
     MAP_CHECK(!vehicle_maps_install(true));
@@ -317,6 +447,49 @@ int vehicle_maps_selftest()
     for (int i = 0; i < 3; i++) MAP_CHECK(bytes_equal(kSites[i], kCalls[i], 5));
     MAP_CHECK(bytes_equal(0x00556E30, kRegister, 6) && !g_installed && !g_audio_installed);
     MAP_REQUIRE(vehicle_maps_install(true));
+
+    // With the append hooked: 128 specs (45 inline, 83 on a page) all resolve to themselves,
+    // the object's end stays untouched, and native erase/re-register recycles both kinds of node.
+    spec_reset();
+    for (int k = 0; k < 128; k++) spec_register(k);
+    MAP_CHECK(spec_pool[2] == 128 && spec_guard());
+    wrong = 0;
+    for (int k = 0; k < 128; k++) wrong += spec_model(ids[k]) != ids[k];
+    MAP_CHECK(wrong == 0);
+    for (int k : {0, 100, 127}) {
+        ((SpecErase)0x0086BE90)(spec_pool, &ids[k]);
+        MAP_CHECK(spec_pool[2] == 127 && spec_pool[1] == 1 && spec_model(ids[k]) != ids[k]);
+        spec_register(k);
+        MAP_CHECK(spec_pool[2] == 128 && spec_pool[1] == 0 && spec_model(ids[k]) == ids[k]);
+    }
+    // A missing ID still gets get()'s native fallback, the first listed spec (model 3).
+    MAP_CHECK(spec_model(999) == 3 && spec_guard());
+    for (int k = 0; k < 128; k++) ((SpecErase)0x0086BE90)(spec_pool, &ids[k]);
+    MAP_CHECK(spec_pool[2] == 0 && spec_pool[1] == 128);
+    // Another manager at the same address (a new session) starts inline again and reuses the
+    // pages; 400 models cross into a third page (170 nodes of 24 bytes per 4 KiB page).
+    spec_reset();
+    static int many[400];
+    for (int k = 0; k < 400; k++) {
+        many[k] = 1000 + k;
+        int* value = ((SpecIndex)0x0086BE10)(spec_pool, &many[k]);
+        value[0] = (int)(uintptr_t)(specs + 16 * (k % 128));
+        value[1] = 0;
+    }
+    MAP_CHECK(spec_pool[2] == 400 && spec_guard());
+    {
+        int count = 0, last = -1;
+        bool ordered = true;
+        uint8_t* sentinel = spec_owner + 0x698;
+        for (uint8_t* n = *(uint8_t**)(sentinel + 4); n != sentinel && count <= 400; n = *(uint8_t**)(n + 4)) {
+            int key = *(int*)(n + 8);
+            ordered &= key > last;
+            last = key;
+            count++;
+        }
+        MAP_CHECK(count == 400 && ordered);
+    }
+    spec_reset();
 
     for (uint32_t kind : {0xEDu, 0xEFu}) {
         reset(kind);
