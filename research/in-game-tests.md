@@ -500,8 +500,8 @@ what dsfcars.asi loads (`[archive] packages=1`).
 - `run-series.ps1 -Vm -Archives out\vanilla\Install\dngvehicles.sp -Asi
   out\roster\plugin\dsfcars.asi -Overlay out\roster\overlay -Traffic -DriveSeconds 200`.
   The overlay is copied into the run folder and laid into `C:\Run` (about 100 s on
-  an idle host); run-series removes the run folder's copy after the run
-  (`overlay.txt` names the source).
+  an idle host); run-series removes the run folder's copy once the run has a
+  result (`overlay.txt` names the source).
 - run-series writes the VM session's settings to `vm.json` (from vmware.log: a VM
   started by another checkout can have other `$VmSettings`), prints them with the
   run's memory peaks, and warns against the session's graphics memory.
