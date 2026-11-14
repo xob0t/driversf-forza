@@ -263,7 +263,7 @@ handler with each failure type, deferred mutation, dictionary identity,
 successful IV persistence, and the reported old-plugin failure followed by an
 unrelated car save. The installed native DLL and pool data do not change.
 
-## One-model roads report (2026-11-13), open
+## One-model roads report (2026-11-13): cause found 2026-11-14
 
 The owner's host log (Epilogue free roam, 721 packages, 60 slots, a copy in
 the coordinator's temp folder) ends with roads "almost all Mazda RX-7". The
@@ -290,9 +290,9 @@ fix.
 
 **Other spawners (confirmed-static).** `00916870` has two callers: `0077ADCB`
 (hooked) and the attached-vehicle draw `0077AF4B` (native weights, vanilla
-models only). The spawn `0077ADA0` creates the picked model. Construction
-`008D1380` requests that model's own reference (`008D1475`), so native code
-never substitutes a resident model. Vehicles made outside the picker:
+models only). The spawn `0077ADA0` creates the picked model. (Corrected 2026-11-14:
+construction `008D1380` requests the model of the spec that the spec manager
+returns for it, and that can be another resident model; see "Cause" below.) Vehicles made outside the picker:
 
 | Creator | Model source |
 | --- | --- |
@@ -324,3 +324,59 @@ outside `008C5C80`, and no spec alias. It then stalled on the pause menu
 (#589) before the player drove, so the one-model case is not reproduced
 yet. The host run with that plugin decides between a spawner and a drawing
 fault.
+
+### Cause (2026-11-14)
+
+**The spawning path (confirmed-static, confirmed-runtime).** No spawner asks
+for the player's model. Vehicle construction `008D1380` takes its spec from
+the spec manager `[Engine+0x778]` (`get(id)`, vtable `00E395D0` +0x14 =
+`0086B9E0`, called at `008D1405`), and requests the reference of *that
+spec's* model (`008D144A`, `008D1475`). When the manager has no spec for the
+ID, `get()` returns the first listed spec. Its map is sorted by ID, so that is
+the lowest resident ID: the owner's RX-7, ID 3, in every census below. The
+decode, the addresses and the fixture are in `traffic.md`, "Vehicle spec
+manager map". Two things make the picker ask for an ID the manager lacks:
+
+1. **A listed model that hasn't registered.** `decide()`'s readiness copied
+   `005A6EA0`: listed and referenced. A spooler request lists the model at
+   once, and its spec registers only after its UPVH loads. So for a model
+   loading again (a native request: here an IV's), every pick gave an RX-7.
+   And since the birth was model 3, `retain()` never marked the picked model
+   served. The picker kept choosing it: one decision, repeated for the whole
+   window. This is why model 3 is "0 picked, retiring" in the summaries.
+2. **The map's 46th node.** The spec map holds 45 nodes inline and its
+   append has no end check. Node 46 overwrites the list's sentinel and cuts
+   the IDs below the new one out of the list, so their lookups miss for good.
+   `vm1-20261114-132735`'s flood began in the 30 s after the ID maps reached
+   46 nodes (13:31:27; the spec map tracked ED/EF exactly in every
+   census below) and held for 4.5 minutes. The fixture's shipped-code
+   reproduction gives the cut-off IDs the successor of the 46th instead of
+   ID 3, so how the head became 3 in that run is not reproduced; no run with
+   the shipped map passed 45 again.
+
+**Runs** (VM, the owner's installed overlay as in the 2026-11-14 PR comment,
+probe ID 3, traffic on, 60 slots; run folders under
+`%LOCALAPPDATA%\Temp\dsfforza-wsb\runs\`; plugin `diag/live-pool-specs`
+and `diag/live-pool-specs-fix`, which log every `get()` that returns another
+model, with its caller, the spawner and `decide()`'s answer, and a census of
+the spec map):
+
+| Run | Build | What | Births (picker) | Model 3 births |
+| --- | --- | --- | --- | --- |
+| `vm1-20261114-132735` | before (409771a7) | the flood: stuck at a barrier | 2313 (1192) | 999, up to 128 of 143 per 30 s |
+| `vm1-20261114-142148` | before + diag | standing 6 min | 1688 (1589) | 0; spec map peak 45, 0 fallbacks |
+| `vm1-20261114-143150` | before + diag | driving 9 min | 1871 (1783) | 0; peak 45, 0 fallbacks |
+| `vm1-20261114-151912` | before + diag | standing, `-AheadIds 4,5,6` | 1546 (1453) | 3: the ahead cars, refused by the spooler, built by the Lua spawner `006707E4` as model 3 |
+| `vm2-20261114-151915` | spec map fix + diag | driving 9 min | 2645 (2405) | 71: 68 ambient, 3 IV, from 116 picked before its spec registered (15:28:27 to :48); 3 IV births from 159 at 15:26:49 |
+| `vm2-20261114-153702` | both fixes + diag | driving 17 min | 3597 (3330) | 3, all IV (`007EBBF2` asking for 150 without a spec); 0 ambient fallbacks |
+
+**Fix.** (1) `decide()` counts a listed model as spawnable only when `get(id)`
+returns that model's own spec, the test construction applies
+(`mod_traffic.cpp`, `spec_ready`). (2) The spec map continues past 45 in
+page storage, as ED/EF do (`vehicle_maps.cpp`, the call at `0086BE67`).
+
+**Open.** The IV spawner `007EBB20` builds its model from `get()` with no
+check (`007EBB72`), and asked for models whose spec was gone or not yet
+registered: 159 and 150 above, 3 births each. That is a native spawner and the
+live pool doesn't decide it; whether vanilla IVs ever do it is not checked.
+
