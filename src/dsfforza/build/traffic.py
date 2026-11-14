@@ -1,5 +1,5 @@
-"""The car manager's traffic settings: ambient traffic sets (a patched copy of the game's
-media/san_franciscoAI.fchunk) and interesting vehicles (dsfcars\\traffic.lua for register.lua).
+"""The car manager's traffic settings: live ambient pools with current plugins,
+legacy static AI copies with older plugins, and interesting vehicles.
 research/traffic.md has the game's side; section 6 the design.
 
 Settings (manager.json "traffic"; keys are package keys, so they survive reinstalls):
@@ -10,8 +10,8 @@ Settings (manager.json "traffic"; keys are package keys, so they survive reinsta
 
 Set settings (ambient.default for every story set, ambient.sets.<name> over it for one):
 
-    ports        "fill" (default: up to the set's slot budget), how many ports join the set (dealt
-                 from the cars in traffic), or a list of keys
+    pool         "all" (default) or candidate package keys; not limited to the resident-model budget
+    ports        "fill" (automatic resident budget), a numeric resident limit, or legacy keys
     share        "mean" (default: each added model as likely on a road as the road's average
                  vanilla model, so the added models' share is k / (vanilla + k)), or their share of
                  every road's weight (0..1)
@@ -26,7 +26,11 @@ raise is safe again (#586). Any set setting (`traffic ambient`, with or without 
 {"on": true}; then every story set gets DEFAULT_SET (filled to its budget, "mean" weights) under
 the settings made. `traffic ambient --off` stores {"off": true} for no changes at all.
 
-Rules (research/traffic.md 1b, the owner's):
+Live pools use runtime_traffic.py and research/runtime-traffic-pools.md. The original AI stays
+unchanged and each active chapter samples its complete configured pool. Native cleanup and
+admission control residency; numeric ports is a streaming budget, not a candidate count.
+
+Legacy static-writer rules (research/traffic.md 1b):
 - The per-road structure stays: a road whose range has no weight still has none, and only the
   models a road's range already allows are reweighted; added models spread over every road of
   the set that spawns anything.
@@ -72,6 +76,7 @@ WEIGHT_MODES = ("vanilla", "equal", "custom")
 # budget, each port as likely on a road as an average vanilla car of that road ("mean"), the
 # vanilla models' weights as the game has them.
 DEFAULT_SET = {
+    "pool": "all",
     "ports": "fill",
     "share": "mean",
     "weights": "vanilla",
@@ -151,6 +156,8 @@ def set_settings(ambient: dict, name: str) -> dict:
     out.update((ambient.get("sets") or {}).get(name) or {})
     if out["weights"] not in WEIGHT_MODES:
         raise ValueError(f"{name}: weights {out['weights']!r} is not one of {WEIGHT_MODES}")
+    if out["pool"] != "all" and not (isinstance(out["pool"], list) and all(isinstance(k, str) for k in out["pool"])):
+        raise ValueError(f"{name}: pool must be 'all' or a list of package keys")
     out["blend"] = 1.0 if out["weights"] == "equal" else float(out.get("blend") or 0.0)
     return out
 
@@ -249,16 +256,20 @@ class _Planner:
                 out[mid] = float(v)
         return out
 
-    def deal(self, want, room: int) -> list[int]:
-        """The ports for one set: the keys asked for, the next `want` of the shuffled deck, or
-        with "fill" as many as the set has room for."""
+    def deal(self, want, room: int, pool="all") -> list[int]:
+        """Deal from this chapter's pool: explicit ports or the next candidates of the shuffled
+        deck, with "fill" taking as many as the set has room for. The saved pool stays intact."""
+        allowed = set(self.ports)
+        if pool != "all":
+            allowed &= {self.key_ids[k] for k in pool if k in self.key_ids}
         if isinstance(want, list):
-            return [self.key_ids[k] for k in want if self.key_ids.get(k) in self.ports]
+            return list(dict.fromkeys(self.key_ids[k] for k in want if self.key_ids.get(k) in allowed))
         count = room if want == "fill" else int(want or 0)
-        chosen = []
-        for _ in range(min(count, len(self.deck))):
-            chosen.append(self.deck[0])
-            self.deck.append(self.deck.pop(0))
+        chosen = [mid for mid in self.deck if mid in allowed][: max(count, 0)]
+        # A chapter's pool filters the shuffled deck, not its resident-model budget.
+        # Move only dealt cars to the back so other chapters keep their candidates.
+        picked = set(chosen)
+        self.deck = [mid for mid in self.deck if mid not in picked] + chosen
         return chosen
 
     def room(self, name, kept: int, reached) -> int:
@@ -282,7 +293,7 @@ class _Planner:
         reached = [(u, fr) for u, fr in ai.users(ranges) if not (u.index == ts.index and fr == 0)]
         kept = [m for m in vanilla_list if m not in off]
         free = self.room(name, len(kept), reached)
-        chosen = self.deal(s.get("ports"), max(free - len(extra), 0))
+        chosen = self.deal(s.get("ports"), max(free - len(extra), 0), s["pool"])
         added = (extra + chosen)[:free]
         if len(extra) + len(chosen) > free:
             rep.notes.append(f"{len(extra) + len(chosen) - free} of the added models left out: over the slot budget")
@@ -402,6 +413,14 @@ class TrafficControl:
         """(ID, key) of the enabled cars with traffic on, in key order."""
         return [(c["id"], k) for k, c in self.cars().items() if c["enabled"] and c["traffic"]]
 
+    def pool_keys(self, pool="all") -> list[str]:
+        """Eligible package keys in a chapter's candidate pool, independent of its slot budget."""
+        eligible = [key for _, key in self.in_traffic()]
+        if pool == "all":
+            return eligible
+        allowed = set(pool)
+        return [key for key in eligible if key in allowed]
+
     # --- settings ---
 
     def set_traffic(self, keys: list[str], *, on: bool) -> None:
@@ -497,9 +516,48 @@ class TrafficControl:
         # "default" present, even empty: `traffic ambient` without fields before "on" was stored
         return bool(amb.get("on") or "default" in amb or amb.get("sets"))
 
-    def write(self) -> list[SetReport]:
-        """The AI copy and its redirect line (neither when no set changes), and traffic.lua."""
-        from dsfforza.build import car_gui
+    def live_pools(self) -> bool:
+        """Whether the installed plugin supports selecting and streaming the full pool."""
+        from dsfforza.build import car_manager, runtime_traffic
+
+        return runtime_traffic.supported(self.m.game / car_manager.PLUGIN)
+
+    def has_pool_setting(self) -> bool:
+        amb = self.t["ambient"]
+        return "pool" in (amb.get("default") or {}) or any(
+            "pool" in fields for fields in (amb.get("sets") or {}).values()
+        )
+
+    def require_live_pools(self) -> None:
+        """Refuse a live-pool edit when the installed plugin cannot use it."""
+        if not self.live_pools():
+            raise SystemExit("live chapter pools need the updated dsfcars.asi; no static batch was generated")
+
+    def _write_live(self, *, strict: bool):
+        """Explicit edits fail; automatic refreshes warn without blocking car management."""
+        from dsfforza.build import runtime_traffic
+
+        try:
+            self.require_live_pools()
+            return runtime_traffic.write(self)
+        except (SystemExit, ValueError, OSError) as e:
+            if strict:
+                raise
+            self.m.log(f"live traffic update failed: {e}")
+        # IV settings do not need the ambient AI or mission scripts.
+        try:
+            self.write_lua()
+        except (SystemExit, ValueError, OSError) as e:
+            self.m.log(f"interesting-vehicle settings not written: {e}")
+        return []
+
+    def write(self, *, strict: bool = True) -> list[SetReport]:
+        """Write traffic files. Only automatic car saves may tolerate live-pool failures."""
+        from dsfforza.build import car_gui, runtime_traffic
+
+        if self.ambient_changes() and (self.live_pools() or self.has_pool_setting()):
+            return self._write_live(strict=strict)
+        (self.m.game / runtime_traffic.POOL_FILE).unlink(missing_ok=True)
 
         game = self.m.game
         copy = game / AI_COPY
@@ -564,7 +622,9 @@ class TrafficControl:
 
     def clear(self) -> None:
         """Uninstall: the copy, its redirect line and traffic.lua go."""
-        from dsfforza.build import car_gui
+        from dsfforza.build import car_gui, runtime_traffic
+
+        (self.m.game / runtime_traffic.POOL_FILE).unlink(missing_ok=True)
 
         (self.m.game / AI_COPY).unlink(missing_ok=True)
         (self.m.game / AI_SLOTS).unlink(missing_ok=True)
@@ -593,11 +653,29 @@ class TrafficControl:
         if not self.ambient_changes():
             out.append("ambient traffic: as the game has it (`traffic ambient` puts ports in the sets)")
             return out
+        if self.live_pools():
+            from dsfforza.build import runtime_traffic
+
+            _payload, reports = runtime_traffic.build(self)
+            out.append("live ambient pools: automatic selection and native streaming during the drive")
+            configured = set(STORY_SETS) | set(self.t["ambient"].get("sets") or {})
+            out.extend(
+                f"  {r.name}: {r.candidates} candidates, streaming budget {r.live_limit}, native baseline {r.baseline}"
+                for r in reports
+                if r.name in configured
+            )
+            return out
+        if self.has_pool_setting():
+            out.append("live pools require the updated dsfcars.asi; saved pools are not active")
+            return out
         ai, reports = self.plan()
         slots, _ = self.facts()
         out.append(f"ambient traffic ({slots} vehicle spool slots):")
         for r in reports:
             line = f"  {r.name}: {r.models} models of {r.budget}, weights {r.weights}"
+            s = set_settings(self.t["ambient"], r.name)
+            candidates = len(on) if s["pool"] == "all" else len(set(on) & set(s["pool"]))
+            line += f", Forza pool {candidates} candidates, {len(r.ports)} selected"
             if r.ports:
                 share = ai.share(ai.by_name(r.name))
                 line += f", ports {r.ports} ({sum(share.get(m, 0.0) for m in r.ports):.0%} of its roads)"

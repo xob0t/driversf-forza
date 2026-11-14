@@ -40,6 +40,7 @@ import json
 import re
 import shutil
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 from dsfforza.build import dsfcar
@@ -287,11 +288,10 @@ class Manager:
             self.write_traffic()
 
     def write_traffic(self) -> None:
-        """The traffic settings' files (build/traffic.py): the AI copy and its redirect line,
-        and traffic.lua. Cars enabled, disabled or removed change which ports are dealt."""
+        """Refresh traffic for car changes; optional live-pool failures are logged."""
         from dsfforza.build import traffic
 
-        for r in traffic.TrafficControl(self).write():
+        for r in traffic.TrafficControl(self).write(strict=False):
             for note in r.notes:
                 self.log(f"traffic: {r.name}: {note}")
 
@@ -684,7 +684,12 @@ def add_traffic_parser(sub, common) -> None:
         help="the traffic sets: ports, share, weights, the pool (off by default; this turns them on)",
     )
     a.add_argument("--set", dest="set_name", help="one set (e.g. 'Chapter 7'); default: every story set's default")
-    a.add_argument("--ports", help="fill (up to the slot budget), how many, or keys separated by commas")
+    a.add_argument(
+        "--ports", help="fill (automatic streaming budget), max cached models, or legacy keys separated by commas"
+    )
+    a.add_argument(
+        "--pool", help="candidate cars: all, none, or keys/selectors separated by commas (make:Ford, game:FH1)"
+    )
     a.add_argument("--share", help="mean (each as likely as an average vanilla car) or the added models' share (0..1)")
     a.add_argument("--weights", choices=["vanilla", "equal", "custom"])
     a.add_argument("--blend", type=float, help="0 = the game's weights .. 1 = equal")
@@ -693,7 +698,7 @@ def add_traffic_parser(sub, common) -> None:
     a.add_argument("--extra", type=_ints, help="vanilla model IDs of other sets added in")
     a.add_argument("--reset", nargs="+", help="these fields back to the default's (or the game's)")
     a.add_argument("--off", action="store_true", help="no traffic set changes at all")
-    ts.add_parser("shuffle", help="deal the ports to the sets again")
+    ts.add_parser("shuffle", help="legacy static presets only; live pools select automatically")
     iv = ts.add_parser("iv", help="interesting vehicles: ports in their regions or not")
     iv.add_argument("state", choices=["on", "off"])
     iv.add_argument("--per-region", type=int)
@@ -701,6 +706,7 @@ def add_traffic_parser(sub, common) -> None:
 
 
 def run_traffic(m: Manager, args) -> None:
+    """Apply a traffic command; persist settings only after its strict write succeeds."""
     from dsfforza.build import traffic
 
     tc = traffic.TrafficControl(m)
@@ -708,27 +714,34 @@ def run_traffic(m: Manager, args) -> None:
     if act == "status":
         print("\n".join(tc.status()))
         return
-    if act in ("on", "off"):
-        tc.set_traffic(tc.select(args.selectors), on=act == "on")
-    elif act == "pin":
-        tc.pin(tc.select(args.selectors), args.regions)
-    elif act == "unpin":
-        tc.pin(tc.select(args.selectors), None)
-    elif act == "shuffle":
-        tc.shuffle()
-    elif act == "iv":
-        tc.t["iv"]["ports"] = args.state == "on"
-        if args.vanilla is not None:
-            tc.t["iv"]["vanilla"] = args.vanilla == "on"
-        if args.per_region is not None:
-            tc.t["iv"]["per_region"] = args.per_region
-    elif act == "ambient":
-        if args.off:
-            tc.ambient_off()
-        else:
-            tc.set_ambient(args.set_name, **ambient_fields(tc, args))
-    m.save_state()
-    for r in tc.write():
+    before = deepcopy(tc.t)
+    try:
+        if act in ("on", "off"):
+            tc.set_traffic(tc.select(args.selectors), on=act == "on")
+        elif act == "pin":
+            tc.pin(tc.select(args.selectors), args.regions)
+        elif act == "unpin":
+            tc.pin(tc.select(args.selectors), None)
+        elif act == "shuffle":
+            tc.shuffle()
+        elif act == "iv":
+            tc.t["iv"]["ports"] = args.state == "on"
+            if args.vanilla is not None:
+                tc.t["iv"]["vanilla"] = args.vanilla == "on"
+            if args.per_region is not None:
+                tc.t["iv"]["per_region"] = args.per_region
+        elif act == "ambient":
+            if args.off:
+                tc.ambient_off()
+            else:
+                tc.set_ambient(args.set_name, **ambient_fields(tc, args))
+        reports = tc.write()
+        m.save_state()
+    except (SystemExit, ValueError, OSError):
+        tc.t.clear()
+        tc.t.update(before)
+        raise
+    for r in reports:
         for note in r.notes:
             m.log(f"traffic: {r.name}: {note}")
     print("\n".join(tc.status()))
@@ -736,6 +749,9 @@ def run_traffic(m: Manager, args) -> None:
 
 def ambient_fields(tc, args) -> dict:
     fields = {}
+    if args.pool is not None:
+        pool = args.pool.casefold()
+        fields["pool"] = "all" if pool == "all" else [] if pool == "none" else tc.select(args.pool.split(","))
     if args.ports is not None:
         if args.ports == "fill" or args.ports.isdigit():
             fields["ports"] = "fill" if args.ports == "fill" else int(args.ports)

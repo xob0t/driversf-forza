@@ -11,6 +11,7 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from copy import deepcopy
 from tkinter import messagebox, simpledialog, ttk
 
 from dsfforza import REPO
@@ -113,9 +114,19 @@ class App:
 
         threading.Thread(target=body, daemon=True).start()
 
-    def save_traffic(self) -> None:
-        self.m.save_state()
-        for r in self.tc.write():
+    def save_traffic(self, change=None) -> None:
+        """Apply an edit and write it strictly, restoring settings on failure."""
+        before = deepcopy(self.tc.t)
+        try:
+            if change is not None:
+                change()
+            reports = self.tc.write()
+            self.m.save_state()
+        except (SystemExit, ValueError, OSError):
+            self.tc.t.clear()
+            self.tc.t.update(before)
+            raise
+        for r in reports:
             for note in r.notes:
                 self.log(f"traffic: {r.name}: {note}")
 
@@ -195,8 +206,10 @@ class App:
     def traffic_cars(self, *, on: bool) -> None:
         keys = self.selected_keys()
         if keys and self.ready():
-            self.tc.set_traffic(keys, on=on)
-            self.run(f"traffic {'on' if on else 'off'} for {len(keys)} cars", self.save_traffic)
+            self.run(
+                f"traffic {'on' if on else 'off'} for {len(keys)} cars",
+                lambda: self.save_traffic(lambda: self.tc.set_traffic(keys, on=on)),
+            )
 
     # --- traffic sets tab ---
 
@@ -213,9 +226,9 @@ class App:
         self.mean = tk.BooleanVar(value=True)
         self.mode = tk.StringVar(value="vanilla")
         self.blend = tk.DoubleVar(value=0.0)
-        ttk.Label(top, text="Ports").pack(side="left")
-        ttk.Spinbox(top, from_=0, to=40, textvariable=self.ports, width=4).pack(side="left")
-        ttk.Checkbutton(top, text="Fill to the budget", variable=self.fill).pack(side="left", padx=(4, 0))
+        ttk.Label(top, text="Streaming budget").pack(side="left")
+        ttk.Spinbox(top, from_=0, to=traffic.MAX_SLOTS, textvariable=self.ports, width=4).pack(side="left")
+        ttk.Checkbutton(top, text="Automatic", variable=self.fill).pack(side="left", padx=(4, 0))
         ttk.Label(top, text="Share").pack(side="left", padx=(8, 0))
         ttk.Scale(top, from_=0.0, to=0.9, variable=self.share, length=120).pack(side="left")
         ttk.Checkbutton(top, text="As an average vanilla car", variable=self.mean).pack(side="left", padx=(4, 0))
@@ -225,11 +238,25 @@ class App:
         ttk.Scale(top, from_=0.0, to=1.0, variable=self.blend, length=120).pack(side="left")
         self.budget = ttk.Label(self.sets_tab, text="")
         self.budget.pack(fill="x", padx=4)
+        choices = ttk.Frame(self.sets_tab)
+        choices.pack(fill="x")
+        ttk.Button(choices, text="Choose Forza pool...", command=self.choose_forza_pool).pack(side="left", padx=4)
+        self.pool_summary = ttk.Label(choices)
+        self.pool_summary.pack(side="left", padx=4)
+        ttk.Label(
+            self.sets_tab,
+            text=(
+                "Bigger pools favor fresh models; vanilla traffic fills loading gaps.\n"
+                "Apply saves changes for the next game start."
+            ),
+        ).pack(fill="x", padx=4)
         cols = ("id", "model", "state", "factor", "now", "after")
         self.pool = ttk.Treeview(self.sets_tab, columns=cols, show="headings", selectmode="extended")
         for c, w in zip(cols, (60, 330, 90, 60, 70, 70)):
             self.pool.heading(c, text=c.capitalize())
             self.pool.column(c, width=w, anchor="w")
+        self.pool.heading("now", text="Native share")
+        self.pool.heading("after", text="Pool share")
         self.pool.pack(fill="both", expand=True)
         bar = ttk.Frame(self.sets_tab)
         bar.pack(fill="x")
@@ -240,7 +267,6 @@ class App:
             ("Add from other chapters...", self.add_extra),
             ("Apply", self.apply_set),
             ("Reset this set", self.reset_set),
-            ("Shuffle ports", self.shuffle),
             ("No set changes", self.ambient_off),
         ):
             ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=4, pady=4)
@@ -257,15 +283,44 @@ class App:
         if name is None:
             s = dict(traffic.DEFAULT_SET) | (amb.get("default") or {})
         self.pending = {k: s.get(k, traffic.DEFAULT_SET[k]) for k in traffic.DEFAULT_SET}
-        # ports chosen by key stay chosen unless the count is changed here
-        self.port_keys = list(s["ports"]) if isinstance(s["ports"], list) else None
+        # Show a legacy explicit selection as the actual pool, not as a hidden
+        # restriction behind an "All Forza cars" label. Apply migrates it.
+        if isinstance(s["ports"], list):
+            pool = self.pending["pool"]
+            keys = set(s["ports"])
+            self.pending["pool"] = list(s["ports"]) if pool == "all" else [key for key in pool if key in keys]
+            self.pending["ports"] = "fill"
+        s = self.pending
+        self.port_keys = None
         self.fill.set(s["ports"] == "fill")
         self.ports.set(0 if s["ports"] == "fill" else s["ports"] if isinstance(s["ports"], int) else len(s["ports"]))
         self.mean.set(s.get("share") == "mean")
         self.share.set(0.2 if s.get("share") == "mean" else float(s.get("share") or 0.0))
         self.mode.set(s.get("weights") or "vanilla")
         self.blend.set(float(s.get("blend") or 0.0))
+        self.show_pool_summary()
         self.preview()
+
+    def show_pool_summary(self) -> None:
+        pool = self.pending.get("pool", "all")
+        count = len(self.tc.pool_keys(pool))
+        label = "All Forza cars" if pool == "all" else "Custom Forza pool"
+        self.pool_summary.configure(text=f"{label}: {count} eligible cars, before the loaded-model budget")
+
+    def choose_forza_pool(self) -> None:
+        from dsfforza.build.traffic_pool_gui import PoolDialog
+
+        if self.busy:
+            messagebox.showinfo("Busy", "The last change is still being written.")
+            return
+        dialog = PoolDialog(self.root, self.tc.cars(), self.pending.get("pool", "all"))
+        self.root.wait_window(dialog.window)
+        if dialog.result is not None:
+            self.pending["pool"] = dialog.result
+            self.port_keys = None
+            self.fill.set(True)
+            self.show_pool_summary()
+            self.preview()
 
     def gather(self) -> dict:
         out = dict(self.pending)
@@ -280,28 +335,20 @@ class App:
         return out
 
     def preview(self) -> None:
-        """The set's models now and with the settings on screen (a dry run of traffic.plan)."""
-        from dsfforza.game import traffic_ai
+        """Preview every candidate's road share, independent of resident-model limits."""
+        from dsfforza.build import runtime_traffic
 
         name = self.current_set() or traffic.STORY_SETS[0]
         try:
-            ai = traffic_ai.AiTraffic.read(self.tc.game_ai(), traffic_ai.known_names())
-            ts = ai.by_name(name)
-            now = ai.share(ts)
             amb = dict(self.tc.t["ambient"])
             if self.current_set() is None:
                 amb["default"] = self.gather()
             else:
                 amb["sets"] = dict(amb.get("sets") or {}) | {name: self.gather()}
-            slots, pots = self.tc.facts()
-            ids = [i for i, _ in self.tc.in_traffic()]
-            key_ids = {k: c["id"] for k, c in self.tc.cars().items()}
-            reports = traffic.plan(ai, amb, ids, key_ids, slots=slots, pots=pots, seed=amb.get("seed", 0))
-            after = ai.share(ai.by_name(name))
+            now, after, rep = runtime_traffic.preview(self.tc, name, amb)
         except (OSError, ValueError, KeyError, SystemExit) as e:
             self.budget.configure(text=f"{name}: {e}")
             return
-        rep = next((r for r in reports if r.name == name), None)
         self.show_pool(name, now, after, rep)
 
     def show_pool(self, name: str, now: dict, after: dict, rep) -> None:
@@ -317,12 +364,12 @@ class App:
             values = (mid, label, state, factor, f"{now.get(mid, 0):.1%}", f"{after.get(mid, 0):.1%}")
             self.pool.insert("", "end", iid=str(mid), values=values)
         if rep:
-            text = f"{name}: {rep.models} models of {rep.budget} (slot budget)"
-            if rep.reaches:
-                text += f"; also changes {', '.join(rep.reaches)}"
+            text = f"{name}: {rep.candidates} candidates; automatic streaming, budget {rep.live_limit} models"
             text += "".join(f"; {n}" for n in rep.notes)
         else:
             text = f"{name}: as the game has it"
+        if not self.tc.live_pools():
+            text += "; install the updated plugin to activate live pools"
         self.budget.configure(text=text)
 
     def toggle_models(self) -> None:
@@ -362,33 +409,44 @@ class App:
         self.preview()
 
     def apply_set(self) -> None:
+        """Apply a live-pool edit, restoring prior settings if writing fails."""
         if not self.ready():
             return
+        try:
+            self.tc.require_live_pools()
+        except SystemExit as e:
+            messagebox.showerror("Traffic pools", str(e))
+            return
         fields = self.gather()
-        self.tc.set_ambient(self.current_set(), **fields)
-        self.run(f"traffic set {self.set_name.get()}", self.save_traffic)
+        name = self.current_set()
+
+        self.run(
+            f"traffic set {self.set_name.get()}",
+            lambda: self.save_traffic(lambda: self.tc.set_ambient(name, **fields)),
+        )
 
     def reset_set(self) -> None:
         if not self.ready():
             return
         name = self.current_set()
-        amb = self.tc.t["ambient"]
-        if name is None:
-            amb.pop("default", None)
-        else:
-            (amb.get("sets") or {}).pop(name, None)
-        self.run(f"reset {self.set_name.get()}", self.save_traffic)
+
+        def reset():
+            amb = self.tc.t["ambient"]
+            if name is None:
+                amb.pop("default", None)
+            else:
+                (amb.get("sets") or {}).pop(name, None)
+
+        self.run(f"reset {self.set_name.get()}", lambda: self.save_traffic(reset))
 
     def shuffle(self) -> None:
         if not self.ready():
             return
-        self.tc.shuffle()
-        self.run("shuffle the ports", self.save_traffic)
+        self.run("shuffle the ports", lambda: self.save_traffic(self.tc.shuffle))
 
     def ambient_off(self) -> None:
         if self.ready() and messagebox.askyesno("No set changes", "Put every traffic set back as the game has it?"):
-            self.tc.ambient_off()
-            self.run("traffic sets as the game has them", self.save_traffic)
+            self.run("traffic sets as the game has them", lambda: self.save_traffic(self.tc.ambient_off))
 
     # --- interesting vehicles tab ---
 
@@ -419,10 +477,12 @@ class App:
     def apply_iv(self) -> None:
         if not self.ready():
             return
-        self.tc.t["iv"]["ports"] = bool(self.iv_ports.get())
-        self.tc.t["iv"]["per_region"] = int(self.per_region.get())
-        self.tc.t["iv"]["vanilla"] = bool(self.iv_vanilla.get())
-        self.run("interesting vehicles", self.save_traffic)
+        fields = {
+            "ports": bool(self.iv_ports.get()),
+            "per_region": int(self.per_region.get()),
+            "vanilla": bool(self.iv_vanilla.get()),
+        }
+        self.run("interesting vehicles", lambda: self.save_traffic(lambda: self.tc.t["iv"].update(fields)))
 
     def pin(self, *, unpin: bool) -> None:
         keys = self.selected_keys()
@@ -435,12 +495,10 @@ class App:
             except ValueError:
                 messagebox.showerror("Regions", "Regions are numbers 1 to 17, separated by commas.")
                 return
-        try:
-            self.tc.pin(keys, regions)
-        except SystemExit as e:
-            messagebox.showerror("Regions", str(e))
-            return
-        self.run(f"{'unpin' if unpin else 'pin'} {len(keys)} cars", self.save_traffic)
+        self.run(
+            f"{'unpin' if unpin else 'pin'} {len(keys)} cars",
+            lambda: self.save_traffic(lambda: self.tc.pin(keys, regions)),
+        )
 
 
 def run(manager) -> None:

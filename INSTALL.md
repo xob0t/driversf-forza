@@ -102,37 +102,53 @@ car_manager gui` does the same from a checkout. Its tabs:
   DLC). Enable or disable cars (the garage and traffic), or switch them in or
   out of traffic only.
 - **Traffic sets**: the cars around you come from the chapter's traffic set.
-  For every story chapter, or one at a time: how many of your cars join it and
+  Choose a chapter, then **Choose Forza pool...** to add or remove candidate
+  cars. **All Forza cars** includes the whole enabled roster, including cars
+  installed later. Search by name, make or source and use Add selected or
+  Remove selected for a custom pool. Choose Use pool, then Apply to save.
+  For every story chapter, or one at a time: which cars can join it and
   their share of the traffic, the weights (as the game has them, all models
   equally likely, or your own factor per model), vanilla models on or off,
   and vanilla models from other chapters added in. The list shows each model's
-  share now and with your settings, and how many models the chapter can hold.
-  A set holds at most what the game can load beside the chapter's mission
-  cars (with the default `[archive] vehicle_slots=35` in `dsfcars.ini`, few of
-  your cars fit beside the game's); past
-  that the chapter would never finish loading, so
-  the car manager leaves the extra cars out and says so.
+  share before and with your settings. The pool can contain the whole roster.
+  While you drive, traffic picks from that pool and requests models as needed.
+  Native vehicle references keep models loaded while cars use them and release
+  them when those cars disappear. No manual shuffle is needed.
+  **Streaming budget** limits how many added models can be resident together.
+  **Automatic** reserves room for the chapter's native traffic, mission cars,
+  player and interesting vehicles. It does not trim the configured pool.
+  Chapters can have different pools even when they share native road tables.
 - **Interesting vehicles**: the few special cars the game adds near you. Your
   cars can come as those too, and a car can be pinned to regions of the map.
 
-**By default** the traffic sets are as the game has them: your cars come
-only as interesting vehicles. Filling the sets with your cars needs more
-vehicle slots than the game has, and the slot raise is switched off in this
-version (`vehicle_slots=35`) because it can crash the game in free roam
-([#586](https://github.com/xob0t/driversf-forza/issues/586)). At 35 slots a
-set has little or no room for your cars. `cars.cmd traffic ambient` (or changing a
-setting in the Traffic sets tab) still fills every story chapter's set with
-your cars up to what it can hold. Each of your cars
-is as likely as an average car of the game's on every road, and the game's own
-cars keep their mix. `cars.cmd traffic ambient --off` puts the traffic back as
-the game has it.
+**By default** ambient traffic stays vanilla and added cars appear as
+interesting vehicles. `cars.cmd traffic ambient --pool all --ports fill`
+enables the whole roster in every chapter without its own override. A small
+loaded-model limit can still leave little or no streaming room in a chapter;
+the preview reports that separately from the pool size. The plugin defaults
+to `[archive] vehicle_slots=35`. Raising that limit requires the native
+provider-map capacity fix in [PR #590](https://github.com/xob0t/driversf-forza/pull/590).
+`cars.cmd traffic ambient --off` restores vanilla ambient selection.
 
 The settings are kept in `dsfcars\cars\manager.json` (they survive a
 reinstall) and take effect at the next game start. The same from the command
 line: `cars.cmd traffic status`, `cars.cmd traffic off make:FERRARI`,
 `cars.cmd traffic ambient --set "Chapter 7" --ports 4 --share 0.2` (or `--ports fill --share mean`),
 `cars.cmd traffic ambient --weights equal`, `cars.cmd traffic --help`.
-How the game picks traffic: [research/traffic.md](research/traffic.md).
+Choose a chapter's candidate pool with
+`cars.cmd traffic ambient --set "Chapter 7" --pool all` or
+`cars.cmd traffic ambient --set "Chapter 7" --pool make:FORD,game:FH1`.
+`--pool none` empties it; `--reset pool` restores its inherited pool.
+The default pool applies to every chapter without its own override.
+Live pools require the matching updated `dsfcars.asi`; the manager refuses to
+turn an explicit pool into a fixed batch for an older plugin. Pool and weight
+changes take effect at the next game start. Cold models stream asynchronously,
+so traffic uses eligible resident cars while a requested model loads.
+Traffic commands report write failures before saving the requested settings.
+Unrelated car installs, removals and enable changes log an unavailable live-pool
+update and continue; the pool settings remain saved for a later successful refresh.
+How the game picks traffic: [research/traffic.md](research/traffic.md) and
+[live pool research](research/runtime-traffic-pools.md).
 
 ### What the installer adds
 
