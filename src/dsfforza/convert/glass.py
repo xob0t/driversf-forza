@@ -33,6 +33,7 @@ hole slots fell).
 from __future__ import annotations
 
 import argparse
+import itertools
 import math
 import re
 import struct
@@ -244,6 +245,14 @@ CELL = 0.01  # occupancy grid of a window in its own plane (m)
 LIFT = 0.002  # cracks and shards sit this far inside the glass (m)
 MIN_WINDOW_AREA = 0.02  # smaller panes (and lamp covers) get the surface only
 RIM_BINS = 180  # directions round a window's centre in which its rim is measured (2 degrees each)
+# Host crack and shard triangles that share a vertex move as one piece. Interior
+# positions are int16 x, y, z in steps of 1/4096 m (vehicle_mesh.POSITION_SCALE). Two
+# corners are one vertex when no coordinate differs by more than one step: on vanilla
+# windscreens that share these triangles, corners that decode bit-identical (7.4M) or
+# one step apart (67k) stay together on the partner window (in-plane median 0, p99
+# 0.0 and 0.5 mm); two steps apart, 2.8% move more than 5 mm apart
+# (research/vehicle-model.md, "Broken glass moves in pieces").
+PIECE_STEP = 1 / 4096
 
 
 def interior_block(uvs, tol: float = 0.001) -> str | None:
@@ -681,49 +690,83 @@ class InteriorGlass:
         return self._host_panes[host.s9]
 
     def _overlay(self, pane: _Pane, host: HostWindow, s9) -> list:
-        """The host window's crack and shard triangles on this window: each keeps
-        its shape and UVs and moves to the same direction from the window's centre
-        (in units of the box's half extents, so corners go to corners) at the same
-        depth inside the rim, in metres, turned with that direction; then lifted
-        onto the glass. Triangles that land outside the window (a corner more than
-        one cell of the occupancy grid outside it, or a depth past the centre of a
-        smaller window) are left out."""
+        """The host window's crack and shard triangles on this window. They move
+        as their host pieces (_pieces: triangles joined by shared vertices), each
+        piece as one rigid body, as vanilla moves them between windows. A piece
+        goes to the same direction from the window's centre (in units of the
+        box's half extents, so corners go to corners) at the same depth inside
+        the rim, in metres, both taken at the piece's centroid, turned with that
+        direction; then its triangles are lifted onto the glass. A piece deeper
+        than a smaller window reaches (past its centre) is left out; so is a
+        triangle that lands outside the window (its centroid outside, or a corner
+        more than one cell of the occupancy grid outside it)."""
         ha, hb, hrim = self._host_pane(host)
         if hrim is None:
             return []
         rim = _Rim(pane)
         out = []
-        for pts, uvs, skies in host.overlay:
-            q = [(_dot(p, ha), _dot(p, hb)) for p in pts]
-            g = (sum(x for x, _ in q) / 3, sum(y for _, y in q) / 3)
+        flat_tris = [[(_dot(p, ha), _dot(p, hb)) for p in pts] for pts, _, _ in host.overlay]
+        for piece in _pieces([pts for pts, _, _ in host.overlay]):
+            corners_h = [c for n in piece for c in flat_tris[n]]
+            g = (sum(x for x, _ in corners_h) / len(corners_h), sum(y for _, y in corners_h) / len(corners_h))
             theta, rho = hrim.polar(g)
             k = _Rim.bin(theta)
             ray_h, ray_p = hrim.ray(theta), rim.ray(theta)
             depth = (hrim.reach[k] - rho) * math.hypot(*ray_h)  # metres inside the host's rim
             along = rim.reach[k] - depth / (math.hypot(*ray_p) or 1.0)
-            if along <= 0:
-                continue  # deeper than this window reaches: it would cross to the far side
+            if along < 0:
+                continue  # past the centre of this window: it would cross to the far side
             gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
-            if not pane.inside(gp):
-                continue
             turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
-            flat = []
-            for x, y in q:
-                d = _rotate((x - g[0], y - g[1]), turn)
-                flat.append((gp[0] + d[0], gp[1] + d[1]))
-            if not all(pane.near(c) for c in flat):
-                continue
-            corners = [pane.lift(c) for c in flat]
-            if any(c is None for c in corners):
-                continue
-            region = interior_block(uvs)
-            out.append(
-                (
-                    [(p, tuple(uv), nrm, sky, s9) for (p, nrm), uv, sky in zip(corners, uvs, skies)],
-                    region,
-                )
-            )
+            for n in piece:
+                out += self._place(pane, host.overlay[n], flat_tris[n], g, gp, turn, s9)
         return out
+
+    @staticmethod
+    def _place(pane: _Pane, tri, q, g, gp, turn, s9) -> list:
+        """One host triangle (plane points q) of a piece moved from g to gp and
+        turned by turn, lifted onto the glass; [] where it lands outside."""
+        _, uvs, skies = tri
+        flat = []
+        for x, y in q:
+            d = _rotate((x - g[0], y - g[1]), turn)
+            flat.append((gp[0] + d[0], gp[1] + d[1]))
+        centroid = (sum(x for x, _ in flat) / 3, sum(y for _, y in flat) / 3)
+        if not pane.inside(centroid) or not all(pane.near(c) for c in flat):
+            return []
+        corners = [pane.lift(c) for c in flat]
+        if any(c is None for c in corners):
+            return []
+        vertices = [(p, tuple(uv), nrm, sky, s9) for (p, nrm), uv, sky in zip(corners, uvs, skies)]
+        return [(vertices, interior_block(uvs))]
+
+
+def _pieces(tris, step: float = PIECE_STEP) -> list[list[int]]:
+    """Indices of tris (three points each, decoded host positions) grouped into
+    pieces: triangles that share a vertex (two corners no coordinate of which
+    differs by more than one position step) are one piece."""
+    parent = list(range(len(tris)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    cells: dict[tuple, list[int]] = defaultdict(list)
+    for n, tri in enumerate(tris):
+        for p in tri:
+            key = tuple(round(c / step) for c in p)
+            for d in itertools.product((-1, 0, 1), repeat=3):
+                for m in cells.get(tuple(a + b for a, b in zip(key, d)), ()):
+                    a, b = root(n), root(m)
+                    if a != b:
+                        parent[a] = b
+            cells[key].append(n)
+    groups: dict[int, list[int]] = defaultdict(list)
+    for n in range(len(tris)):
+        groups[root(n)].append(n)
+    return list(groups.values())
 
 
 # --- lint -------------------------------------------------------------------------
