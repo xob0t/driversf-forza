@@ -714,8 +714,8 @@ class InteriorGlass:
             ray_h, ray_p = hrim.ray(theta), rim.ray(theta)
             depth = (hrim.reach[k] - rho) * math.hypot(*ray_h)  # metres inside the host's rim
             along = rim.reach[k] - depth / (math.hypot(*ray_p) or 1.0)
-            if along <= 0:
-                continue  # deeper than this window reaches: it would cross to the far side
+            if along < 0:
+                continue  # past the centre of this window: it would cross to the far side
             gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
             turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
             for n in piece:
