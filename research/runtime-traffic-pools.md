@@ -369,6 +369,11 @@ the spec map):
 | `vm1-20261114-151912` | before + diag | standing, `-AheadIds 4,5,6` | 1546 (1453) | 3: the ahead cars, refused by the spooler, built by the Lua spawner `006707E4` as model 3 |
 | `vm2-20261114-151915` | spec map fix + diag | driving 9 min | 2645 (2405) | 71: 68 ambient, 3 IV, from 116 picked before its spec registered (15:28:27 to :48); 3 IV births from 159 at 15:26:49 |
 | `vm2-20261114-153702` | both fixes + diag | driving 17 min | 3597 (3330) | 3, all IV (`007EBBF2` asking for 150 without a spec); 0 ambient fallbacks |
+| `vm2-20261114-155816` | both fixes + diag | standing 11 min (0 mph) | 2004 (1885) | 3, all IV (236 without a spec); 0 ambient fallbacks |
+| `vm2-20261114-161449` | both fixes + diag | driving, then the #584 Epilogue switch (`409E0517/0 validates 721 of 721`) | 2703 (2615) | 0; no fallback at all |
+
+No run with either build passed 45 spec nodes (peaks 44 to 45), so the page
+storage past 45 is verified by the native fixture only, not in game.
 
 **Fix.** (1) `decide()` counts a listed model as spawnable only when `get(id)`
 returns that model's own spec, the test construction applies
