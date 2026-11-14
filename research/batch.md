@@ -372,12 +372,18 @@ taken in its initializer before it takes work).
   build frees its slots; its workers are in a job object that ends them with it
   (`jobpool.die_with_me`), so none runs on without a slot. Slots are counted and taken
   under `pool.lock`.
-- **Size.** `port_batch.default_jobs` (one per logical CPU, as many as `WORKER_RAM`
-  each fits in the RAM: 16 here), at most `gentle.CORES` (2) while `out/gentle` exists in
-  this worktree or in the main checkout (`gentle.anywhere`). A further slot is taken only
-  while the RAM its job needs is free (`WORKER_RAM`, `RENDER_RAM`, `LINT_RAM`, the same
-  figures as before), unless the process holds none: each build gets at least one slot
-  as they free, as it got one worker before.
+- **Size.** One slot per logical CPU (16 here), at most `gentle.CORES` (2) while
+  `out/gentle` exists in this worktree or in the main checkout (`gentle.anywhere`). The RAM
+  budget (below) bounds what the slots hold.
+- **RAM.** Each slot is taken for a job of a kind and reserves that kind's measured peak
+  (`port_batch.WORKER_RAM`, `LINT_RAM`, `RENDER_RAM`, `DIFF_RAM`, ...; "RAM measured" below)
+  while it is held. Every slot, a process's first too, is granted only while the budget has
+  that much (`jobpool.budget`, read under `pool.lock` at grant time): the host's available
+  RAM (`GlobalMemoryStatusEx`, so the owner's programs and running VMs count as they are),
+  less what the busy slots' jobs may still take (each reservation less the private working
+  set of the job's process tree now), less what the VMs that series hold still need (RAM
+  holds, below), less `jobpool.SPARE`, less what earlier waiters want (a waiter's ticket
+  carries its RAM, so a later, smaller job can't keep taking the RAM a larger one waits for).
 - **`--jobs`** is a per-build maximum; the pool decides how many run.
 - **Fair share.** A process that finds no free slot waits in line (`queue/<pid>.lock`,
   locked while it waits, with the time it joined); a slot that frees goes to the one that
@@ -390,7 +396,19 @@ taken in its initializer before it takes work).
   leave them free. The pool ends the hold when the run's `events.json` says the Story world
   is ready (run-test.ps1's "story world ready" note), when the run has a `result.json`,
   at its time limit (gate + `-StorySeconds` + 600 s), or when the series' process is gone.
-- `uv run dsff jobpool status` lists the slots, their holders and the holds.
+- **VM RAM.** A `-Vm` series holds its VM's RAM before it starts or uses the VM
+  (`Wait-RamGate`): `holds\ram-<pid>-<time>.json` with the `.vmx`, for the whole series.
+  While it lasts the pool reserves `jobpool.VM_RAM` (7.7 GB) less what that VM's
+  vmware-vmx and its mksSandbox hold now (`vm_need`; the vmx pid is the one vmware.log's
+  first line names, if a vmware-vmx of that pid started then), so a VM that is up isn't
+  counted twice, and no new job is granted against it. The gate asks `dsff jobpool vm-gate`
+  every 10 s until the VM's need fits in what the running jobs leave (at most
+  `-RamGateSeconds`, then it starts anyway and says so, as the CPU gate does). A VM nobody
+  holds reserves nothing: an idle VM that is up is the host's used RAM, one that is off
+  holds none.
+- `uv run dsff jobpool status` lists the slots, their holders, the holds and the RAM
+  budget; `uv run dsff jobpool watch --out <csv>` logs the host's memory, the budget and
+  each job process's peaks (`<csv>.peaks.json`).
 
 Measured 2026-11-05, two worktrees on the same commit, each `port_batch build --jobs 4`
 of 6 cars with `DSFFORZA_GENTLE=1` (pool of 2), the second started 25 s after the first
@@ -398,6 +416,89 @@ of 6 cars with `DSFFORZA_GENTLE=1` (pool of 2), the second started 25 s after th
 never more than 2 workers; with the queue the two builds ran one worker each, side by
 side (before it, the first build's 4 cars all ran before the second's started). The first
 build's lint waited for a slot while the second converted.
+
+#### RAM before #613
+
+On 2026-11-14 two `render_compare diff` runs (`--jobs 16`) took the host to 0.9 GB and
+then 2 MB available, with 16 of 16 slots busy and 51 to 57 GB private in their workers; both
+test VMs were paged out and their series stalled (#613). What the pool did then:
+
+- **Every executor worker passed the RAM check.** `try_acquire` checked the RAM only when
+  the process already held a slot (`if ram and _HELD`, so "each build gets at least one
+  slot"). `_HELD` is per process, and every `jobpool.executor`/`mp_pool` worker is a new
+  process that takes its one slot in its initializer: none of them was ever checked. Only
+  a build's second and later conversion workers and lint processes were.
+- **The check compared the job's figure with the free RAM, once, at grant time.** A slot
+  reserved nothing afterwards: a job granted with 1.7 GB free grew to 4.2 GB, and the next
+  job saw the RAM it had not taken yet as free. The figure was the host's real available
+  RAM (`GlobalMemoryStatusEx`), so the owner's programs and the running VMs did count, as
+  they were at that moment; nothing was kept back for a VM about to start (a hold reserved
+  CPUs only) or for the owner.
+- **The figures were not the jobs' peaks.** `RENDER_RAM` (1.7 GB, a garage-picture render
+  process) was used for `render_compare` run and diff processes, which held 3.8 to 4.4 GB.
+
+#### RAM measured
+
+Peaks of each kind's processes, 2026-11-14, this PC (31.9 GB, 16 logical CPUs). Method:
+`jobpool watch --every 1` (and, for a process run by hand, a sampler of its process tree)
+reads the kernel's `PeakPagefileUsage` (peak private bytes) and `PeakWorkingSetSize` of
+each job's process tree from `NtQuerySystemInformation(SystemProcessInformation)` every
+second and keeps the highest; the sums over the tree count the interpreter a venv's
+`python.exe` launcher starts. A process's growth in its last second can be missed. MiB.
+
+| kind | inputs | processes | peak private | peak working set | constant |
+|---|---|---|---|---|---|
+| conversion worker | 12 cars `--no-store`: the 7 slowest and largest of the last full build (KOE_CCXR_09, AST_V12Zagato_12, CHR_JeepGCSRT8_09, HYU_GenesisCoupeRMR_10, VIP_Viper_13, MER_S65AMG_12, LAM_LP7004_12) and 5 median ones | 12 | 3264 (VIP_Viper_13); AST 3165, LAM 2033, HYU 1737; the other 8 930 to 1359 | 2982 | `WORKER_RAM` 3300 |
+| `upvh lint-many` | 45 cars of the 721-car roster, `--plan` (the cars merged in memory, as a roster build lints) | 1 | 3036 | 2563 | `LINT_RAM` 3100 |
+| garage-picture render | the 573-car archive of a full build, 77 pictures in 420 s | 2 | 1650, 1627 | 1206 | `RENDER_RAM` 1700 |
+| `render_compare diff`, a process per car | 20 changed cars of #608 (two full-roster builds) | 20 | 1460 to 2355 | 1793 | `DIFF_RAM` 2400 |
+| `render_compare diff`, one process for 20 cars | the same 20 cars, `--jobs 1` | 1 | 3381 (it rose from 2.0 to 3.1 GB over the cars, falling back between) | 2774 | |
+| `render_compare run` | 4 large cars of a roster build | 1 | 1123 | 615 | `COMPARE_RAM` 1200 |
+| `render_compare rescore` | the 12-car run | 2 | 736 | 235 | `RESCORE_RAM` 800 |
+| door-count memo | `port_batch plan --roster` with an empty memo: 716 carbins | 16 | 1153 | 654 | `MEMO_RAM` 1200 |
+| `cockpit_survey` | the 6 largest cars above, and 8 roster cars | 4 | 711 | 212 | `COCKPIT_SURVEY_RAM` 800 |
+| `plates_survey` | the 12-car build | 1 | 1172 | 673 | `PLATES_SURVEY_RAM` 1200 |
+
+Each constant is the kind's highest peak private bytes rounded up to 100 MiB. Private bytes
+are at least the private working set a job takes from the available RAM, so a job stays
+under its reservation. A conversion worker is reserved its kind's highest peak although
+most cars stay near 1 GB: no field of a car predicts its peak (the four highest are not the
+largest outputs; KOE_CCXR_09, the largest and slowest car of the last full build, peaked at
+1.0 GB here). A diff process drew a whole chunk of cars before (676 cars at `--jobs 16`:
+about 42 each), and its memory grew over them, to the 3.8 to 4.4 GB of #613; it now draws
+one car per process (`max_tasks_per_child=1`): the same 20 cars, the same scores, 311 s at
+4 processes against 708 s in one.
+
+#### The floor and the wait
+
+- **Floor.** While a series holds a VM, the host's available RAM stays above
+  `jobpool.SPARE` plus what that VM still needs: at most 3 + 7.7 = 10.7 GB while the VM is
+  off, 3 GB once it is up and in game (its 7.7 GB is then its own working set), for any
+  number of builds in any worktrees, as long as each job stays under its kind's peak.
+  With no hold, above `SPARE`. A job's reservation covers it from its grant (a child job's
+  slot counts its whole reservation until the child is named), so two builds that ask at
+  the same time can't both take the same RAM (grants are made under `pool.lock`).
+- **`VM_RAM`, 7.7 GB:** one VM in game at 4 GB of guest RAM and 1 GB of graphics memory,
+  vmware-vmx working set 7.0 to 7.2 GB plus mksSandbox 0.5 GB (in-game-tests.md, "Host
+  cost"; the two VMs together 14.2 + 0.7 = 14.9 GB; the vmx holds the whole guest RAM
+  within 80 s of power-on, "Memory measured").
+- **`SPARE`, 3 GB, is a policy choice:** room for the owner's programs to grow while
+  builds run. Its size is how far their use moved with no VM and no build running, 24 to
+  27 GB available on 2026-11-14 05:18 to 05:32 ("Host cost"). `DSFFORZA_POOL_SPARE` (GB)
+  sets another.
+- **The wait at the RAM gate** is the rest of the running jobs that hold the RAM the VM
+  needs: from the hold on no new job is granted against it, so the RAM only frees. How long
+  a slot is held, by kind: a conversion worker one car (35 to 316 s in the last full build,
+  at most `WORKER_TIMEOUT`, 45 min); a diff process one car (about 1 min); lint one step
+  (3 s for 12 cars, 39 to 73 s for 573); the memo one plan (716 cars in 280 s at 16
+  processes); a garage-picture render process, a `render_compare` run process and a
+  survey process their whole step (about 11 s per picture per render process: a full
+  roster's 721 pictures at 4 processes about 33 min). So the worst case is the longest
+  such step still running when the hold starts. `-RamGateSeconds` (2700, the conversion
+  worker's limit) caps it: after that the series starts anyway and says so.
+- **Cost.** With no hold, the pool can use what the owner leaves less 3 GB: 19 GB on
+  2026-11-14 with both VMs off, about 5 conversion workers at once or 7 diff processes.
+  While a series holds a VM that is off, 7.7 GB less.
 
 ### Selective rebuild
 
