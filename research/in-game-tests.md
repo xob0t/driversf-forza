@@ -479,6 +479,42 @@ run-test left out `d3d9.dll`, the backups and seven folders itself. A plain
 short probe (ID 304, `vm2-20261113-200607`) finished too. No run needed the
 Esc. Then VM 1 was provisioned again as well.
 
+### Full roster in a VM (2026-11-14, issue #610)
+
+A guest's `C:\Game` has no car packages (guest-game.ps1 leaves the installed
+`dsfcars\` out), so a run gets the roster as an `-Overlay`, with the plugin and
+the `.ini` the install wrote as `-Asi`. The archive stays vanilla: the packages are
+what dsfcars.asi loads (`[archive] packages=1`).
+
+- `tools\wsb\roster-overlay.ps1 -Build <port_batch build with packages\>` makes
+  them: it runs `install.ps1 -SkipHook` into a scratch game folder in `out\roster\game`
+  (Driver.exe and the game files the install reads, from `out\vanilla` and the game
+  folder), then moves `dsfcars\` and `Common\UserLuaScripts\` to `out\roster\overlay`
+  and copies `plugins\dsfcars.asi` and `.ini` to `out\roster\plugin`. The game folder
+  is only read. 721 cars from `out\install-build`: 4.3 GB.
+- `run-series.ps1 -Vm -Archives out\vanilla\Install\dngvehicles.sp -Asi
+  out\roster\plugin\dsfcars.asi -Overlay out\roster\overlay -Traffic -DriveSeconds 200`.
+  The overlay is copied into the run folder and laid into `C:\Run` (about 100 s on
+  an idle host); run-series removes the run folder's copy after the run
+  (`overlay.txt` names the source).
+- run-series writes the VM session's settings to `vm.json` (from vmware.log: a VM
+  started by another checkout can have other `$VmSettings`), prints them with the
+  run's memory peaks, and warns against the session's graphics memory.
+
+**Measured** (VM 1, 4 GB, 512 MB graphics memory, ID 170, `-Traffic -DriveSeconds 200`,
+plain settings: run-test's ini rewrite, no `d3d9.dll`; `memory.csv`):
+
+| roster | run | GPU peak | Driver.exe private | guest used / min available | shots |
+|---|---|---|---|---|---|
+| 721 packages, master's plugin (`vehicle_slots=35`, the car manager's fixed traffic lists) | `vm1-20261114-025922` | 355 MB | 1121 MB | 3131 / 964 MB | 204 of 204 cockpit samples, none black |
+| the owner's install (721 packages, #592's test plugin `70CFC4D9`, live pools, 60 slots: 78 Forza models in traffic) | `vm1-20261114-031151` | 363 MB | 1197 MB | 3162 / 933 MB | 204 of 204, none black |
+
+So the full roster fits the 512 MB with room to spare. The full-roster runs of #592
+that went black (`vm2-20261110-154634`, `vm1-20261111-002025`, `vm1-20261113-200311`:
+GPU 485 to 511 MB, Driver.exe 1.85 GB private) all had `-Override` with the #589
+workaround: a `d3d9.dll` proxy, its `winmm.dll` and the owner's ini as given
+(`LODEngineThresholdScale=0.25`, no rewrite). The roster wasn't the cause.
+
 ### VM results (2026-10-24)
 
 - Vanilla smoke test `vm-20261024-015247` (vanilla archive, ID 147): finished in

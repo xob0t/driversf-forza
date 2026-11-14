@@ -80,7 +80,8 @@ foreach ($target in $targets) {
             Exit-VmMutexes $free
             "$VmName (VM $($VmInfo.Id)) running ($VmVmx); tools: $tools; session answers: $(Test-VmSession); " +
                 "series: $(if ($free) { 'none' } else { 'running' }); $(Get-VmPriority)" +
-                $(if (Test-VmTscTrapped) { '; SLOW: this session traps RDTSCs (vm.ps1 Stop, then Start)' } else { '' })
+                $(if (Test-VmTscTrapped) { '; SLOW: this session traps RDTSCs (vm.ps1 Stop, then Start)' } else { '' }) +
+                $(if ($stale = Get-VmStaleSettings) { "; OLD SETTINGS: $($stale -join ', ') (vm.ps1 Stop, then Start)" } else { '' })
         }
         'Stop' {
             $held = Wait-VmUnused
