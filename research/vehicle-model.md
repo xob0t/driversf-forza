@@ -380,6 +380,38 @@ vertex, or box-normalised), so only the pieces' shape changes, not where
 they sit. The clusters at the corners and edges are the host's own: vanilla
 278 shows the same five clusters in state 3 (`ws3.png`).
 
+**Which corners are one vertex** (confirmed-static, 2026-11-14;
+`out/ws/piece_tol.py`, `piece_pairs.py` in the #623 worktree). Interior
+positions are int16 x, y, z in steps of 1/4096 m (0.24 mm;
+`vehicle_mesh.POSITION_SCALE`). On the 528 host windows with crack and shard
+triangles (150 vanilla interiors), corner pairs of different triangles within
+three steps of each other in 3D: 1,350,697 decode bit-identical, 11,272 differ
+by one step on some axis, 4,535 by two, 3,675 by three. Whether such a pair is
+one vertex shows on the 5,789 windscreen pairs above: the same two corners on
+the partner window.
+
+| on window A | pairs | in-plane spread on B, median / p90 / p99 | > 5 mm apart on B |
+| --- | --- | --- | --- |
+| bit-identical | 7,409,923 | 0 / 0 / 0 mm | 0.2% |
+| one step | 67,437 | 0 / 0.26 / 0.53 mm | 0.5% |
+| two steps | 17,568 | 0 / 0.60 / 112 mm | 2.8% |
+| three steps | 8,978 | 0 / 1.2 / 193 mm | 3.1% |
+| within 0.5 mm in the plane only: crack over shard | 3,630 | 84 / 1,002 / 1,275 mm (crack over bright) | 95% |
+| the same: crack over crack (3 mm apart along the normal) | 69,849 | 0.62 / 1.5 / 3.2 mm | 2.2% |
+| the same: shard over shard (3 mm apart along the normal) | 5,460,853 | 0.32 / 0.79 / 2.7 mm (bright over bright) | 0.6% |
+
+A one-step pair is bit-identical on the partner window: the same vertex,
+rounded on one side. From two steps on, pairs come apart. Layers stacked
+along the normal mostly travel together but are not one vertex; they join a
+piece only through the vertices they share. So two corners are
+one vertex when no coordinate differs by more than one step (`glass._pieces`,
+`PIECE_STEP`). The PR's first rule (corners within 0.5 mm after projecting
+onto the window's plane) also joined crack triangles to shard triangles that
+only overlap in projection and move apart on other windows. Pieces over the
+528 windows: 4,536 by that rule, 4,654 by the one-step rule, 4,872 by
+bit-identical corners only; the two rules group 204 pieces (4,944 of 216,181
+triangles) on 66 windows differently.
+
 Survey (`out/ws/tear.py`: each port crack/shard triangle matched to its host
 triangle by UV triple, then every host vertex two triangles share measured on
 the port): on the installed master roster (721 cars) 2,406 of the 2,424
