@@ -560,6 +560,24 @@ There was no device loss (d3dlog: only `D3D_OK`), the window stayed borderless
 (204 of 204 samples). The guest's 4 GB held: at least 413 MB available, 3.9 GB
 committed, page-in bursts up to 8,600 pages/s, as in plain runs (7,090).
 
+**Checked at 1 GB** (both VMs, ID 170, `-Traffic -DriveSeconds 200`; "heavy" is the run
+above, "roster" is `roster-overlay.ps1`'s 721 cars with master's plugin, plain settings):
+
+| VM | run | case | GPU peak | Driver.exe private | cockpit samples | black drive shots |
+|---|---|---|---|---|---|---|
+| 1 | `vm1-20261114-054129` | heavy | 597 MB | 1941 MB | 204 of 204 | none |
+| 1 | `vm1-20261114-071537` | roster | 353 MB | 1118 MB | 204 of 204 | none |
+| 2 | `vm2-20261114-070959` | heavy | 587 MB | 1941 MB | 204 of 204 | none |
+| 2 | `vm2-20261114-071948` | roster | 346 MB | 1116 MB | 204 of 204 | none |
+
+d3dlog ran in the heavy runs: no device loss. Two more roster runs ran while workers'
+builds held the host at 73 to 91 % CPU: `vm1-20261114-054741` (320 MB; the car stopped
+after 101 samples, drawn to the end) and `vm2-20261114-061407` (316 MB; the overlay took
+1311 s to lay, the world was paused after the go and needed 4 Escs, 3 black shots around
+the pause (`paused-03`, `-04`, `observe-01`), then 204 samples drawn). One run failed to
+launch on that host (`vm2-20261114-054833`: no window within 90 s after a 915 s overlay).
+Those runs say more about the host than about the settings.
+
 **Host cost** (vmware-vmx working set and mksSandbox, sampled every 5 s):
 
 | setting | run | vmware-vmx WS in game | mksSandbox | vmware.log `VMMEM: Initial Reservation` |
