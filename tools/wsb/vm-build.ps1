@@ -8,7 +8,7 @@ Steps (default: all, in order; each can be run alone):
   Iso        C:\VMs\dsfforza-test\config.iso: autounattend.xml, dsf-first-logon.ps1 and
              the VC++ x86 runtime (C:\VMs\downloads\vcredist\vc_redist.x86.exe).
   Create     the VM: CPUs, memory and graphics memory from $VmSettings (vm-common.ps1: 4 vCPU,
-             4 GB, 512 MB), 80 GB growable SATA disk, BIOS firmware (no TPM or
+             4 GB, 1 GB), 80 GB growable SATA disk, BIOS firmware (no TPM or
              Secure Boot; the Windows 11 checks are bypassed in autounattend.xml), SVGA
              3D, no network, no USB, shared folders
              Repo (read-only), Output (read-write), Game and Profile (read-only).

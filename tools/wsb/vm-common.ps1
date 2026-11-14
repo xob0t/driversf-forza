@@ -14,10 +14,14 @@ $VmUser = 'dsf'
 $VmPassword = 'dsfforza'          # local account of an offline test VM (tools\wsb\vm\autounattend.xml)
 $VmOutputHost = Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb'
 # Every pool VM runs with these (research/in-game-tests.md, "VM pool"). Start writes them into a
-# powered-off VM's .vmx when they differ, so a reverted snapshot or a new clone gets them too.
+# powered-off VM's .vmx when they differ, so a reverted snapshot or a new clone gets them too, and
+# powers off a running VM whose session has others when no series uses it.
+# Graphics memory is the guest's GPU memory: at 512 MB a full roster with dsf_enhanced's world map and
+# LODEngineThresholdScale=0.25 reached it (510 MB) and the device was lost and Reset; at 1 GB the same
+# run peaked at 597 MB (research/in-game-tests.md, "Guest GPU memory").
 $VmSettings = [ordered]@{
     'memsize' = '4096'
-    'svga.graphicsMemoryKB' = '524288'
+    'svga.graphicsMemoryKB' = '1048576'
     'numvcpus' = '4'
     'cpuid.coresPerSocket' = '4'
 }

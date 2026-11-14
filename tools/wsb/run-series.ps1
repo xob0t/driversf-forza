@@ -463,6 +463,13 @@ try {
             try { & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
             catch {
                 if (Test-Path (Join-Path $runDir 'result.json')) { "  vm exec: $($_.Exception.Message)" }
+                elseif ((Test-Path (Join-Path $runDir 'events.json')) -and (Test-VmRunning)) {
+                    # The guest's run-test.ps1 started and writes through C:\Output whether vmrun still
+                    # reaches VMware Tools or not (their heartbeat drops while the host pages). A second
+                    # run-test in the same folder would stop this one's game and overwrite its results
+                    # (vm1-20261114-052005), so wait for its result.json below instead.
+                    "  vm exec: $($_.Exception.Message); the guest's run had started, waiting for its result"
+                }
                 else {
                     # The VM died or was stopped: bring it up again and retry once.
                     "  vm exec failed ($($_.Exception.Message)); restarting the VM"

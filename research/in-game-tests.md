@@ -63,7 +63,8 @@ Workstation 26H1u1 (26.0.1 build 25688693) in `C:\Program Files\VMware\VMware Wo
   `C:\VMs\dsfforza-test2\dsfforza-test2.vmx` (VM 2; "VM pool" below): 4 vCPU,
   4 GB, 80 GB growable
   SATA disk, BIOS firmware (no TPM or Secure Boot; a vTPM needs VM encryption,
-  which vmrun can't start headless), SVGA 3D with 512 MB graphics memory, no
+  which vmrun can't start headless), SVGA 3D with 1 GB graphics memory (512 MB
+  until 2026-11-14, "Guest GPU memory" below), no
   network adapter, no USB, an HD audio card muted inside the guest. Guest:
   `D:\windows_microwin_ru.iso` (Windows 11 Pro 25H2, build 26200, ru-RU,
   MicroWin-debloated), local admin `dsf` / `dsfforza`, autologon, UAC off,
@@ -139,9 +140,13 @@ the missing MAC don't matter; the clone gets new UUIDs at its first power-on.
   `VM <id>: <name>` and its run folders are `runs\vm<id>-<stamp>`. Setup logs
   go to `C:\Output\vm\<name>\`; `C:\Output\HostDll` is only rewritten when a
   DLL changed (another VM's run may be copying it).
-- **Settings** (`$VmSettings` in `vm-common.ps1`): 4 GB, 512 MB graphics
-  memory, 4 vCPU. `vm.ps1 Start` writes them into a powered-off VM's `.vmx`
-  when they differ, so a clone or a reverted snapshot gets them too.
+- **Settings** (`$VmSettings` in `vm-common.ps1`): 4 GB, 1 GB graphics
+  memory (512 MB until 2026-11-14), 4 vCPU. `vm.ps1 Start` writes them into a
+  powered-off VM's `.vmx` when they differ, so a clone or a reverted snapshot gets
+  them too. A running VM whose session has others (vmware.log's DICT block of the
+  `.vmx`; a checkout with older settings started it) is powered off and on again
+  by the next `vm.ps1 Start` (so the next series) when no series uses it;
+  `vm.ps1 Status` says `OLD SETTINGS`.
 - **Idle power-off:** a running VM holds its RAM whether a game runs or not
   (see below). At the end of a series `run-series.ps1` starts a hidden
   `vm.ps1 StopIdle`, which powers the VM off when no series has used it for
@@ -514,6 +519,61 @@ that went black (`vm2-20261110-154634`, `vm1-20261111-002025`, `vm1-20261113-200
 GPU 485 to 511 MB, Driver.exe 1.85 GB private) all had `-Override` with the #589
 workaround: a `d3d9.dll` proxy, its `winmm.dll` and the owner's ini as given
 (`LODEngineThresholdScale=0.25`, no rewrite). The roster wasn't the cause.
+
+### Guest GPU memory (2026-11-14, issue #610)
+
+The guest's GPU memory is the VM's graphics memory (`svga.graphicsMemoryKB`).
+`tools\wsb\d3dlog\d3dlog.cpp` (build with `d3dlog\build.ps1`, put `d3dlog.asi` in an
+`-Overlay` folder's `plugins\`) logs what the game's Direct3D 9 device returns. It
+detours d3d9.dll's `TestCooperativeLevel`, `Reset`, `Present` and the resource
+creators at their first 5 bytes. The game's device doesn't use the vtable a
+throwaway device has (a first build that patched that vtable counted 0 presents).
+Its log goes to `dsfforza-wsb\d3dlog\<stamp>.log`.
+
+**What the game does at the cap** (confirmed-runtime, `vm1-20261114-053341`: 512 MB,
+the owner's installed roster, dsf_enhanced's world map laid in with `-Overlay`, the
+host ini with `LODEngineThresholdScale=0.25` and DLSS 5 and DLAA off, no `d3d9.dll`):
+
+- GPU memory reached 510 MB while the world loaded. Then `Present` returned
+  `D3DERR_DEVICELOST` (0x88760868) and `TestCooperativeLevel` returned
+  `D3DERR_DEVICENOTRESET`. The game called `Reset` with 1280x720, windowed, no MSAA,
+  which returned `D3D_OK` 2 s later. Then `TestCooperativeLevel` and `Present` were OK
+  again. The same happened 18 s later. No `CreateTexture`, vertex or index buffer call
+  failed. GPU memory went 510 → 402 MB and 446 → 163 MB, then climbed back
+  (468 MB at the end).
+- After the first Reset, the shots are a 1280x720 window with a frame (1286x749, then
+  1286x771) instead of dsf_enhanced's borderless 1600x900. The world was on the PAUSED
+  menu after the probe's go, and one Esc resumed it (run-test's unpause). The drive
+  then went on, drawn, to the end: 204 of 204 cockpit samples, no black shot.
+  So the pause and the framed window that #589 found with a `d3d9.dll` proxy
+  ("Guest game folder" above) are what a device Reset leaves. Those runs were nearer
+  the cap.
+- The six runs that stayed black (`vm1-20261113-183436` ... `vm2-20261113-185744`)
+  all had the `d3d9.dll` forwarding proxy from `-Override`. That they stayed black
+  because of the proxy is a correlation: no d3dlog ran with a proxy. Guests no longer
+  get one (#589).
+
+**1 GB** (`$VmSettings` from 2026-11-14): the same heavy run on VM 1,
+`vm1-20261114-054129`, peaked at 597 MB of GPU memory and 1941 MB Driver.exe private.
+There was no device loss (d3dlog: only `D3D_OK`), the window stayed borderless
+(1600x922 shots), the world didn't pause, and the drive was drawn to the end
+(204 of 204 samples). The guest's 4 GB held: at least 413 MB available, 3.9 GB
+committed, page-in bursts up to 8,600 pages/s, as in plain runs (7,090).
+
+**Host cost** (vmware-vmx working set and mksSandbox, sampled every 5 s):
+
+| setting | run | vmware-vmx WS in game | mksSandbox | vmware.log `VMMEM: Initial Reservation` |
+|---|---|---|---|---|
+| 4 GB / 512 MB | `vm1-20261114-031151`, `-053341` | 7.0 to 7.2 GB | 0.45 to 0.55 GB | 7341 MB |
+| 4 GB / 1 GB | `vm1-20261114-054129`, `-054741`, `vm2-20261114-054833` | 7.0 to 7.2 GB | 0.5 GB | 7853 MB |
+
+So 1 GB costs about 0.5 GB of reservation per VM and no working set we could
+measure in these runs. With both VMs in game, they took 14.2 GB plus 0.7 GB for
+mksSandbox. The host has 31.9 GB. With no VM and no build it had 24 to 27 GB
+available (2026-11-14 05:18 to 05:32, the user's own programs running), so about
+10 to 12 GB stay free with both VMs up. Workers' builds and render_compare runs
+take most of that: on 2026-11-14 they brought the host to 0.9 to 3.7 GB available,
+and a guest was paged out and stalled (#613).
 
 ### VM results (2026-10-24)
 
