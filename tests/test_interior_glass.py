@@ -163,11 +163,15 @@ def test_a_crack_line_moves_as_one_piece():
 
 
 def test_pieces():
-    """Triangles sharing a corner (within PIECE_TOL) are one piece; others apart."""
+    """Triangles sharing a corner (each coordinate within one 1/4096 m position step)
+    are one piece; corners two steps apart, or a corner over another along the
+    normal (a layer above it), are not."""
+    s = glass.PIECE_STEP
     a = ((0, 0, 0), (1, 0, 0), (0, 1, 0))
-    b = ((1.0001, 0, 0), (2, 0, 0), (1, 1, 0))
-    c = ((5, 5, 0), (6, 5, 0), (5, 6, 0))
-    assert sorted(sorted(p) for p in glass._pieces([a, b, c], tol=0.0005)) == [[0, 1], [2]]
+    b = ((1 + s, 0, -s), (2, 0, 0), (1, 1, 0))  # one step on two axes: a's corner
+    c = ((2 + 2 * s, 0, 0), (3, 0, 0), (2, 1, 0))  # two steps from b's
+    d = ((0, 1, 12 * s), (0, 2, 0), (-1, 2, 0))  # 3 mm over a's corner
+    assert sorted(sorted(p) for p in glass._pieces([a, b, c, d])) == [[0, 1], [2], [3]]
 
 
 def test_cockpit_glass_takes_the_lexan_binding():
