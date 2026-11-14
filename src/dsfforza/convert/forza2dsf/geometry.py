@@ -58,7 +58,6 @@ def add_geometry(
     keep=None,
     wheel_fit: tuple[float, float] = (1.0, 1.0),
     exposed: bool = False,
-    glass_sight=None,
     host_glass=None,
 ) -> list[NewSub]:
     """Add every subsection of `sections` at Forza `lod`, one DSF submodel per
@@ -88,8 +87,7 @@ def add_geometry(
     rectangle squashes Forza's glass UVs into it, except INTERIOR_GLASS_RECT
     (the interior entry), which lays each window out like vanilla interior glass
     (glass.InteriorGlass; per-window report in builder.interior_glass), with the
-    cracks and shards of the host interior's windows (host_glass: glass.host_windows);
-    glass_sight (cockpit.GlassSight) tells it which glass the driver sees."""
+    cracks and shards of the host interior's windows (host_glass: glass.host_windows)."""
     textured = textures is not None
     tyre_map = skies = None
     if wheel:
@@ -153,7 +151,7 @@ def add_geometry(
             if interior_glass and material in glass_materials:
                 from dsfforza.convert import glass
 
-                window = glass.InteriorGlass(host=host_glass, sight=glass_sight)
+                window = glass.InteriorGlass(host=host_glass)
 
             def flush():  # called within this iteration only
                 if tris:  # noqa: B023

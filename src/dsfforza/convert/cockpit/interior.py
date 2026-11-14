@@ -30,7 +30,6 @@ from dsfforza.convert.cockpit.geometry import (
 )
 from dsfforza.convert.cockpit.visibility import (
     CULL_OFFSETS,
-    GlassSight,
     cull_sections,
     decimate_section,
     shell_closes,
@@ -411,8 +410,6 @@ def convert_interior(
     def gloss_filter(section, sub) -> bool:  # chrome takes the shared chrome (CockpitBinding)
         return outside(section) and fm.classify(sub.material)[0] != fm.CHROME
 
-    # What the driver sees of the glass: crack lines and rim shards out of sight are left out.
-    sight = GlassSight(sections, cf.camera or cf.eye, place)
     # The host interior's own windows, before its geometry is replaced: their crack lines
     # and rim shards go onto the converted windows (glass.InteriorGlass, #459).
     host_glass = glass.host_windows(stream, interior)
@@ -483,7 +480,6 @@ def convert_interior(
             skin={**(glass_skin or {}), "steering_wheel": wheel_skin},
             glass_links=glass_links,
             glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
-            glass_sight=sight,
             host_glass=host_left,
         )
         lod = max((l for l in shell_lods if l <= shell_lod), default=shell_lods[0] if shell_lods else 0)
@@ -500,7 +496,6 @@ def convert_interior(
                 glass_links=glass_links,
                 glass_rect=forza2dsf.INTERIOR_GLASS_RECT,
                 skin=glass_skin,
-                glass_sight=sight,
                 host_glass=host_left,
             )
         needle_subs = []

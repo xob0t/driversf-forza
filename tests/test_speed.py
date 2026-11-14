@@ -285,7 +285,7 @@ def test_nearest_pairs_match_nearest_pair():
     assert [plan._nearest_pair(q, allowed, f, n, p) for q, n, p in zip(qs, normals, paints, strict=True)] == want
 
 
-# --- cockpit.visible_triangles and GlassSight -----------------------------------------
+# --- cockpit.visible_triangles -----------------------------------------
 
 
 def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slack=0.03):
@@ -357,46 +357,6 @@ def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slac
     return kept
 
 
-def _sight_reference(sections, eye, resolution=128):
-    """The original depth loops of cockpit.GlassSight: {face: depth list}."""
-    from dsfforza.convert import forza_materials as fm
-
-    half = resolution / 2
-    tris = []
-    for s in sections:
-        pool = s.lod0_vertices
-        for sub in s.subsections:
-            if sub.lod != 0 or fm.classify_cockpit(sub.material)[0] == fm.GLASS:
-                continue
-            for t in sub.triangles():
-                tris.append([tuple(pool[i].position[a] - eye[a] for a in range(3)) for i in t])
-    faces = {}
-    for axis, sign in cockpit.CUBE_FACES:
-        depth = [0.0] * (resolution * resolution)
-        for r in tris:
-            for pts in cockpit._face_parts(r, axis, sign, half):
-                (px, py, pw), (qx, qy, qw), (rx, ry, rw) = pts
-                x0, x1 = max(int(min(px, qx, rx)), 0), min(int(max(px, qx, rx)) + 1, resolution)
-                y0, y1 = max(int(min(py, qy, ry)), 0), min(int(max(py, qy, ry)) + 1, resolution)
-                area = (qx - px) * (ry - py) - (qy - py) * (rx - px)
-                if x0 >= x1 or y0 >= y1 or abs(area) < 1e-12:
-                    continue
-                for y in range(y0, y1):
-                    yc = y + 0.5
-                    for x in range(x0, x1):
-                        xc = x + 0.5
-                        w0 = ((qx - xc) * (ry - yc) - (qy - yc) * (rx - xc)) / area
-                        w1 = ((rx - xc) * (py - yc) - (ry - yc) * (px - xc)) / area
-                        w2 = 1 - w0 - w1
-                        if w0 < 0 or w1 < 0 or w2 < 0:
-                            continue
-                        w = w0 * pw + w1 * qw + w2 * rw
-                        k = y * resolution + x
-                        depth[k] = max(depth[k], w)
-        faces[(axis, sign)] = depth
-    return faces
-
-
 def _cabin(rng: random.Random, triangles: int) -> list[carbin.Section]:
     """A random cabin around the origin: small and large triangles, some crossing
     the eye's near planes, shared vertices, a glass subsection, duplicates (equal
@@ -432,15 +392,6 @@ def test_visible_triangles_match_the_pixel_loops():
         sections = _cabin(rng, triangles)
         eyes = [(0.0, 0.0, 0.0), (0.12, 0.0, 0.0), (0.0, 0.08, -0.05)]
         assert cockpit.visible_triangles(sections, eyes, resolution) == _visible_reference(sections, eyes, resolution)
-
-
-def test_glass_sight_matches_the_pixel_loops():
-    rng = random.Random(5)
-    sections = _cabin(rng, 120)
-    eye = (0.05, -0.02, 0.01)
-    place = type("Place", (), {"dy": 0.0, "dz": 0.0})()
-    sight = cockpit.GlassSight(sections, eye, place, resolution=40)
-    assert sight.faces == _sight_reference(sections, eye, resolution=40)
 
 
 # --- formats.xds: untile and decode_rgba -------------------------------------------------

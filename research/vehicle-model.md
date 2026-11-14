@@ -277,9 +277,14 @@ frames), then emitted in the vanilla layout on each window's own s9:
 - cracks and shards: the host interior's own (`glass.host_windows`, read
   before the interior is rebuilt; #459, below).
 
-`cockpit.GlassSight` (a 128² depth cube of the opaque cockpit from the head
-camera) drops the crack and shard triangles the driver can't see: a Forza
-windscreen runs well below the dash. The per-window summary is in the car's
+Every host triangle that lands on its window is kept, whether or not the
+driver's eye sees it: the port draws the layers its host draws, and the
+host carries them on its rear window too (135 roster hosts below). (The
+first version of this rule ran them through a depth-cube test from the head
+camera, `cockpit.GlassSight`, which master had used to place its generated
+rim shards. On the full roster it dropped every host layer of 135 cars' rear
+windows; with it off, all 16 rebuilt took their host's rear layers, 49 to 755
+triangles. The test and its plumbing are gone.) The per-window summary is in the car's
 report (`entry.cockpit.interior.glass_windows`: `host_window`,
 `crack_triangles`, `shard_triangles`) and the log line `interior glass:`.
 In game: see `cockpit.md`, "Cockpit glass damage".
@@ -354,7 +359,7 @@ in the #459 worktree): 899 windows take host layers, against 1,103 with
 generated ones on master. The 479 without are rear doors and quarter lights
 whose host side glass has none or went to the front door (348); lexan wraps and
 small panes beside a window that took the layers (94); rear windows whose host has
-no rear layers, or whose layers all fall out of the driver's sight (34); and three windscreens
+no rear layers, or (before the sight test went) whose layers all fell out of the driver's sight (34); and three windscreens
 (hosts 161 and 217 have none; the MC12's coincident cockpit pane takes them).
 No interior needed decimation; `glass.check` passes on all 293. In game
 (`vm1-20261113-191025` master, `vm1-20261113-195620` this rule): the M5 on 176

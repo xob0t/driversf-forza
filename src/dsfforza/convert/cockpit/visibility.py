@@ -1,5 +1,5 @@
 """What the driver can see: decimated shells, ray hits, the software rasteriser behind
-visible_triangles, glass sight lines and culling."""
+visible_triangles and culling."""
 
 from __future__ import annotations
 
@@ -451,53 +451,6 @@ def visible_triangles(
             kept[key] = set(local.tolist())
         start += count
     return kept
-
-
-class GlassSight:
-    """Which points the driver sees: a depth cube (`resolution` per face) of the
-    opaque LOD-0 cockpit triangles from `eye` (Forza space). Called with a DSF
-    point (`place` maps Forza to DSF), True if nothing opaque is nearer the
-    eye. glass.InteriorGlass leaves out the crack lines and rim shards the
-    driver can't see; a Forza windscreen runs well below the dash."""
-
-    def __init__(self, sections: list[carbin.Section], eye, place, resolution: int = 128, triangles=None):
-        """`triangles` (Forza-space point triples) instead of `sections`: any opaque mesh."""
-        self.eye, self.place, self.res = eye, place, resolution
-        self.faces = {}
-        half = resolution / 2
-        import numpy as np
-
-        tris = [np.array([[p[:3] for p in t] for t in triangles or []], dtype=np.float64).reshape(-1, 3, 3)]
-        for s in sections:
-            pool = None
-            for sub in s.subsections:
-                if sub.lod != 0 or fm.classify_cockpit(sub.material)[0] == fm.GLASS:
-                    continue
-                if pool is None:
-                    pool = np.array([v.position for v in s.lod0_vertices], dtype=np.float64).reshape(-1, 3)
-                tris.append(pool[np.array(sub.triangles(), dtype=np.int64).reshape(-1, 3)])
-        rel = np.concatenate(tris) - np.array(eye[:3], dtype=np.float64)
-        for axis, sign in CUBE_FACES:
-            depth = np.zeros(resolution * resolution)  # 1 / z, larger is nearer
-            parts, owner = _screen_parts(rel, axis, sign, half)
-            _raster(parts, owner, resolution, depth)
-            self.faces[(axis, sign)] = depth.tolist()
-
-    def __call__(self, point_dsf, slack: float = 0.03) -> bool:
-        # DSF -> Forza: Placement.point is (-x, y + dy, -z + dz), its own inverse up to the offsets
-        p = (-point_dsf[0], point_dsf[1] - self.place.dy, self.place.dz - point_dsf[2])
-        r = [p[a] - self.eye[a] for a in range(3)]
-        axis = max(range(3), key=lambda a: abs(r[a]))
-        sign = 1 if r[axis] > 0 else -1
-        u_axis, v_axis = [a for a in range(3) if a != axis]
-        z = sign * r[axis]
-        if z < NEAR_PLANE:
-            return True
-        half = self.res / 2
-        x, y = int(half + half * r[u_axis] / z), int(half - half * r[v_axis] / z)
-        if not (0 <= x < self.res and 0 <= y < self.res):
-            return True
-        return 1 / z >= self.faces[(axis, sign)][y * self.res + x] * (1 - slack)
 
 
 def cull_sections(sections: list[carbin.Section], kept: dict[tuple[int, int], set[int]]) -> list[carbin.Section]:

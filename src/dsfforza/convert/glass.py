@@ -529,16 +529,16 @@ class InteriorGlass:
     window's own s9 so they follow its panel's crack state. Host windows a
     window takes are removed from `host`, so a list shared by several
     InteriorGlass (the cockpit's sections, then the shell's) gives each host
-    window to one window. With `sight`, crack and shard triangles the driver
-    can't see are left out."""
+    window to one window. Every host triangle that lands on its window is
+    kept, seen from the driver's eye or not: the host draws all its own
+    window layers."""
 
-    def __init__(self, host: list[HostWindow] | None = None, sight=None):
+    def __init__(self, host: list[HostWindow] | None = None):
         self.frames = SlotMapper()
         self.items: dict[str, list] = defaultdict(list)
         self.host = host if host is not None else []
         if any(not h.kind for h in self.host):
             host_kinds(self.host)
-        self.sight = sight  # DSF point -> seen by the driver (cockpit.GlassSight); None: all
         self.report: dict[str, dict] = {}
         self._host_panes: dict[tuple, tuple] = {}
 
@@ -687,7 +687,7 @@ class InteriorGlass:
         depth inside the rim, in metres, turned with that direction; then lifted
         onto the glass. Triangles that land outside the window (a corner more than
         one cell of the occupancy grid outside it, or a depth past the centre of a
-        smaller window), or out of the driver's sight, are left out."""
+        smaller window) are left out."""
         ha, hb, hrim = self._host_pane(host)
         if hrim is None:
             return []
@@ -715,8 +715,6 @@ class InteriorGlass:
                 continue
             corners = [pane.lift(c) for c in flat]
             if any(c is None for c in corners):
-                continue
-            if self.sight is not None and not self.sight(tuple(sum(c[0][a] for c in corners) / 3 for a in range(3))):
                 continue
             region = interior_block(uvs)
             out.append(

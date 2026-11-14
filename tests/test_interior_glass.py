@@ -115,6 +115,23 @@ def test_rear_window_does_not_take_the_windscreen():
     assert [h.kind for h in host] == ["front", "rear"] and host[0] is front  # not taken
 
 
+def test_rear_window_takes_the_host_rear_layers():
+    """The host's rear glass has shards: the converted rear window takes all of them,
+    whether or not the driver's eye sees them (the host draws them all; #608)."""
+    z = -1.2
+    shards = [(((x, 0.38, z), (x - 0.02, 0.38, z), (x, 0.36, z)), SHARD_UV, (0.5,) * 3) for x in (-0.5, 0.0, 0.5)]
+    front = _host_window((0, 5), 1.4, 0.7, 1.0, [])
+    rear = _host_window((0, 22), 1.2, 0.4, z, shards)
+    host = [front, rear]
+    g = glass.InteriorGlass(host=host)
+    for pts in _quad(-0.5, 0.5, 0.0, 0.4, -1.1):
+        g.add("glassR", pts, [(0.0, 0.0, -1.0)] * 3, [0.5] * 3, bytes((0, 22, 0, 1)))
+    layers = [r for _, r in g.triangles() if r != "surface"]
+    assert layers == ["shard_bright"] * 3
+    assert g.report["glassr/rear"]["host_window"] == [0, 22]
+    assert host == [front]
+
+
 def test_deeper_than_the_window_reaches():
     """A crack 0.3 m inside a 1.4 m wide host windscreen's left edge can't go 0.3 m inside a
     0.4 m wide window: it would cross the centre to the far side, so it's left out."""

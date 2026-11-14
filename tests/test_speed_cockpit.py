@@ -157,27 +157,6 @@ def _visible_reference(sections, eyes, resolution=256, near_keep=0.25, tiny_slac
     return kept
 
 
-def _sight_reference(sections, eye, resolution=128, triangles=None):
-    """GlassSight's depth faces, as GlassSight built them."""
-    half = resolution / 2
-    tris = [[tuple(p[a] - eye[a] for a in range(3)) for p in t] for t in (triangles or [])]
-    for s in sections:
-        pool = s.lod0_vertices
-        for sub in s.subsections:
-            if sub.lod != 0 or fm.classify_cockpit(sub.material)[0] == fm.GLASS:
-                continue
-            for t in sub.triangles():
-                tris.append([tuple(pool[i].position[a] - eye[a] for a in range(3)) for i in t])
-    rel = np.array(tris, dtype=np.float64).reshape(-1, 3, 3)
-    faces = {}
-    for axis, sign in cockpit.CUBE_FACES:
-        depth = np.zeros(resolution * resolution)
-        parts, owner = _screen_parts_reference(rel, axis, sign, half)
-        _raster_reference(parts, owner, resolution, depth)
-        faces[(axis, sign)] = depth.tolist()
-    return faces
-
-
 # --- cockpit: random scenes ------------------------------------------------------------
 
 
@@ -276,18 +255,6 @@ def test_visible_triangles_match_the_numpy_raster():
         eyes = [(0.0, 0.0, 0.0), (0.12, 0.0, 0.0), (0.0, 0.08, -0.05), (0.01, 0.0, 0.0)]
         assert cockpit.visible_triangles(sections, eyes, resolution) == _visible_reference(sections, eyes, resolution)
     assert cockpit.visible_triangles([], [(0.0, 0.0, 0.0)], 16) == _visible_reference([], [(0.0, 0.0, 0.0)], 16)
-
-
-def test_glass_sight_matches_the_numpy_raster():
-    rng = random.Random(5)
-    sections = _cabin(rng, 150)
-    eye = (0.05, -0.02, 0.01)
-    place = type("Place", (), {"dy": 0.0, "dz": 0.0})()
-    extra = [[(rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-1, 1)) for _ in range(3)] for _ in range(30)]
-    for triangles in (None, extra):
-        sight = cockpit.GlassSight(sections, eye, place, resolution=48, triangles=triangles)
-        want = _sight_reference(sections, eye, resolution=48, triangles=triangles)
-        assert sight.faces == want
 
 
 def _gauge_fraction_reference(sight: cockpit.GaugeSight, eye, points) -> float:
