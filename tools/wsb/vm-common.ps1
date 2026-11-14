@@ -14,10 +14,14 @@ $VmUser = 'dsf'
 $VmPassword = 'dsfforza'          # local account of an offline test VM (tools\wsb\vm\autounattend.xml)
 $VmOutputHost = Join-Path $env:LOCALAPPDATA 'Temp\dsfforza-wsb'
 # Every pool VM runs with these (research/in-game-tests.md, "VM pool"). Start writes them into a
-# powered-off VM's .vmx when they differ, so a reverted snapshot or a new clone gets them too.
+# powered-off VM's .vmx when they differ, so a reverted snapshot or a new clone gets them too, and
+# powers off a running VM whose session has others when no series uses it.
+# Graphics memory is the guest's GPU memory: at 512 MB a full roster with dsf_enhanced's world map and
+# LODEngineThresholdScale=0.25 reached it (510 MB) and the device was lost and Reset; at 1 GB the same
+# run peaked at 597 MB (research/in-game-tests.md, "Guest GPU memory").
 $VmSettings = [ordered]@{
     'memsize' = '4096'
-    'svga.graphicsMemoryKB' = '524288'
+    'svga.graphicsMemoryKB' = '1048576'
     'numvcpus' = '4'
     'cpuid.coresPerSocket' = '4'
 }
@@ -322,6 +326,32 @@ function Set-VmxValues([hashtable]$Values, [string]$Vmx = $VmVmx) {
     return $changed
 }
 
+function Get-VmSessionSettings {
+    # The $VmSettings keys as the selected VM's current session runs with them: vmware.log's DICT
+    # block of the .vmx at power-on (the .vmx itself may have been rewritten since). Empty when the
+    # log has none.
+    $log = Join-Path $VmDir 'vmware.log'
+    $found = [ordered]@{}
+    if (-not (Test-Path -LiteralPath $log)) { return $found }
+    $inConfig = $false
+    # vmware-vmx keeps the log open for writing.
+    $reader = [IO.StreamReader]::new([IO.FileStream]::new($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete'))
+    try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+            if ($line -match 'DICT --- (\S+)') { if ($inConfig) { break }; $inConfig = $Matches[1] -eq 'CONFIGURATION'; continue }
+            if ($inConfig -and $line -match 'DICT\s+(\S+) = "(.*)"\s*$' -and $VmSettings.Contains($Matches[1])) { $found[$Matches[1]] = $Matches[2] }
+        }
+    } finally { $reader.Dispose() }
+    return $found
+}
+
+function Get-VmStaleSettings {
+    # "key = session value" for each $VmSettings key the running session has otherwise.
+    $session = Get-VmSessionSettings
+    @($VmSettings.Keys | Where-Object { $session.Contains($_) -and $session[$_] -ne $VmSettings[$_] } |
+        ForEach-Object { "$_ = $($session[$_]) (wanted $($VmSettings[$_]))" })
+}
+
 function Wait-VmSession([int]$Seconds = 600) {
     $deadline = (Get-Date).AddSeconds($Seconds)
     while (-not (Test-VmSession)) {
@@ -357,7 +387,12 @@ function Test-VmUnused {
 function Start-VmHeadless([string]$Priority = 'BelowNormal', [int]$Boots = 3) {
     # Powers the VM on unless it runs, waits for the desktop session, and powers it off and on
     # again (up to $Boots power-ons) while its session traps RDTSCs ($VmTscTrapLine) and no other
-    # series uses it.
+    # series uses it. A running VM whose session has other $VmSettings (started by a checkout with
+    # older ones) is powered off first when no other series uses it, so it starts with these.
+    if ((Test-VmRunning) -and ($stale = Get-VmStaleSettings)) {
+        if (Test-VmUnused) { "  ${VmName}: running with $($stale -join ', '); powering it off to apply the settings"; Stop-Vm | Out-Null }
+        else { "  WARNING: ${VmName} runs with $($stale -join ', '); a series is using it, left running" }
+    }
     for ($boot = 1; ; $boot++) {
         if (-not (Test-VmRunning)) {
             $changed = Set-VmxValues $VmSettings

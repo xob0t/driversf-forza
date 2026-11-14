@@ -291,11 +291,12 @@ function Get-HostRootHashes {
     return $script:hostRootHashes
 }
 function Show-GpuMemory($r) {
-    # -Vm: the guest's GPU memory is the VM's graphics memory ($VmSettings svga.graphicsMemoryKB).
-    # Runs whose GPU use reached it went black for good a few seconds later while the C++ side ran on
-    # (issue #589); say so, as the shots after it show nothing.
+    # -Vm: the guest's GPU memory is the VM's graphics memory (svga.graphicsMemoryKB of the session).
+    # At it the game's device is lost and Reset: the window comes back framed at 1280x720 and the world
+    # pauses; with a d3d9.dll proxy the frames stayed black for good (issue #610). Say so.
     if (-not $Vm -or -not $r.memory -or -not $r.memory.maxGpuSharedMB) { return }
-    $capMB = [int]$VmSettings['svga.graphicsMemoryKB'] / 1024
+    $kb = if ($script:vmSession -and $script:vmSession['svga.graphicsMemoryKB']) { $script:vmSession['svga.graphicsMemoryKB'] } else { $VmSettings['svga.graphicsMemoryKB'] }
+    $capMB = [int]$kb / 1024
     if ($r.memory.maxGpuSharedMB -ge $capMB - 16) {
         "  WARNING: the guest's GPU memory reached the VM's $capMB MB (peak $($r.memory.maxGpuSharedMB) MB): frames after it" +
             " can be black (research/in-game-tests.md, 'Guest GPU memory'); memory.csv has when"
@@ -453,12 +454,24 @@ try {
                 Copy-Item -LiteralPath $overlayDir -Destination (Join-Path $runDir 'overlay') -Recurse
                 $guestValues.Overlay = "C:\Output\runs\$stamp\overlay"
             }
+            # The VM's settings as its session runs with them (vmware.log), beside the run's results.
+            $script:vmSession = Get-VmSessionSettings
+            $script:vmSession | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDir 'vm.json') -Encoding ASCII
             $vmArgs = @(ConvertTo-ArgList $guestValues -CommandLine) + @('-RunDir', "C:\Output\runs\$stamp", '-CopyRepoFiles',
                 '-GameRootFrom', "C:\Output\runs\$stamp\host-game")
             $timeout = $resultSeconds + 300
+            $guestKept = $false
             try { & $vmScript Exec -Vm $vmTarget.Id -Script C:\Repo\tools\wsb\guest\run-test.ps1 -Arguments $vmArgs -TimeoutSeconds $timeout | Out-Null }
             catch {
                 if (Test-Path (Join-Path $runDir 'result.json')) { "  vm exec: $($_.Exception.Message)" }
+                elseif ((Test-Path (Join-Path $runDir 'events.json')) -and (Test-VmRunning)) {
+                    # The guest's run-test.ps1 started and writes through C:\Output whether vmrun still
+                    # reaches VMware Tools or not (their heartbeat drops while the host pages). A second
+                    # run-test in the same folder would stop this one's game and overwrite its results
+                    # (vm1-20261114-052005), so wait for its result.json below instead.
+                    "  vm exec: $($_.Exception.Message); the guest's run had started, waiting for its result"
+                    $guestKept = $true
+                }
                 else {
                     # The VM died or was stopped: bring it up again and retry once.
                     "  vm exec failed ($($_.Exception.Message)); restarting the VM"
@@ -483,12 +496,33 @@ try {
         $deadline = (Get-Date).AddSeconds($resultSeconds)
         while (-not (Test-Path $result) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
         "=== $archive -> $runDir"
-        if (-not (Test-Path $result)) { "  no result after $resultSeconds s"; continue }
+        if (-not (Test-Path $result)) {
+            "  no result after $resultSeconds s"
+            if ($Vm -and $guestKept) {
+                # That run-test may still be going in the guest; another one would rebuild C:\Run and
+                # stop its game. vmrun can't reach the guest to stop it, so end the series here.
+                "  the guest's run may still be going and vmrun can't reach it: ending the series"
+                break
+            }
+            continue
+        }
+        if ($Vm -and $overlayDir) {
+            # The run's copy of -Overlay (a full roster's is 4.3 GB) has done its job once the run has a
+            # result: the guest laid it into C:\Run, and result.json "overlay" says what it held. The
+            # source folder stays.
+            Set-Content -LiteralPath (Join-Path $runDir 'overlay.txt') (Resolve-Path -LiteralPath $overlayDir).Path
+            Remove-Item -LiteralPath (Join-Path $runDir 'overlay') -Recurse -Force -ErrorAction SilentlyContinue
+        }
         if ($gate) { Set-Content (Join-Path $runDir 'cpu-gate.txt') $gate }
         $r = Get-Content $result -Raw | ConvertFrom-Json
         "  stage=$($r.stage) crashed=$([bool]$r.crashed) error=$($r.error)"
         if ($r.unpause) { "  the world was paused after the go; $($r.unpause) Esc (events.json, paused-NN.png)" }
         Show-GameFiles $r
+        if ($Vm -and $script:vmSession.Count) {
+            $mem = $r.memory
+            "  VM: $($script:vmSession['memsize']) MB RAM, $([int]$script:vmSession['svga.graphicsMemoryKB'] / 1024) MB graphics memory" +
+                $(if ($mem) { "; peaks: GPU $($mem.maxGpuSharedMB) MB, Driver.exe private $($mem.driverPeakPrivateMB) MB, guest used $($mem.peakUsedMB) MB (min available $($mem.minAvailableMB) MB)" } else { '' })
+        }
         Show-GpuMemory $r
         if ((Test-LoadFailure $r) -and -not $queue[$qi].Retry -and ($OnHost -or $Vm)) {
             "  the world didn't load; retrying once"
