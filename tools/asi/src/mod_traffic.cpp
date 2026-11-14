@@ -439,6 +439,30 @@ void** __fastcall spec_get(uint8_t* m, void*, void** out, uint32_t id)
     }
     return r;
 }
+// Registration (vtable +0x48, 0086BCF0) and release (+0x4C, 0086BB40), payload key at +0x14.
+using SpecReg = void(__thiscall*)(void*, uint8_t*);
+uint32_t g_spec_reg_lines;
+void spec_reg_log(const char* what, uint8_t* m, uint8_t* payload, uint32_t used_before)
+{
+    if (g_spec_reg_lines >= 1500) return;
+    ++g_spec_reg_lines;
+    char text[200]; spec_census(m, text, sizeof text);
+    dsf_log("live-pool: spec %s %d (used %u before); map %s", what, payload ? (int)*(uint32_t*)(payload + 0x14) : -1,
+            used_before, text);
+}
+void __fastcall spec_register(uint8_t* m, void*, uint8_t* payload)
+{
+    uint32_t before = *(uint32_t*)(m + 0x25C);
+    ((SpecReg)0x0086BCF0)(m, payload);
+    spec_reg_log("register", m, payload, before);
+}
+void __fastcall spec_release(uint8_t* m, void*, uint8_t* payload)
+{
+    uint32_t before = *(uint32_t*)(m + 0x25C);
+    ((SpecReg)0x0086BB40)(m, payload);
+    spec_reg_log("release", m, payload, before);
+}
+
 void spec_summary()
 {
     uint8_t* e = engine();
@@ -604,6 +628,10 @@ void mod_traffic_init()
     dsf_log("live-pool: native runtime selection installed %d", install());
     uint32_t original = 0x0086B9E0, hook = (uint32_t)(uintptr_t)spec_get;
     dsf_log("live-pool: spec get diagnostic (00E395E4) installed %d", patch_bytes(0x00E395E4, &hook, 4, &original));
+    uint32_t reg = 0x0086BCF0, reg_hook = (uint32_t)(uintptr_t)spec_register;
+    uint32_t rel = 0x0086BB40, rel_hook = (uint32_t)(uintptr_t)spec_release;
+    dsf_log("live-pool: spec register/release diagnostic installed %d %d", patch_bytes(0x00E39618, &reg_hook, 4, &reg),
+            patch_bytes(0x00E3961C, &rel_hook, 4, &rel));
 }
 
 static bool __fastcall fixture_exists(void*, void*, uint32_t, uint32_t) { return true; }
