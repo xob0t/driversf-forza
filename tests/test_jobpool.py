@@ -203,6 +203,15 @@ def test_attach_keeps_the_reservation_readable():
         slot.attach(123456)  # longer and shorter texts both read back whole
         slot.attach(8)
         assert json.loads(slot.path.read_text(encoding="utf-8"))["mem_pid"] == 8
+        # The readers fail closed the same way: past the lock's timeout a RAM-checked grant gets
+        # no slot and the VM gate says not ok; a grant without a RAM check still goes on.
+        with jobpool._pool_lock(folder):
+            assert jobpool.try_acquire("car", ram=GB, queue=False, lock_timeout=0.2, **kw) is None
+            gate = jobpool.vm_gate("x.json", folder, free=kw["free"], procs=dict, lock_timeout=0.2)
+            assert not gate["ok"] and gate["locked"] is False
+            plain = jobpool.try_acquire("tool", queue=False, lock_timeout=0.2, **kw)
+            assert plain is not None
+        plain.release()
         slot.release()
 
 

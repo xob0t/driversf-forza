@@ -417,14 +417,19 @@ def budget(slots: list[dict], avail: int | None, procs: dict[int, Proc], vm_hold
     return {"available": avail, "growing": growing, "vms": vms, "spare": keep, "headroom": headroom}
 
 
-def vm_gate(hold_file: str, folder: Path | None = None, free=None, procs=None) -> dict:
+def vm_gate(hold_file: str, folder: Path | None = None, free=None, procs=None, lock_timeout: float = 30.0) -> dict:
     """Whether a RAM hold's VM may start now: its need (vm_need) fits in the host's available
     RAM less what the busy jobs may still grow, SPARE, and what the VMs of earlier RAM holds
-    still need. run-series.ps1's RAM gate asks this until it does ("ok")."""
+    still need. run-series.ps1's RAM gate asks this until it does ("ok"). Without pool.lock
+    (a holder that hangs past `lock_timeout`) the slot texts may be half written: not ok,
+    and the gate asks again."""
     folder = folder if folder is not None else root()
     if folder is None or _ram_off():
         return {"ok": True, "need": 0, "free": None}
-    with _pool_lock(folder):  # the slot texts as try_acquire reads them (Slot.attach writes under it)
+    # The slot texts as try_acquire reads them (Slot.attach writes under it).
+    with _pool_lock(folder, lock_timeout) as locked:
+        if not locked:
+            return {"ok": False, "need": 0, "free": None, "locked": False}
         avail, table = _host(free, procs)
         mine = next((h for h in holds(folder) if h["file"] == hold_file), None)
         if mine is None or avail is None:
@@ -636,6 +641,7 @@ def try_acquire(
     child: bool = False,
     procs=None,
     vm_holds: list[dict] | None = None,
+    lock_timeout: float = 30.0,
 ) -> Slot | None:
     """A slot for a job whose measured peak is `ram` bytes, or None: the pool is at capacity
     (or holds reserve it), the free slots go to processes that have waited longer, or the
@@ -646,20 +652,27 @@ def try_acquire(
     its whole reservation). free(): bytes available now (default port_batch.free_ram);
     procs(): processes() (default); vm_holds: ram_holds() (default). Without a slot the process
     joins the queue (unless `queue` is False: it will not ask again soon). With the pool
-    off, always a slot (that holds nothing)."""
+    off, always a slot (that holds nothing). Without pool.lock (a holder that hangs past
+    `lock_timeout`) a job with a RAM check gets no slot, as the slot texts it counts may be
+    half written; one without goes on (a slot more at worst)."""
     folder = folder if folder is not None else root()
     if folder is None:
         return Slot(None, None, label)
     total = size() if total is None else total
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        with _pool_lock(folder):
+        with _pool_lock(folder, lock_timeout) as locked:
+            checked = bool(ram) and not _ram_off()
+            if checked and not locked:
+                if queue:
+                    _join_queue(folder, ram)
+                return None
             cap = capacity(folder, total)
             paths = [folder / f"slot-{i:02d}.lock" for i in range(total)]
             busy = [p for p in paths if _slot_busy(p)]
             waiting, wanted = _ahead(folder)
             fits = True
-            if ram and not _ram_off():
+            if checked:
                 avail, table = _host(free, procs)
                 held_vms = ram_holds(folder) if vm_holds is None else vm_holds
                 room = budget(_slot_infos(folder, total), avail, table, held_vms, spare())
@@ -940,6 +953,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.cmd == "vm-gate":
         gate = vm_gate(args.hold)
+        if gate.get("locked") is False:
+            print("pool.lock is held past its timeout; asking again")
+            sys.exit(1)
         free = gate.get("free")
         print(
             f"VM needs {gate['need'] / GB:.1f} GB, {'none known' if free is None else f'{free / GB:.1f} GB'} free for it"
