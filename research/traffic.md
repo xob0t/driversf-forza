@@ -979,7 +979,7 @@ stays as a guard; in game it doesn't act while the pool is 45.
 
 This also explains the remaining IV births of model 3 in the runs above
 (159, 150, 236 at map peaks of 44 to 45). In vanilla, 35 slots keep the
-resident models under 45. Raising the class-0xF8 pool is not done (#NNN).
+resident models under 45. Raising the class-0xF8 pool is not done yet (#624).
 
 The 40-model ambient-roster bound is retained. Traffic Extension's separate
 50-entry notification, parked-cache and replay-snapshot findings concern
