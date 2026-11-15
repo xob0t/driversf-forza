@@ -393,6 +393,8 @@ class GuiSmokeTest(unittest.TestCase):
             app.tc.facts = lambda: (41, POTS)
             app.set_name.set(CH7)
             self.assertEqual((app.gather()["ports"], app.gather()["share"]), ("fill", "mean"))  # the default
+            self.assertEqual(app.gather()["pool"], "all")
+            self.assertIn("1 eligible", app.pool_summary.cget("text"))
             app.fill.set(False)
             app.ports.set(1)
             app.preview()
@@ -401,7 +403,8 @@ class GuiSmokeTest(unittest.TestCase):
             self.assertIn("101", app.pool.get_children())
             app.tc.set_ambient(CH7, ports=["forza.fh1.CAR_A_10"])
             app.load_set()
-            self.assertEqual(app.gather()["ports"], ["forza.fh1.CAR_A_10"])  # keys kept
+            self.assertEqual(app.gather()["pool"], ["forza.fh1.CAR_A_10"])  # legacy keys kept in the pool
+            self.assertEqual(app.gather()["ports"], "fill")
             app.fill.set(False)
             app.ports.set(2)
             self.assertEqual(app.gather()["ports"], 2)
@@ -414,7 +417,8 @@ class GuiSmokeTest(unittest.TestCase):
                 app.shuffle()
                 app.apply_set()
                 app.apply_iv()
-            self.assertEqual(shown.call_count, 3)
+                app.choose_forza_pool()
+            self.assertEqual(shown.call_count, 4)
             self.assertEqual(json.dumps(app.tc.t, sort_keys=True), before)
         finally:
             root.destroy()
