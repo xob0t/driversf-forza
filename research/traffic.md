@@ -916,6 +916,71 @@ spec, the test construction applies. A model that is listed but not yet
 registered stays out of the draw (its group's other resident models fill
 in, as during any load) until its spec registers.
 
+**The specs themselves come from a 45-object pool (confirmed-static and
+confirmed-runtime, 2026-11-15).** So the map can't reach 46 nodes in game, and
+the page storage above is never used there. Registration 0x0086BCF0 looks the
+ID up (0x0086BDC0). When the ID is missing it calls 0x0086BAB0, which allocates
+the spec first and inserts only when it got one:
+
+```
+0086bab7  push 0F8h
+0086babe  call 00888610          ; mov ecx,[0144BCFC]; call 00887A90 (null when ecx is 0)
+0086bac3  mov edi, eax
+0086baca  cmp edi, ebp           ; ebp = 0
+0086bacc  je 0086bb28            ; no object: return, nothing registered
+...
+0086bafe  call 0086be10          ; operator[]: the map node
+```
+
+0x00887A90 is a class-keyed allocator with three fixed pools: class 0xF6
+(`+0x00`), 0xF8 (`+0x38`) and 0xF9 (`+0x1C`), each `{storage, used flags,
+object size, ..., count +0x10, free count +0x14, free head +0x18}`. It returns
+null when the class's free head is -1 (`00887aea mov edx,[ecx+50h]; cmp edx,-1;
+je 00887b20` -> `xor esi,esi`). The allocator is made once (0x00888A10:
+`push 70h; call 00C28780`, constructor 0x0088A4C0, stored at `[0144BCFC]`).
+Its pools get their object sizes from `.data` (0x00888A43..0x00888A60:
+`[00F3CFF8]` = 5088, `[00F3F254]` = 5088, `[00F3EE34]` = 18880 bytes for the
+class-0xF8 pool, read from Driver.exe 1.04). Their counts are constants in
+the constructor:
+
+```
+0088a4cf  mov edx, 40h
+0088a4d4  mov [eax+10h], edx     ; class 0xF6: 64
+0088a4d7  mov [eax+2Ch], edx     ; class 0xF9: 64
+0088a4f2  mov edx, 2Dh
+0088a4f7  mov [eax+48h], edx     ; class 0xF8: 45
+```
+
+A spec is 18880 (0x49C0) bytes, enough for its model-info pointer at
+`+0x4850`. So at most 45 vehicle models have a spec at once. The 46th model
+loads (spool slot, ED/EF and model-audio nodes), and its registration does
+nothing. Until a spec frees, `get()` gives anyone who asks for it the first
+listed spec.
+
+Run `vm1-20261115-024233` (VM, the owner's install as in the runs above, 60
+slots, `slots_trace=1`, probe ID 3, Chapter 7, 11 min, a test-only `pools.bin`
+built with no mission-pot reserve, streaming budget 31): ED, EF and model
+audio reached 59 nodes. The spec map stayed at 45 for the whole run. From
+02:44:48 every registration that found 45 used (`spec register 233 (used 45
+before)`, the diagnostic build) left 45 used. Nine IV requests (007EBB20 for
+233, 159, 167, 160, 176, 193, 234, 825, 139) found no spec and built 27
+vehicles of model 3. The live picker made 2983 of the 3164 births, with no
+model-3 births (`spec_ready` kept the spec-less models out of the draw). No
+crash.
+
+This corrects the 46th-node account above for the game: the map's overflow
+(reproduced by the fixture on fake specs) needs a 46th spec, which the pool
+never hands out. `vm1-20261114-132735`'s flood began in the 30 s after the
+ED/EF and model-audio maps reached 46 nodes (the before build logged no spec
+map). The live data fits the pool: 46 models were resident, the 46th had no
+spec, the old readiness test took it as ready, and `get()` built model 3.
+`spec_ready` covers this case as well. The spec-map hook in `vehicle_maps.cpp`
+stays as a guard; in game it doesn't act while the pool is 45.
+
+This also explains the remaining IV births of model 3 in the runs above
+(159, 150, 236 at map peaks of 44 to 45). In vanilla, 35 slots keep the
+resident models under 45. Raising the class-0xF8 pool is not done (#NNN).
+
 The 40-model ambient-roster bound is retained. Traffic Extension's separate
 50-entry notification, parked-cache and replay-snapshot findings concern
 larger rosters; expanding them is outside this fix. The 35-slot default

@@ -34,6 +34,7 @@ Pair* g_pairs;
 uint8_t g_packages[kModels], g_valid[kModels], g_seen[kModels];
 uint32_t g_unique;
 uint8_t g_pending[kModels], g_retiring[kModels];
+volatile uint8_t g_spec_failed[kModels];  // our lease's model loaded with no spec (spec_register)
 int g_selected = -1;
 bool g_rotate_selected;
 uint8_t* g_owner;
@@ -172,8 +173,10 @@ bool ready_models(uint8_t* s, uint8_t* ready)
 // requests that spec's model ([[spec+0x4850]+0x14], 0088C8F0; 008D144A, 008D1475).
 // A model's spec registers only once its UPVH has loaded (0086C0C0 -> vtable
 // +0x48), and until then get() returns the first listed spec, the lowest resident
-// ID (research/traffic.md, "Vehicle spec manager map"). Vanilla traffic never asks
-// for such a model, since a set is fully loaded before traffic starts.
+// ID (research/traffic.md, "Vehicle spec manager map"). A model loaded while 45 specs
+// exist gets none at all: specs come from a 45-object pool (class 0xF8, 0088A4F2) and
+// registration 0086BAB0 skips when it is empty. Vanilla traffic never asks for such a
+// model, since a set is fully loaded before traffic starts and 35 slots stay under 45.
 bool spec_ready(uint32_t id)
 {
     using SpecGet = void**(__thiscall*)(void*, void**, uint32_t);
@@ -185,6 +188,50 @@ bool spec_ready(uint32_t id)
     if (!spec) return false;
     uint8_t* info = *(uint8_t**)((uint8_t*)spec + 0x4850);
     return info && *(uint32_t*)(info + 0x14) == id;
+}
+
+// Free vehicle specs. Registration 0086BAB0 takes each spec from the class-0xF8 pool of the
+// allocator at [0144BCFC] (00888610 -> 00887A90; +0x38 storage, +0x3C one used flag per object,
+// +0x48 count, 45 from 0088A4F2) and registers nothing when it is empty. Its +0x4C only counts
+// down (free 008879F0 never adds back), so count the clear flags (set at 00887AFD, cleared at
+// 00887A28). -1: no allocator (the offline fixture), nothing known.
+constexpr uint32_t kSpecAllocator = 0x0144BCFC;
+int spec_free()
+{
+    uint8_t* a = *(uint8_t**)kSpecAllocator;
+    if (!a) return -1;
+    const uint8_t* used = *(uint8_t**)(a + 0x3C);
+    uint32_t count = *(uint32_t*)(a + 0x48);
+    if (!used || count > kModels) return -1;
+    int free = 0;
+    for (uint32_t i = 0; i < count; ++i) free += !used[i];
+    return free;
+}
+
+// Spec registration, vtable 00E395D0 slot +0x48 (00E39618 -> 0086BCF0): the UPVH payload's model
+// ID is at +0x14 (0086BCFA). A model registers once, when it loads (0086C0C0), so a lease whose
+// model comes out of registration without its spec never gets spawnable; decide() releases it.
+using SpecRegister = void(__thiscall*)(void*, uint8_t*);
+constexpr uint32_t kSpecRegisterSlot = 0x00E39618, kSpecRegister = 0x0086BCF0;
+void __fastcall spec_register(void* manager, void*, uint8_t* payload)
+{
+    ((SpecRegister)kSpecRegister)(manager, payload);
+    uint32_t id = payload ? *(uint32_t*)(payload + 0x14) : kModels;
+    if (id < kModels && g_pending[id] && !spec_ready(id)) g_spec_failed[id] = 1;
+}
+
+// Release our leases whose models loaded without a spec, on the picker's thread.
+void release_specless(uint8_t* s)
+{
+    for (uint32_t id = 0; id < kModels; ++id) if (g_spec_failed[id]) {
+        g_spec_failed[id] = 0;
+        if (!g_pending[id] || g_owner != s || *(uint32_t*)(s + kSpoolState) == kStateReset) continue;
+        g_pending[id] = 0;
+        if (*(uint32_t*)(s + kSpoolState) == kStateUnloading && *(uint32_t*)(s + kActiveId) == id)
+            ((Request)0x005A66E0)(s, id);
+        ((Release)0x005A78D0)(s, id);
+        dsf_log("live-pool: release %u: it loaded with no spec (%d of the spec pool free)", id, spec_free());
+    }
 }
 
 bool valid_model(uint32_t id, bool package)
@@ -246,6 +293,17 @@ uint32_t live_cap(const Row* row)
     return room < row->live_cap ? room : row->live_cap;
 }
 
+// A request is useful only if its model can get a spec: the free specs must exceed our leases
+// still waiting for theirs (a model without one never spawns; spec_free()).
+bool spec_room()
+{
+    int free = spec_free();
+    if (free < 0) return true;
+    int waiting = 0;
+    for (uint32_t id = 0; id < kModels; ++id) waiting += g_pending[id] && !spec_ready(id);
+    return free > waiting;
+}
+
 int __fastcall decide(const Range* range, void*, uint32_t seed)
 {
     if (g_thread && GetCurrentThreadId() != g_thread) return ((Pick)0x00916870)(range, seed);
@@ -271,6 +329,7 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
         g_validation_logged=true;
     }
     if (g_owner && g_owner != s) forget("owner replaced", false);
+    release_specless(s);
     uint8_t dynamic[kModels]; memcpy(dynamic, g_packages, sizeof dynamic);
     uint32_t added = 0;
     for (uint32_t i = 0; i < row->size; ++i) if (choices[i].package) {
@@ -291,7 +350,8 @@ int __fastcall decide(const Range* range, void*, uint32_t seed)
     uint32_t cap = live_cap(row);
     bool rotate = added > cap;
     const Pair* chosen = sample(choices, row->size, row->total, seed, valid);
-    if (chosen && chosen->package && !ready[chosen->id] && !g_pending[chosen->id] && occupied < cap) {
+    if (chosen && chosen->package && !ready[chosen->id] && !g_pending[chosen->id] && occupied < cap &&
+        spec_room()) {
         // +9A0 owns fifty pending nodes, independent of the single active
         // loader at +D9C. 005A6FD0 admits multiple queued model requests.
         if (*(uint32_t*)(s + 0x9A8) < kNodes && ((Request)0x005A7860)(s, chosen->id)) {
@@ -464,6 +524,7 @@ bool install()
 {
     const uint8_t capture[] = {0x81,0xEC,0xD8,0x04,0x00,0x00};
     if (!check_bytes(0x0074B7A0, capture, sizeof capture)) return false;
+    if (*(uint32_t*)kSpecRegisterSlot != kSpecRegister) return false;
     for (const Site& s : g_sites) if (!check_bytes(s.address, s.bytes, s.size)) return false;
     for (const Site& s : g_sites) {
         if (!s.original) continue;
@@ -474,7 +535,19 @@ bool install()
         bool ok = s.call ? patch_call(s.address, s.hook, s.bytes) : patch_jmp(s.address, s.hook, s.size, s.bytes);
         if (!ok) { for (const Site& saved : g_sites) patch_bytes(saved.address, saved.bytes, saved.size); return false; }
     }
+    uint32_t hook = (uint32_t)(uintptr_t)spec_register, original = kSpecRegister;
+    if (!patch_bytes(kSpecRegisterSlot, &hook, 4, &original)) {
+        for (const Site& saved : g_sites) patch_bytes(saved.address, saved.bytes, saved.size);
+        return false;
+    }
     return true;
+}
+
+void uninstall()
+{
+    for (const Site& saved : g_sites) patch_bytes(saved.address, saved.bytes, saved.size);
+    uint32_t original = kSpecRegister;
+    patch_bytes(kSpecRegisterSlot, &original, 4);
 }
 } // namespace
 
@@ -510,6 +583,13 @@ int mod_traffic_selftest()
     *(void**)0x00FE7228 = e; *(void**)(e + 0x758) = tm; *(void**)(e + 0x214) = s;
     *(int*)(tm + 0x5CA9F0) = -1;
     g_fixture_slots = 60;
+    // The spec allocator [0144BCFC] as 0088A4C0 lays out its class-0xF8 pool: storage +0x38,
+    // used flags +0x3C, count +0x48, free head +0x50 (-1: none free). Full until a case frees one.
+    void* savedAllocator = *(void**)kSpecAllocator;
+    static uint8_t allocator[0x70], specUsed[45], specStorage[16];
+    memset(allocator, 0, sizeof allocator); memset(specUsed, 1, sizeof specUsed);
+    *(uint8_t**)(allocator + 0x38) = specStorage; *(uint8_t**)(allocator + 0x3C) = specUsed;
+    *(uint32_t*)(allocator + 0x48) = 45; *(int*)(allocator + 0x50) = -1;
     struct NativePair { uint32_t id; float weight; } native[] = {{1,3}, {2,1}, {700,2}, {701,3.5f}};
     Pair choices[] = {{1,3,0}, {2,1,0}, {700,2,1}, {701,3.5f,1}};
     *(void**)0x016DA940 = native;
@@ -594,6 +674,27 @@ int mod_traffic_selftest()
         bool spawned = false;
         for(uint32_t seed=0;seed<10000 && !spawned;++seed) spawned = decide(&range,nullptr,seed)==700;
         LIVE_CHECK(spawned && spec_ready(700));
+        // Registration with the spec pool full (native 0086BCF0 through the hook; 00887A90 finds
+        // the free head at -1): 701 stays without its spec, so our queued lease on it is released.
+        *(void**)kSpecAllocator = allocator;
+        const bool held701 = g_pending[701] != 0;  // decide()'s earlier draws may hold a lease on it
+        if (!held701) LIVE_CHECK(((Request)0x005A7860)(s, 701));
+        uint32_t refs_before = ((RefCount)0x005A6B00)(s, 701);
+        LIVE_CHECK(refs_before >= 1);
+        g_pending[701] = 1; g_owner = s;
+        LIVE_CHECK(spec_free() == 0 && !spec_room());  // 701 waits, no spec free
+        uint8_t payload[0x18] = {}; *(uint32_t*)(payload + 0x14) = 701;
+        uint32_t used = *(uint32_t*)(manager + 0x25C);
+        spec_register(manager, nullptr, payload);
+        LIVE_CHECK(*(uint32_t*)(manager + 0x25C) == used && !spec_ready(701) && g_spec_failed[701]);
+        // A registration of a model we hold no lease on, or one that has its spec, marks nothing.
+        *(uint32_t*)(payload + 0x14) = 1; g_pending[1] = 1;
+        spec_register(manager, nullptr, payload);
+        LIVE_CHECK(!g_spec_failed[1]); g_pending[1] = 0;
+        release_specless(s);
+        LIVE_CHECK(!g_pending[701] && !g_spec_failed[701] && ((RefCount)0x005A6B00)(s, 701) == refs_before - 1);
+        if (held701) { LIVE_CHECK(((Request)0x005A7860)(s, 701)); g_pending[701] = 1; }  // as the later cases expect
+        *(void**)kSpecAllocator = nullptr;
         *(void**)(e + 0x778) = nullptr; g_selected = -1; g_rotate_selected = false;
     }
     // A ready first model must not fill whole roads while its peers load.
@@ -642,6 +743,17 @@ int mod_traffic_selftest()
     head[0]=head[1]=(uint32_t)head; *(uint32_t*)(s+0x9A0)=(uint32_t)(s+0x9AC);
     *(uint32_t*)(s+0x9A4)=*(uint32_t*)(s+0x9A8)=0;
     g_fixture_slots=60; file.row.reserve=0;
+    // No free spec: a request would load a model that never gets one (0086BAB0), so none is made.
+    *(void**)kSpecAllocator=allocator;
+    LIVE_CHECK(spec_free()==0 && !spec_room());
+    LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && !g_pending[700] && *(uint32_t*)(s+0x9A8)==0);
+    specUsed[7]=0; LIVE_CHECK(spec_free()==1 && spec_room());
+    LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && g_pending[700] && *(uint32_t*)(s+0x9A8)==1);
+    forget("spec room fixture",true);
+    LIVE_CHECK(!g_pending[700] && *(uint32_t*)(s+0x9A8)==0);
+    head[0]=head[1]=(uint32_t)head; *(uint32_t*)(s+0x9A0)=(uint32_t)(s+0x9AC);
+    *(uint32_t*)(s+0x9A4)=*(uint32_t*)(s+0x9A8)=0;
+    specUsed[7]=1; *(void**)kSpecAllocator=nullptr;
     LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && g_pending[700]);
     LIVE_CHECK(decide(&range,nullptr,seeds[0])<700 && *(uint32_t*)(s+0x9A8)==1);
     queued=(uint32_t*)head[1]; LIVE_CHECK(queued[2]==700 && queued[3]==0 && queued[4]==1);
@@ -711,6 +823,7 @@ int mod_traffic_selftest()
     *(uint8_t*)0x0074B7A0 ^= 1;
     LIVE_CHECK(!install());
     for(const Site& site:g_sites) LIVE_CHECK(bytes_equal(site.address,site.bytes,site.size));
+    LIVE_CHECK(*(uint32_t*)kSpecRegisterSlot==kSpecRegister);
     *(uint8_t*)0x0074B7A0 ^= 1;
     LIVE_CHECK(install());
     ((Capture)0x0074B7A0)(snapshot,captured);
@@ -733,7 +846,11 @@ int mod_traffic_selftest()
     g_retiring[700]=g_retiring[701]=1; ((Clear)0x005A7360)(s);
     LIVE_CHECK(g_retiring[700] && g_retiring[701]);
     memset(g_retiring,0,sizeof g_retiring);
-    for(const Site& site:g_sites) LIVE_CHECK(patch_bytes(site.address,site.bytes,site.size));
+    LIVE_CHECK(*(uint32_t*)kSpecRegisterSlot==(uint32_t)(uintptr_t)spec_register);
+    uninstall();
+    for(const Site& site:g_sites) LIVE_CHECK(bytes_equal(site.address,site.bytes,site.size));
+    LIVE_CHECK(*(uint32_t*)kSpecRegisterSlot==kSpecRegister);
+    *(void**)kSpecAllocator=savedAllocator;
     LIVE_CHECK(patch_bytes(0x0059C620,existsBytes,5));
     LIVE_CHECK(patch_bytes(0x0059C5C0,capacityBytes,5));
     *(void**)0x00FE7228=savedEngine; *(void**)0x016DA940=savedPairs; free(tm);

@@ -24,6 +24,9 @@ constexpr uint32_t kProviderVtable = 0x00E3966C;  // set by both ED/EF construct
 // 24-byte nodes {prev, next, key, spec, state, flag}: 45 of them from +0x260, the sentinel at
 // +0x698 ((0x698 - 0x260) / 24 = 45). Its only insert is operator[] 0086BE10's call 0086BE67 ->
 // 008CCAA0, a bump by 0x18 with no end check. Node 46 lands on the sentinel and past the object.
+// In game the specs come from a 45-object pool (class 0xF8, 0088A4F2), so registration 0086BAB0
+// makes no 46th node while that pool is 45; this hook is a guard (research/traffic.md, "Vehicle
+// spec manager map").
 constexpr uint32_t kSpecNodeBytes = 24;
 constexpr uint32_t kSpecMap = 0x254;
 constexpr uint32_t kSpecVtable = 0x00E395D0;
@@ -169,10 +172,10 @@ int** __fastcall insert(int* pool, void*, int** out, int* pos, const int* kv)
     return result;
 }
 
-// 0086BE67: the spec map's node append. With 46 resident models the native append wrote
-// node 46 over the sentinel: lookups of lower IDs then miss, and get() 0086B9E0 hands
-// out its fallback, the first listed spec, so construction 008D1380 builds that model
-// (research/traffic.md, "Vehicle spec manager map").
+// 0086BE67: the spec map's node append. A 46th node would land on the sentinel: lookups of
+// lower IDs then miss, and get() 0086B9E0 hands out its fallback, the first listed spec, so
+// construction 008D1380 builds that model (the fixture reproduces it; in game the 45-object
+// spec pool stops registration first; research/traffic.md, "Vehicle spec manager map").
 int* __fastcall spec_append(int* pool, void*, const int* value)
 {
     if (!spec_map(pool)) return ((Append)0x008CCAA0)(pool, value);
