@@ -183,6 +183,28 @@ def test_shards_keep_the_host_facing():
         assert facing[2] * sign > 0  # the winding came along too: normal and facing agree
 
 
+def test_a_crack_fin_keeps_its_height():
+    """Vanilla crack lines are fins standing across the glass: a crack quad rooted on
+    the host windscreen (z 1.0) and reaching 4 mm out of it (+z, the window's outward
+    side) keeps its 4 mm on the converted window instead of being flattened onto the
+    glass, where it would have no area."""
+    z, h = 1.0, 0.004
+    root = ((0.60, 0.60, z), (0.62, 0.60, z))
+    top = ((0.60, 0.60, z + h), (0.62, 0.60, z + h))
+    fin = [(root[0], root[1], top[1]), (root[0], top[1], top[0])]
+    host = [_host_window((0, 5), 1.4, 0.7, z, [(t, CRACK_UV, (0.5,) * 3) for t in fin])]
+    g = _windscreen(1.0, 0.5, 1.1, host)
+    tris = [[c[0] for c in corners] for corners, r in g.triangles() if r == "crack"]
+    assert len(tris) == 2
+    zs = sorted({round(p[2], 6) for t in tris for p in t})
+    assert zs == [round(1.1 - glass.LIFT, 6), round(1.1 - glass.LIFT + h, 6)]
+    area = sum(
+        math.sqrt(glass._dot(c, c)) / 2
+        for c in (glass._cross(glass._sub(t[1], t[0]), glass._sub(t[2], t[0])) for t in tris)
+    )
+    assert abs(area - 0.02 * h) < 1e-6
+
+
 def test_pieces():
     """Triangles sharing a corner (each coordinate within one 1/4096 m position step)
     are one piece; corners two steps apart, or a corner over another along the
