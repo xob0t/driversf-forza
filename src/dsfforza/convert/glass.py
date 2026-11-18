@@ -229,7 +229,10 @@ class SlotMapper:
 # 354 and 659 shard triangles, 3 mm wide at the median). InteriorGlass builds the
 # surface from the converted window's shape and takes the cracks and shards of the
 # host interior's matching window (host_windows), placed on the converted window's
-# rim where the host has them on its own.
+# rim where the host has them on its own. The crack lines and bright shards are fins
+# and slab walls standing 3 to 5 mm across the glass, not flat slivers, and
+# their vertex normals are their own triangles' facing; both come along with them
+# (research/vehicle-model.md, "Crack and shard fins", "Crack and shard normals").
 INTERIOR_BLOCKS = {
     "surface": (0.0, 0.125, 0.0, 0.0625),
     "crack": (0.0, 0.0625, 0.125, 0.25),
@@ -453,9 +456,11 @@ class _Rim:
 @dataclass
 class HostWindow:
     """One window of the host's vanilla interior (an s9 group of its glass):
-    every triangle as (points, UVs, sky terms), which of them are its crack
-    and shard layers (interior_block crack, shard_dull, shard_bright), and its
-    kind (host_kinds: "front", "rear" or "side")."""
+    every triangle as (points, UVs, sky terms, normals), which of them are its
+    crack and shard layers (interior_block crack, shard_dull, shard_bright), and
+    its kind (host_kinds: "front", "rear" or "side"). Normals may be left out
+    (three-element triangles): the triangle's own facing stands in, as vanilla
+    stores it (_own_normals)."""
 
     s9: tuple[int, int]
     tris: list
@@ -501,6 +506,7 @@ def host_windows(stream, vehc) -> list[HostWindow]:
     windows, one per s9 group: vanilla binds each window to its own panel
     record (windscreen (0, 5) on the Desanne, rear (0, 20), doors)."""
     from dsfforza.convert.damage import load_mesh
+    from dsfforza.convert.damage.core import _angles_of, _normal_of
     from dsfforza.formats import vehicle_mesh as vm
 
     mesh = load_mesh(stream, vehc)
@@ -512,13 +518,15 @@ def host_windows(stream, vehc) -> list[HostWindow]:
         if sub.material != INTERIOR_GLASS or vb is None:
             continue
         ib = mesh.index_buffers[sub.index_buffer]
-        e0, e8, e9 = vb.elements[0], vb.element(8), vb.element(9)
+        e0, e5, e8, e9 = vb.elements[0], vb.element(5), vb.element(8), vb.element(9)
         for t in range(sub.first_index, sub.first_index + sub.index_count, 3):
             idx = [sub.base_vertex + struct.unpack_from("<H", ib, (t + j) * 2)[0] for j in range(3)]
             pts = tuple(vm.position(vb, i) for i in idx)
             uvs = tuple(tuple(vb.read(e8, i)[:2]) for i in idx)
             skies = tuple(vb.read(e0, i)[3] / 4096 for i in idx)
-            groups[tuple(vb.read(e9, idx[0])[:2])].append((pts, uvs, skies))
+            # Semantic 5 bytes 0, 1: the normal's angles, decoded as the vertex shader does.
+            normals = tuple(_normal_of(*_angles_of(*vb.read(e5, i)[:2])) for i in idx) if e5 else None
+            groups[tuple(vb.read(e9, idx[0])[:2])].append((pts, uvs, skies, normals))
     return host_kinds(
         [
             HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")])
@@ -674,19 +682,22 @@ class InteriorGlass:
         return out
 
     def _host_pane(self, host: HostWindow):
-        """(frame axes, pane, rim) of a host window, framed like a converted
-        window of its kind (SlotMapper: u along x for windscreens and rear
-        windows, along -z for side glass; v down the glass)."""
+        """(u axis, v axis, outward normal, rim, fin heights per overlay triangle)
+        of a host window, framed like a converted window of its kind (SlotMapper:
+        u along x for windscreens and rear windows, along -z for side glass; v
+        down the glass)."""
         if host.s9 not in self._host_panes:
             frames = SlotMapper()
             section = "glasslf" if host.sideways else "glassf"
-            for pts, _, _ in host.tris:
-                group = frames.add(section, pts)
+            for tri in host.tris:
+                group = frames.add(section, tri[0])
             _, a_axis, b_axis, *_ = frames._frame(group)
             outward = frames.normal(group)
-            items = [(pts, (outward,) * 3, skies, b"") for pts, _, skies in host.tris]
+            items = [(tri[0], (outward,) * 3, tri[2], b"") for tri in host.tris]
             pane = _Pane(items, a_axis, b_axis, outward)
-            self._host_panes[host.s9] = (a_axis, b_axis, _Rim(pane) if pane.filled else None)
+            heights = _fin_heights([tri[0] for tri in host.overlay], outward)
+            rim = _Rim(pane) if pane.filled else None
+            self._host_panes[host.s9] = (a_axis, b_axis, outward, rim, heights)
         return self._host_panes[host.s9]
 
     def _overlay(self, pane: _Pane, host: HostWindow, s9) -> list:
@@ -699,14 +710,28 @@ class InteriorGlass:
         direction; then its triangles are lifted onto the glass. A piece deeper
         than a smaller window reaches (past its centre) is left out; so is a
         triangle that lands outside the window (its centroid outside, or a corner
-        more than one cell of the occupancy grid outside it)."""
-        ha, hb, hrim = self._host_pane(host)
+        more than one cell of the occupancy grid outside it).
+
+        Each vertex keeps the host's normal, turned with its piece (_turn_normal):
+        vanilla stores on every crack and shard vertex the facing of its own
+        triangle, which is the inward side on two thirds of the windscreen
+        shards, and the glass shader's lighting, Fresnel and reflection all
+        read it. And each vertex keeps its height above its fin's root
+        (_fin_heights): vanilla's crack lines and bright shards are fins and slab
+        walls standing 3 to 5 mm across the glass, which lifting every corner
+        onto the glass flattened to lines (research/vehicle-model.md, "Crack and
+        shard fins")."""
+        ha, hb, hn, hrim, fin_heights = self._host_pane(host)
         if hrim is None:
             return []
         rim = _Rim(pane)
+        # Frames of opposite handedness mirror the plane coordinates, and with them
+        # each triangle's facing (_turn_normal).
+        flip = _dot(ha, _cross(hb, hn)) * _dot(pane.a, _cross(pane.b, pane.out)) < 0
+        host_frame, frame = (ha, hb, hn), (pane.a, pane.b, pane.out)
         out = []
-        flat_tris = [[(_dot(p, ha), _dot(p, hb)) for p in pts] for pts, _, _ in host.overlay]
-        for piece in _pieces([pts for pts, _, _ in host.overlay]):
+        flat_tris = [[(_dot(p, ha), _dot(p, hb)) for p in tri[0]] for tri in host.overlay]
+        for piece in _pieces([tri[0] for tri in host.overlay]):
             corners_h = [c for n in piece for c in flat_tris[n]]
             g = (sum(x for x, _ in corners_h) / len(corners_h), sum(y for _, y in corners_h) / len(corners_h))
             theta, rho = hrim.polar(g)
@@ -719,14 +744,20 @@ class InteriorGlass:
             gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
             turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
             for n in piece:
-                out += self._place(pane, host.overlay[n], flat_tris[n], g, gp, turn, s9)
+                tri = host.overlay[n]
+                normals = [
+                    _turn_normal(m, host_frame, frame, turn, flip) for m in (_host_normals(tri) or _own_normals(tri[0]))
+                ]
+                out += self._place(pane, tri, flat_tris[n], g, gp, turn, s9, normals, fin_heights[n])
         return out
 
     @staticmethod
-    def _place(pane: _Pane, tri, q, g, gp, turn, s9) -> list:
+    def _place(pane: _Pane, tri, q, g, gp, turn, s9, normals, heights) -> list:
         """One host triangle (plane points q) of a piece moved from g to gp and
-        turned by turn, lifted onto the glass; [] where it lands outside."""
-        _, uvs, skies = tri
+        turned by turn, lifted onto the glass and raised off it by each corner's
+        height (metres, along the window's outward normal), with the given vertex
+        normals; [] where it lands outside."""
+        uvs, skies = tri[1], tri[2]
         flat = []
         for x, y in q:
             d = _rotate((x - g[0], y - g[1]), turn)
@@ -737,8 +768,73 @@ class InteriorGlass:
         corners = [pane.lift(c) for c in flat]
         if any(c is None for c in corners):
             return []
-        vertices = [(p, tuple(uv), nrm, sky, s9) for (p, nrm), uv, sky in zip(corners, uvs, skies)]
+        vertices = [
+            (tuple(p[i] + h * pane.out[i] for i in range(3)), tuple(uv), nrm, sky, s9)
+            for (p, _), uv, sky, nrm, h in zip(corners, uvs, skies, normals, heights)
+        ]
         return [(vertices, interior_block(uvs))]
+
+
+def _fin_heights(tris, outward) -> list[list[float]]:
+    """How far each corner of tris (host crack and shard triangles, three points
+    each) stands outward (along the window's normal) of its fin's root: of the
+    nearest corner it shares a triangle with, 0 where that corner is not lower.
+
+    Vanilla's crack lines and bright shards are strips standing across the glass
+    (slab walls: the shards are extruded slabs, one thickness per window, 3.0 to
+    5.2 mm on 132, 147, 153, 176, 201 and 286), whose across-glass edge is each
+    triangle's shortest: a top's nearest corner is the root under it, a root's
+    the top over it. That reference is local to the fin, so it holds between
+    sparse vertices and where the window wraps away from its own plane, where
+    the glass under a point is not a host vertex near it (research/vehicle-
+    model.md, "Crack and shard fins"). Corners within one position step are the
+    same vertex (PIECE_STEP, as _pieces)."""
+    keys = [[tuple(round(c / PIECE_STEP) for c in p) for p in pts] for pts in tris]
+    cells: dict[tuple, list[int]] = defaultdict(list)
+    for n, ks in enumerate(keys):
+        for k in ks:
+            cells[k].append(n)
+    out = []
+    for pts, ks in zip(tris, keys):
+        heights = []
+        for p, k in zip(pts, ks):
+            best = None
+            for d in itertools.product((-1, 0, 1), repeat=3):
+                for m in cells.get(tuple(a + b for a, b in zip(k, d)), ()):
+                    for q, kq in zip(tris[m], keys[m]):
+                        if all(abs(a - b) <= 1 for a, b in zip(k, kq)):
+                            continue  # p itself
+                        dist = math.dist(p, q)
+                        if best is None or dist < best[0]:
+                            best = (dist, q)
+            heights.append(max(0.0, _dot(p, outward) - _dot(best[1], outward)) if best else 0.0)
+        out.append(heights)
+    return out
+
+
+def _host_normals(tri):
+    """The host vertex normals of a HostWindow triangle, None when it has none."""
+    return tri[3] if len(tri) > 3 and tri[3] is not None else None
+
+
+def _own_normals(pts):
+    """The triangle's own facing (by its winding) at each corner: what vanilla stores
+    on its crack and shard vertices (research/vehicle-model.md, "Crack and shard normals")."""
+    n = _unit(_cross(_sub(pts[1], pts[0]), _sub(pts[2], pts[0]))) or (0.0, 1.0, 0.0)
+    return (n, n, n)
+
+
+def _turn_normal(m, host_frame, frame, turn, flip):
+    """A host normal moved with its piece: its components along the host window's
+    frame (u axis, v axis, outward normal), the in-plane part turned by `turn`,
+    put back on the converted window's frame. With `flip` (frames of opposite
+    handedness: the move is a mirror, which turns every triangle's winding round)
+    the normal is reversed too, so it keeps agreeing with its triangle's facing."""
+    (ha, hb, hn), (a, b, n) = host_frame, frame
+    s, t = _rotate((_dot(m, ha), _dot(m, hb)), turn)
+    w = _dot(m, hn)
+    sign = -1.0 if flip else 1.0
+    return _unit(tuple(sign * (s * a[i] + t * b[i] + w * n[i]) for i in range(3))) or n
 
 
 def _pieces(tris, step: float = PIECE_STEP) -> list[list[int]]:
