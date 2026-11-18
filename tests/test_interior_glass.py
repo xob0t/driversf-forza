@@ -205,6 +205,33 @@ def test_a_crack_fin_keeps_its_height():
     assert abs(area - 0.02 * h) < 1e-6
 
 
+def test_a_wide_triangular_fin_keeps_its_apex_height():
+    """A triangular fin 4 cm wide, its apex 4 mm out of the host windscreen over the
+    middle of its root: no other host vertex lies within 2 cm of the apex (the host's
+    glass there is only its far corners), and the apex still keeps its 4 mm on the
+    converted window while both root corners land on the glass."""
+    z, h = 1.0, 0.004
+    fin = ((0.60, 0.60, z), (0.64, 0.60, z), (0.62, 0.60, z + h))
+    host = [_host_window((0, 5), 1.4, 0.7, z, [(fin, CRACK_UV, (0.5,) * 3)])]
+    g = _windscreen(1.0, 0.5, 1.1, host)
+    tris = [[c[0] for c in corners] for corners, r in g.triangles() if r == "crack"]
+    assert len(tris) == 1
+    zs = sorted(round(p[2], 6) for p in tris[0])
+    assert zs == [round(1.1 - glass.LIFT, 6)] * 2 + [round(1.1 - glass.LIFT + h, 6)]
+
+
+def test_fin_heights_are_above_the_fin_root():
+    """Each corner's height is how far it stands outward of the nearest corner it
+    shares a triangle with: a slab wall's top over its root, 0 at the root, and the
+    window's own tilt along a long root line does not raise either root."""
+    n = (0.0, 0.0, 1.0)
+    # wall 3 mm high on glass tilted 1 in 5 along x (the root line climbs 6 mm over 3 cm)
+    r0, r1 = (0.0, 0.0, 0.0), (0.03, 0.0, 0.006)
+    t0, t1 = (0.0, 0.0, 0.003), (0.03, 0.0, 0.009)
+    heights = glass._fin_heights([(r0, r1, t1), (r0, t1, t0)], n)
+    assert [[round(x, 6) for x in hs] for hs in heights] == [[0.0, 0.0, 0.003], [0.0, 0.003, 0.003]]
+
+
 def test_pieces():
     """Triangles sharing a corner (each coordinate within one 1/4096 m position step)
     are one piece; corners two steps apart, or a corner over another along the

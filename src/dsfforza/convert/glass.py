@@ -230,7 +230,7 @@ class SlotMapper:
 # surface from the converted window's shape and takes the cracks and shards of the
 # host interior's matching window (host_windows), placed on the converted window's
 # rim where the host has them on its own. The crack lines and bright shards are fins
-# standing across the glass (0 to 6 mm outward of the smear), not flat slivers, and
+# and slab walls standing 3 to 5 mm across the glass, not flat slivers, and
 # their vertex normals are their own triangles' facing; both come along with them
 # (research/vehicle-model.md, "Crack and shard fins", "Crack and shard normals").
 INTERIOR_BLOCKS = {
@@ -682,9 +682,10 @@ class InteriorGlass:
         return out
 
     def _host_pane(self, host: HostWindow):
-        """(frame axes, pane, rim) of a host window, framed like a converted
-        window of its kind (SlotMapper: u along x for windscreens and rear
-        windows, along -z for side glass; v down the glass)."""
+        """(u axis, v axis, outward normal, rim, fin heights per overlay triangle)
+        of a host window, framed like a converted window of its kind (SlotMapper:
+        u along x for windscreens and rear windows, along -z for side glass; v
+        down the glass)."""
         if host.s9 not in self._host_panes:
             frames = SlotMapper()
             section = "glasslf" if host.sideways else "glassf"
@@ -694,14 +695,9 @@ class InteriorGlass:
             outward = frames.normal(group)
             items = [(tri[0], (outward,) * 3, tri[2], b"") for tri in host.tris]
             pane = _Pane(items, a_axis, b_axis, outward)
-            # The glass under each spot: the innermost host vertex (smear or layer) per grid cell.
-            floor: dict[tuple[int, int], float] = {}
-            for tri in host.tris:
-                for p in tri[0]:
-                    key = (math.floor(_dot(p, a_axis) / CELL), math.floor(_dot(p, b_axis) / CELL))
-                    floor[key] = min(floor.get(key, math.inf), _dot(p, outward))
+            heights = _fin_heights([tri[0] for tri in host.overlay], outward)
             rim = _Rim(pane) if pane.filled else None
-            self._host_panes[host.s9] = (a_axis, b_axis, outward, rim, floor)
+            self._host_panes[host.s9] = (a_axis, b_axis, outward, rim, heights)
         return self._host_panes[host.s9]
 
     def _overlay(self, pane: _Pane, host: HostWindow, s9) -> list:
@@ -720,12 +716,12 @@ class InteriorGlass:
         vanilla stores on every crack and shard vertex the facing of its own
         triangle, which is the inward side on two thirds of the windscreen
         shards, and the glass shader's lighting, Fresnel and reflection all
-        read it. And each vertex keeps its height above the host's glass
-        (_height): vanilla's crack lines and bright shards are fins standing
-        across the glass, 0 to 6 mm outward of the smear, which lifting every
-        corner onto the glass flattened to lines (research/vehicle-model.md,
-        "Crack and shard fins")."""
-        ha, hb, hn, hrim, floor = self._host_pane(host)
+        read it. And each vertex keeps its height above its fin's root
+        (_fin_heights): vanilla's crack lines and bright shards are fins and slab
+        walls standing 3 to 5 mm across the glass, which lifting every corner
+        onto the glass flattened to lines (research/vehicle-model.md, "Crack and
+        shard fins")."""
+        ha, hb, hn, hrim, fin_heights = self._host_pane(host)
         if hrim is None:
             return []
         rim = _Rim(pane)
@@ -752,8 +748,7 @@ class InteriorGlass:
                 normals = [
                     _turn_normal(m, host_frame, frame, turn, flip) for m in (_host_normals(tri) or _own_normals(tri[0]))
                 ]
-                heights = [_height(p, host_frame, floor) for p in tri[0]]
-                out += self._place(pane, tri, flat_tris[n], g, gp, turn, s9, normals, heights)
+                out += self._place(pane, tri, flat_tris[n], g, gp, turn, s9, normals, fin_heights[n])
         return out
 
     @staticmethod
@@ -780,18 +775,41 @@ class InteriorGlass:
         return [(vertices, interior_block(uvs))]
 
 
-def _height(p, host_frame, floor) -> float:
-    """How far host point p stands outward of the host's glass: of the innermost
-    host vertex (smear or layer) in p's grid cell and its eight neighbours (CELL,
-    1 to 2 cm round p). A fin's root is nearer than that: crack and bright-shard
-    triangles face within about 20 degrees of the glass's plane (|cos| to the
-    window's normal 0.02 to 0.35 at the median on vanilla 147 and 176), so a fin
-    6 mm high leans 2 mm at most; and across 2 cm the glass curves by under
-    0.2 mm (a 1 m radius)."""
-    a, b, n = host_frame
-    i, j = math.floor(_dot(p, a) / CELL), math.floor(_dot(p, b) / CELL)
-    ref = min(floor.get((i + di, j + dj), math.inf) for di in (-1, 0, 1) for dj in (-1, 0, 1))
-    return max(0.0, _dot(p, n) - ref) if ref < math.inf else 0.0
+def _fin_heights(tris, outward) -> list[list[float]]:
+    """How far each corner of tris (host crack and shard triangles, three points
+    each) stands outward (along the window's normal) of its fin's root: of the
+    nearest corner it shares a triangle with, 0 where that corner is not lower.
+
+    Vanilla's crack lines and bright shards are strips standing across the glass
+    (slab walls: the shards are extruded slabs, one thickness per window, 3.0 to
+    5.2 mm on 132, 147, 153, 176, 201 and 286), whose across-glass edge is each
+    triangle's shortest: a top's nearest corner is the root under it, a root's
+    the top over it. That reference is local to the fin, so it holds between
+    sparse vertices and where the window wraps away from its own plane, where
+    the glass under a point is not a host vertex near it (research/vehicle-
+    model.md, "Crack and shard fins"). Corners within one position step are the
+    same vertex (PIECE_STEP, as _pieces)."""
+    keys = [[tuple(round(c / PIECE_STEP) for c in p) for p in pts] for pts in tris]
+    cells: dict[tuple, list[int]] = defaultdict(list)
+    for n, ks in enumerate(keys):
+        for k in ks:
+            cells[k].append(n)
+    out = []
+    for pts, ks in zip(tris, keys):
+        heights = []
+        for p, k in zip(pts, ks):
+            best = None
+            for d in itertools.product((-1, 0, 1), repeat=3):
+                for m in cells.get(tuple(a + b for a, b in zip(k, d)), ()):
+                    for q, kq in zip(tris[m], keys[m]):
+                        if all(abs(a - b) <= 1 for a, b in zip(k, kq)):
+                            continue  # p itself
+                        dist = math.dist(p, q)
+                        if best is None or dist < best[0]:
+                            best = (dist, q)
+            heights.append(max(0.0, _dot(p, outward) - _dot(best[1], outward)) if best else 0.0)
+        out.append(heights)
+    return out
 
 
 def _host_normals(tri):
