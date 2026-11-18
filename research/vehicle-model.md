@@ -480,6 +480,23 @@ windscreen p95 3.9 to 9.3 mm. After: crack 81.7 cm² on the M5 port (147:
 87.5), shard_bright 128.6 (134.8); 911 GT2 115.8 and 363.8; Durango 100.2 and
 344.7; MT900S 80.4 and 369.2.
 
+In game (confirmed-runtime, VM runs `vm1-20261118-231529` master and
+`vm1-20261118-231941` this rule, `-GlassLadder`; IDs 1 M5 2012 on 147, 2
+911 GT2 1995 on 241, 3 Corvette Grand Sport 1996 on 161, 4 MT900S on 162, 5
+Durango on 138, vanilla 147): on master the Durango's crack lines at 0.25
+were a faint trace and its shards at 0.5 almost nothing; with the rule its
+crack lines run in from the A-pillar and its shards show as frosted clusters
+with bright edges along the windscreen's top (observe-76, -78 against master
+-78, -79). The MT900S's top-edge cluster at 0.5 the same (-64 against -65).
+The 911's state-1 crack line was a wide grey band on master (a fin laid
+flat) and is a thin line now (-35), as vanilla 176's (`vm1-20261114-134333`
+observe-72). Vanilla 147's own layers are faint in these VM shots too
+(observe-08 to -10: a hairline at 0.25, clusters at the top corners at 0.5
+and 1.0). The M5 port's layers, at its windscreen's top edge like 147's,
+stay above the probe's cockpit frame, so the M5 shows no change there; its
+offline numbers are above. The Corvette's host 161 has no windscreen layers:
+unchanged.
+
 **Crack and shard normals** (confirmed-static). Vanilla stores on every
 crack and shard vertex the facing of its own triangle: over 144 vanilla
 interiors (`fleetnormals.py`), the stored normal (semantic 5, decoded as
