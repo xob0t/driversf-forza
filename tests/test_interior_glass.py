@@ -162,6 +162,27 @@ def test_a_crack_line_moves_as_one_piece():
     assert abs(math.dist(*ends) - math.dist(line[0], line[-1])) < 1e-6  # same length
 
 
+def test_shards_keep_the_host_facing():
+    """A host shard facing into the cabin (-z on a windscreen facing +z) and one facing
+    out keep their own facing on the converted window, as normals: vanilla stores each
+    crack and shard vertex's own triangle facing, not the glass's outward normal."""
+    z = 1.0
+    inward = ((0.68, 0.68, z), (0.68, 0.66, z), (0.66, 0.68, z))  # winding faces -z
+    outward = ((-0.68, 0.68, z), (-0.68, 0.66, z), (-0.66, 0.68, z))  # faces +z
+    overlay = [(inward, SHARD_UV, (0.5,) * 3), (outward, SHARD_UV, (0.5,) * 3, ((0.0, 0.0, 1.0),) * 3)]
+    host = [_host_window((0, 5), 1.4, 0.7, z, overlay)]
+    g = _windscreen(1.0, 0.5, 1.1, host)
+    tris = [corners for corners, r in g.triangles() if r != "surface"]
+    assert len(tris) == 2
+    by_side = {corners[0][0][0] > 0: corners for corners in tris}
+    for left, sign in ((True, -1.0), (False, 1.0)):
+        for corner in by_side[left]:
+            assert abs(corner[2][2] - sign) < 1e-6, (left, corner[2])
+        pts = [c[0] for c in by_side[left]]
+        facing = glass._cross(glass._sub(pts[1], pts[0]), glass._sub(pts[2], pts[0]))
+        assert facing[2] * sign > 0  # the winding came along too: normal and facing agree
+
+
 def test_pieces():
     """Triangles sharing a corner (each coordinate within one 1/4096 m position step)
     are one piece; corners two steps apart, or a corner over another along the
