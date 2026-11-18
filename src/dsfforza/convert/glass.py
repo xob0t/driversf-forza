@@ -229,7 +229,10 @@ class SlotMapper:
 # 354 and 659 shard triangles, 3 mm wide at the median). InteriorGlass builds the
 # surface from the converted window's shape and takes the cracks and shards of the
 # host interior's matching window (host_windows), placed on the converted window's
-# rim where the host has them on its own.
+# rim where the host has them on its own. The crack lines and bright shards are fins
+# standing across the glass (0 to 6 mm outward of the smear), not flat slivers, and
+# their vertex normals are their own triangles' facing; both come along with them
+# (research/vehicle-model.md, "Crack and shard fins", "Crack and shard normals").
 INTERIOR_BLOCKS = {
     "surface": (0.0, 0.125, 0.0, 0.0625),
     "crack": (0.0, 0.0625, 0.125, 0.25),

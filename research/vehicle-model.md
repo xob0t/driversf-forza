@@ -429,6 +429,73 @@ windscreen in state 3 on the port and on vanilla 278 alike (VM run
 windscreen centre is clear there. The owner's game runs DLSS 5
 (`dsf_enhanced.ini` `[DLSS5] Helper=1`), which the VM guests have off. Crack layers at state 0 stay hidden (texkill; `ws3.png` state 0).
 
+**Crack and shard fins** (confirmed-static, 2026-11-18; the in-game result
+below). Owner's report on the installed master 53b1a6c5: the BMW M5 2012
+port (spool 35, `forza.fh1.BMW_M5_12`, host 147), damaged, from the cockpit:
+the crack and shard layers draw almost fully transparent, only faint shard
+outlines, where vanilla cars show white crack lines and frosted shards.
+
+What the port's layers share with vanilla's (`out/i459c/cmp.py`, `attrs.py`
+in the fix worktree): the material (`GLOBAL_Glass_LOD5`, shared SSIC, so the
+same texture `00122b77dffa1227`, sampler and render states:
+`rs_alphablendenable` 1, `rs_zwriteenable` 0, `rs_cullmode` 0, `SortMode` 1),
+the blocks and UVs (copied), the s9 records ((0, 5), (0, 20), (8, 9),
+(10, 11), as on 147), s12 = position, the sky terms (the glass programs 61
+and 63 don't read them: their vertex shader takes only position xyz). The
+vertex shader reads per vertex position, UV0, s9, the normal (semantic 5)
+and s12; the pixel shader `texkill`s blue < 0.01, takes alpha
+max(texel blue, specular x green) and lights the texel with the normal
+(diffuse N.L, ambient by N, Fresnel 1 - N.V, the reflection vector).
+So the texture is not the cause; the geometry and the normal are.
+
+Vanilla's crack lines and bright shards are fins standing across the glass,
+not flat slivers on it. Of each window's crack and shard_bright triangles,
+all face within about 20 degrees of the glass's plane: |cos| between the
+triangle's facing and the window's normal at the median 0.02 to 0.35 on 147
+and 176 (`tilt.py`; shard_dull lies flat, |cos| about 1, but on the 147
+windscreen). They stand 0 to 6 mm outward of the window's smear surface on
+flat windows (side and rear: p5 about 0, median 1 to 4 mm, p95 4 to 6 mm;
+`depth.py`; on windscreens, where the smear is only a frame, up to 17 mm by
+the rule below). A crack line seen from the eye is the fin's face at a
+grazing angle: a thin line.
+
+`InteriorGlass._place` lifted every corner onto the converted glass (LIFT
+inside it), so a fin's root and top landed on the same point of the glass
+and the fin collapsed into a line of no area. Area of the layers, vanilla
+host against the master port (`areas.py`): crack 87.5 cm² on 147 against
+13.9 on the M5 port; shard_bright 134.8 against 23.0; on the 911 GT2 (host
+241) 123.8 / 24.5 and 395.9 / 43.1; Durango (138) 112.3 / 13.3 and 356.5 /
+28.7; MT900S (162) 152.8 / 16.6 and 671.5 / 155.6. Flat shard_dull kept its
+area (1,318 / 995 on the M5). What was left drew as the faint outlines in
+the owner's shot.
+
+Rule (`glass._height`): each host vertex keeps its height above the host's
+glass, along the window's outward normal: its distance outward of the
+innermost host vertex (smear or layer) in its 1 cm grid cell and the eight
+round it. A fin's root is within that (6 mm high at about 20 degrees: 2 mm
+off), and the glass curves under 0.2 mm across 2 cm. The placed corner goes
+that far outward of where the lift puts it. Heights on vanilla windows by
+this rule (`heights.py`, 147, 176, 212, 278): side and rear p95 3.3 to 6.1 mm,
+windscreen p95 3.9 to 9.3 mm. After: crack 81.7 cm² on the M5 port (147:
+87.5), shard_bright 128.6 (134.8); 911 GT2 115.8 and 363.8; Durango 100.2 and
+344.7; MT900S 80.4 and 369.2.
+
+**Crack and shard normals** (confirmed-static). Vanilla stores on every
+crack and shard vertex the facing of its own triangle: over 144 vanilla
+interiors (`fleetnormals.py`), the stored normal (semantic 5, decoded as
+the vertex shader does) is within 0.9 of the triangle's winding normal on
+99.3% of crack vertices, 97.9% of shard_dull and 94.0% of shard_bright. On
+the 147 windscreen two thirds of the shard_dull triangles face into the
+cabin. The master port wrote the converted glass's own normal on all of
+them (the window's outward side; agreement with the facing 0.15 to 0.68 per
+layer on the M5, 0.00 to 0.41 on the others). Rule (`glass._turn_normal`):
+each vertex keeps the host's normal, its components along the host
+window's frame turned with its piece and put on the converted window's frame
+(reversed with the facing if the frames' handedness differs; host
+triangles without normals use their own facing). After: crack 0.87 to 0.98,
+shard_bright 0.55 to 0.97, shard_dull 0.57 to 0.95 (vanilla hosts 0.57 to
+1.00).
+
 A cockpit carbin can name a window glass<suffix> where the main carbin says
 lexan<suffix> (the MC12: cockpit glassF/LF/RF, body lexanF/LF/RF).
 `interior_glass_skin` gives the cockpit pane the lexan section's panel binding
