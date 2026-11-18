@@ -455,9 +455,13 @@ triangle's facing and the window's normal at the median 0.02 to 0.35 on 147
 and 176 (`tilt.py`; shard_dull lies flat, |cos| about 1, but on the 147
 windscreen). They stand 0 to 6 mm outward of the window's smear surface on
 flat windows (side and rear: p5 about 0, median 1 to 4 mm, p95 4 to 6 mm;
-`depth.py`; on windscreens, where the smear is only a frame, up to 17 mm by
-the rule below). A crack line seen from the eye is the fin's face at a
-grazing angle: a thin line.
+`depth.py`). The bright shards are extruded slabs: their walls' across-glass
+edge is the shortest edge of each shard_bright triangle and one length per
+window (median 3.1 mm on 153, 3.0 on 132, 5.2 on 201, 4.1 on 286, 3.2 on
+147, 3.1 on 176, p5 to p95 within 0.6 mm; `tilt153.py` in `out/i459d`), and
+shard_dull is the slabs' bottom face (on the 147 windscreen, which has no
+shard_bright, the dull triangles are the walls). A crack line seen from the
+eye is the fin's face at a grazing angle: a thin line.
 
 `InteriorGlass._place` lifted every corner onto the converted glass (LIFT
 inside it), so a fin's root and top landed on the same point of the glass
@@ -469,16 +473,57 @@ host against the master port (`areas.py`): crack 87.5 cm² on 147 against
 area (1,318 / 995 on the M5). What was left drew as the faint outlines in
 the owner's shot.
 
-Rule (`glass._height`): each host vertex keeps its height above the host's
-glass, along the window's outward normal: its distance outward of the
-innermost host vertex (smear or layer) in its 1 cm grid cell and the eight
-round it. A fin's root is within that (6 mm high at about 20 degrees: 2 mm
-off), and the glass curves under 0.2 mm across 2 cm. The placed corner goes
-that far outward of where the lift puts it. Heights on vanilla windows by
-this rule (`heights.py`, 147, 176, 212, 278): side and rear p95 3.3 to 6.1 mm,
-windscreen p95 3.9 to 9.3 mm. After: crack 81.7 cm² on the M5 port (147:
-87.5), shard_bright 128.6 (134.8); 911 GT2 115.8 and 363.8; Durango 100.2 and
-344.7; MT900S 80.4 and 369.2.
+Rule (`glass._fin_heights`): each host vertex keeps its height above its
+fin's root, along the window's outward normal: how far it stands outward of
+the nearest corner it shares a triangle with (0 where that corner is not
+lower). A wall's top has its root as its nearest corner, a root its top.
+The placed corner goes that far outward of where the lift puts it.
+
+The first rule (58977a25) took the innermost host vertex in the vertex's
+1 cm grid cell and the eight round it. Where no lower vertex lay that close
+the vertex was its own floor and kept no height (CodeRabbit on #625; 39,549
+of 541,737 crack and shard_bright vertices on vanilla IDs 1 to 300 are their
+own floor while their triangle's corners have a lower floor). And the
+reference was not the glass under the point: across 1 to 2 cm it took the
+glass's slope wherever the window tilts away from its frame's plane. Some
+windscreens wrap round the pillars (the smear's facing has |cos| to the
+frame's normal 0.10 at p5 on 201, 0.30 on 153, 0.33 on 132), and there a
+wall's root and the glass 2 cm along it differ by more than the wall.
+
+Check (`survey4.py` in `out/i459d`, 140 vanilla interiors, 518 windows with
+layers, 541,737 crack and shard_bright vertices): the local glass normal at
+a vertex is the facing of the nearest flat-layer triangle (smear or
+shard_dull); a vertex is a top when an edge of its crack or bright-shard
+triangles, steeper than 45 degrees to that local glass (edge angles are
+bimodal, the trough at 35 to 50 degrees: `edges.py`), drops from it by more
+than 0.5 mm, and its true height is that edge's drop along the window's
+normal; otherwise it is a root, at 0. 267,965 tops, 273,772 roots:
+
+| | grid floor (58977a25) | fin root |
+|---|---|---|
+| off by > 0.5 mm | 237,201 (44%), p50 1.5, p95 7.8, max 170 mm | 5,651 (1.0%), p50 2.8, p95 4.6, max 24 mm |
+| roots raised > 0.5 mm | 119,376, p95 7.7 mm | 2,954, p50 2.5, p95 4.0 mm |
+| tops left at 0 | 136 | 2,016 (0.75%), losing p50 3.1, p95 4.8 mm |
+| over 10 mm | 10,831 (132, 153, 284, 201, 205, 286 windscreens) | 15 |
+
+Heights (p50 / p95 / max, mm), fin root against the check: crack 0.0 / 4.2
+/ 16.8 (check 0.0 / 4.2 / 10.5), shard_bright 0.0 / 3.5 / 23.6 (0.0 / 3.6 /
+9.2), shard_dull 0.0 / 0.2 / 50.3; grid floor crack 2.1 / 4.7 / 45.3,
+shard_bright 2.9 / 6.9 / 172.0, shard_dull 0.5 / 5.2 / 142.9.
+
+What the fin root still misses. Tops left at 0 are the tips of narrow
+shards whose top edge is shorter than the slab's wall (on 200's side windows
+the wall is 4.5 mm and the top edge 3.5 to 4 mm: the top's nearest corner is
+the other top); 33 to 45 per window on 200, 203 and 258's side glass, at
+most 28 elsewhere. The steepest edge instead of the nearest corner leaves
+1,126 tops at 0 but is off on 7,491 vertices and puts 2,174 over 10 mm on
+the wrapping windscreens: along glass edge-on to the frame's normal an edge
+along the glass is the steepest. Raised roots and the 15 over 10 mm are corners whose
+nearest corner is far along tilted glass: 149's windscreen at the A-pillar
+(a shard corner 25 mm from its nearest, the glass there nearly edge-on to
+the frame: 23.6 mm), a 181 mm crack on 128 (16.8 mm, 5 degrees of tilt),
+201's cracks (10.5 mm, which is their true height). The error is at most the
+nearest corner's distance times the glass's tilt there.
 
 In game (confirmed-runtime, VM runs `vm1-20261118-231529` master and
 `vm1-20261118-231941` this rule, `-GlassLadder`; IDs 1 M5 2012 on 147, 2
