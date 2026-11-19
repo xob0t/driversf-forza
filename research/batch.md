@@ -545,9 +545,16 @@ volume allows it, so an earlier build of 573 cars costs no second 2 GB.
 **What decides.** Each worker writes `work/<media>.fp.json`
 (`src/dsfforza/build/fingerprint.py`) next to the chunk:
 
-- the job: car, game, disc source, spool ID, the requested `--port`
-  options, the vanilla archive, cache and disc paths (links and junctions
-  resolved, so another worktree with the same `out/cache` matches);
+- the job: car, game, disc source (by its disc, `disc:FH1:1`, not its file
+  name), spool ID, the requested `--port` options and the vanilla archive
+  (by digest when it moved). The cache and game folders are recorded to place
+  the files under them; a check moves them to the build's own
+  (`fingerprint.move_roots`), so a cache or a game elsewhere with the same
+  files matches. Neither the list of disc images given nor the car's year and
+  roster games are in it (see "What a car's fingerprint holds");
+- its discovery, as questions and answers: which discs of a game the images
+  hold (`forza_roster.discs_of`, `first_disc`, `game_discs`) and which FM4
+  DLC packs are found (`fm4_dlc.packages`);
 - Python and numpy versions;
 - every file the worker opened for reading, from an audit hook on `open`
   and `sqlite3.connect`, with its SHA-256. Files over 64 MiB (the vanilla
@@ -572,7 +579,66 @@ fingerprint is unchanged too, since a fix might make that try work.
 
 The spool ID is part of the job. The chunk's UIDs are seeded from it, so a
 car whose ID moved (a car added before it in the list) is built again. Keep
-the list order, or add new cars at the end.
+the list order, or add new cars at the end. A listed car that can't be built
+keeps its ID slot (see below), so the discs and packs given don't move IDs.
+
+#### What a car's fingerprint holds
+
+Only what decides the car's bytes (fingerprint format 2, #588):
+
+- **The spool ID stays.** The conversion writes it into more than the four
+  ID fields `clone_vehicle.patch_ids` rewrites (VSVH, VO3D, SPID, UPVH; the
+  car manager stamps its own ID there at install). It seeds the car's
+  resource UIDs (`port_car.build_car`: `uid_prefix("renew"/"geometry", name,
+  spool_id)`) and is the namespace of the car's Wwise IDs
+  (`engine_sound.fresh_ids`: `spool_id << 22 | hash`). That namespace keeps
+  two cars on one template bank apart, by construction, with no check at
+  merge. A chunk made under one ID is not the same car under another, so the
+  store can't hand a car to another ID by patching it. Making the chunk
+  ID-neutral needs another way to keep the Wwise IDs apart (#635).
+- **IDs don't depend on the discs and packs given.** `assign_ids` gives a
+  listed car that can't be built (not on the discs given, no usable host) no
+  ID but uses up the one it would take without a garage group. Under
+  `--id-policy asi` (dsff install) that is the ID it gets once it can be
+  built. `--fm4-dlc-cars` holds a placeholder for each car of
+  `tools/batches/fm4-dlc.txt` whose pack isn't there (`dlc_slots`; listed
+  nowhere). So an install with the FH1 disc and, later, the FM4 discs too
+  gives the FH1 cars the same IDs. Under `--id-policy garage` a car's low
+  garage ID still depends on the buildable cars before it, and an unnamed
+  roster selection (no `--list`/`--car`) drops the cars it can't build.
+- **Discs by identity, discovery by its answer.** A car's worker
+  (`Recorder(queries=True)`) records each disc lookup as a question
+  (`discs FH1`, `discs *`, `dlc`) and answers it in `finish`: the discs of that
+  game among the job's images (`disc:<game>:<n>`, by default.xex, any file
+  name), or the paths of the packs found. The reads made while answering
+  (every image's header, each pack's header, the listings of `assets\`) are
+  not inputs. What the car then reads from a disc is keyed by the disc, with
+  the image's digest (size, mtime and its first and last 4 MiB, which a
+  renamed or moved image keeps). Before, every car recorded every image in
+  `assets\`, the listing of `assets\` and of each pack folder, and the job
+  held the list of images given, so adding a disc rebuilt every car. Now an
+  FH1 car (BMW_M3E30_91) asks `discs FH1` and `dlc`, and reads `disc:FH1:1`.
+  An FH1 car whose engine tuning is on FM4's discs asks `discs FM4` too, and
+  is built again when they come.
+- **Not the year and the roster games.** The worker puts them only in its
+  report's manifest entry (`games_available`, the display name). They follow
+  the discs given (with the FM4 discs, BMW_M3E30_91 is on "FM4,FH1"), so a
+  reused car gets this job's entry fields (`port_batch.refresh_entry`: name,
+  year, games, the disc image's file name, the cache folder).
+- **Left:** every car asks `dlc`, because `host_select.default_gamedbs` and
+  `handling_dsf.default_dbs` work out FM4's gamedb path (merged with the packs
+  or not) before they know they need it. So adding a DLC pack rebuilds every
+  car, not just the cars that read FM4's gamedb (#634).
+
+Measured 2026-11-19 (`--jobs 2`, `--id-policy asi`, `--no-store`, a list of 3 FH1 and 3
+FM4 cars interleaved):
+
+- with the FH1 disc only: 3 cars at IDs 1, 3 and 5 (2, 4 and 6 held for the FM4 cars), 92 s;
+- the two FM4 discs added, `--reuse` the first: 3 reused, the 3 FM4 cars converted at 2,
+  4 and 6, 106 s; `--verify-reuse 2`: 2 of 2 identical. Before this change all 6 were
+  converted (the IDs moved, and `isos` was in every job);
+- FH1's image renamed (`my horizon copy.iso`, a hard link), `--reuse` the second: 6 of 6
+  reused; `--verify-reuse 3` on the FH1 cars: 3 of 3 identical.
 
 **What it can't see.** A file whose absence matters but that sits in a
 folder nobody listed. A `stat()` without an open. Code run in the parent
@@ -746,13 +812,20 @@ checkout and off in a player's copy (no `.git`) unless `DSFFORZA_STORE` names a 
   holds (as an earlier build's pack record).
 - **Matching** is `--reuse`'s (`fingerprint.Checker`), after the store, for the cars no
   `--reuse` build has: the same job (spool ID included), environment, inputs and code.
-  Two things made a car of another worktree not match:
+  Three things made a car of another worktree not match:
   - files of the worktree itself: each has its own `out\db\<game>_gamedb.slt` (and
     `out\lua-src`). A fingerprint now records its checkout (`"repo"`; for older ones the
     store takes the checkout its build folder is in), and `fingerprint.relocate` moves the
-    paths under it to this checkout before the check. `out\cache`, `out\vanilla` and
-    `assets\` are junctions to the main checkout, resolved when recorded, so they match
-    as they are.
+    paths under it to this checkout before the check.
+  - the junctions (#588). In a worktree `out\cache`, `out\vanilla` and `assets\` are
+    junctions to the main checkout, resolved when recorded; in the main checkout they are
+    real folders. An entry the main checkout made named its cache under the main checkout,
+    `relocate` moved that to `<worktree>\out\cache`, and the worktree's own job key (resolved)
+    said `<main>\out\cache`: no car of the main checkout's builds matched in a worktree
+    (`job: cache, isos`, 721 of 721 on the v0.3.0 release branch). `relocate` now moves a
+    path to what this checkout's recorder records for it (resolved through its junctions,
+    one or two folders down), and the job's cache and disc paths are no longer compared as
+    paths (see "What a car's fingerprint holds").
   - a DLC car's pack file: the job recorded `source.package` as given, under the
     worktree's `assets\` junction, so DLC cars never matched across worktrees (#501's
     worker). `job_key` now records it resolved (`norm`), and the check resolves the
@@ -783,6 +856,11 @@ Measured 2026-11-05:
   command in worktree b: 3 of 3 cars, 3 of 3 pictures and 10 of 10 images from the store,
   27 s. `dngvehicles.sp`, `gui/gui.sp`, `Fonts.fchunk`, `hud.lua`, `dngvehicles.lua` and
   every package member byte-identical to worktree a's fresh build.
+- 2026-11-19, fingerprint format 2: the 6 cars of "What a car's fingerprint holds" seeded
+  from one worktree, then built in a second worktree at the same commit (set up with
+  `worktree-setup.ps1`): 6 of 6 from the store, 14 s; with `--verify-reuse 2`: 2 of 2
+  identical. Format 2 makes every earlier entry miss once (2596 entries, all 721 roster
+  cars, on this PC).
 
 ### Which cars a change affects
 

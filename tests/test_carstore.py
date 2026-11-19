@@ -133,6 +133,32 @@ def test_paths_of_another_checkout_are_relocated():
         assert fp_b["repo"] == rb and carstore.entry_id(fp, None, ra) == carstore.entry_id(fp_b, None, rb)
 
 
+def test_relocate_moves_the_dlc_answer_paths():
+    """The "dlc" discovery answer is pack paths: they move with the checkout, disc answers
+    (tokens) stay (CodeRabbit on #636)."""
+    old, new = fingerprint.norm(Path("/wt-a")), fingerprint.norm(Path("/wt-b"))
+    pack = old + os.sep + "assets" + os.sep + "pack"
+    fp = {"repo": old, "job": {}, "files": {}, "dirs": {}, "queries": {"dlc": [pack], "discs FH1": ["disc:FH1:1"]}}
+    moved = fingerprint.relocate(fp, old, new)
+    assert moved["queries"]["dlc"] == [fingerprint._resolve(new, "assets") + os.sep + "pack"]
+    assert moved["queries"]["discs FH1"] == ["disc:FH1:1"]
+
+
+def test_a_nested_root_that_did_not_move_keeps_its_paths():
+    """With the cache inside the game folder unchanged and the game folder moved, a cache
+    input stays at the cache's path; it doesn't take the parent's move (CodeRabbit on #636)."""
+    g1, g2 = fingerprint.norm(Path("/game1")), fingerprint.norm(Path("/game2"))
+    cache = g1 + os.sep + "cache"
+    fp = {
+        "job": {"cache": cache, "game_dir": g1, "dsf": None},
+        "files": {cache + os.sep + "x.bin": "d", g1 + os.sep + "y.bin": "e"},
+        "dirs": {},
+    }
+    moved = fingerprint.move_roots(fp, {"cache": cache, "game_dir": g2})
+    assert set(moved["files"]) == {cache + os.sep + "x.bin", g2 + os.sep + "y.bin"}
+    assert fingerprint.move_roots(fp, {"cache": cache, "game_dir": g1}) is fp
+
+
 def test_a_dlc_pack_path_is_recorded_through_its_junction():
     """A DLC car's job names its pack file under the worktree's assets\\ (a junction to the
     main checkout's): recorded resolved, so another worktree's build matches (#501)."""
@@ -160,6 +186,57 @@ def test_a_dlc_pack_path_is_recorded_through_its_junction():
         old = {"format": fingerprint.FORMAT, "complete": True, "job": {**key, "source": job["source"]}}
         old.update(env=fingerprint.environment(), files={}, dirs={}, code={})
         assert fingerprint.Checker().check(old, job) is None
+
+
+def _junction(link: Path, target: Path) -> bool:
+    """`link` as a junction (Windows) or symlink to `target`; False where neither can be made."""
+    import subprocess
+
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
+def test_an_entry_the_main_checkout_made_holds_in_a_worktree():
+    """#588: a worktree's out/cache is a junction to the main checkout's
+    (tools/worktree-setup.ps1). An entry recorded in the main checkout names its cache files
+    under the main checkout; relocated to the worktree they stay there, as the worktree's own
+    recorder writes them, and its own out/db moves to the worktree's."""
+    with tempfile.TemporaryDirectory() as tmp:
+        main, wt = Path(tmp) / "main", Path(tmp) / "wt"
+        for repo in (main, wt):
+            (repo / "out" / "db").mkdir(parents=True)
+            (repo / "out" / "db" / "fh1_gamedb.slt").write_bytes(b"gamedb")
+        (main / "out" / "cache" / "fh1").mkdir(parents=True)
+        (main / "out" / "cache" / "fh1" / "car.xds").write_bytes(b"extracted")
+        if not _junction(wt / "out" / "cache", main / "out" / "cache"):
+            return
+        rm, rw = fingerprint.norm(main), fingerprint.norm(wt)
+        job_main = _job(Path(tmp), cache=str(main / "out" / "cache"))  # the game and discs outside
+        recorder = fingerprint.Recorder([main / "built"]).start()
+        try:
+            (main / "out" / "cache" / "fh1" / "car.xds").read_bytes()
+            (main / "out" / "db" / "fh1_gamedb.slt").read_bytes()
+        finally:
+            fp = recorder.finish(job_main)
+        fp["repo"] = rm
+        moved = fingerprint.relocate(fp, rm, rw)
+        cache_file = fingerprint.norm(main / "out" / "cache" / "fh1" / "car.xds")
+        assert cache_file in moved["files"]  # through the junction: the main checkout's file
+        assert fingerprint.norm(wt / "out" / "db" / "fh1_gamedb.slt") in moved["files"]
+        assert (
+            moved["job"]["cache"] == fingerprint.norm(wt / "out" / "cache") == fingerprint.norm(main / "out" / "cache")
+        )
+        job_wt = {**job_main, "cache": str(wt / "out" / "cache")}  # what the worktree's build passes
+        assert fingerprint.Checker().check(moved, job_wt) is None
+        (wt / "out" / "db" / "fh1_gamedb.slt").write_bytes(b"the worktree's own gamedb differs")
+        assert fingerprint.Checker().check(moved, job_wt).startswith("input ")
 
 
 def test_the_entries_used_longest_ago_go_first():

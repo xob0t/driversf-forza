@@ -129,7 +129,7 @@ def game_disc(game: str, iso: Path | None = None, isos: list[Path] | None = None
 
     game = game.upper()
     if iso is None:
-        found = forza_roster.game_discs(isos).get(game)
+        found = forza_roster.first_disc(isos, game)
         if found is None:
             where = "the given disc images" if isos is not None else f"the disc images in {REPO / 'assets'}"
             raise LookupError(f"no {game} disc among {where}")

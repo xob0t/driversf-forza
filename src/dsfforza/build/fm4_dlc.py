@@ -58,11 +58,11 @@ def disable() -> None:
 def packages(root: Path | None = None) -> list:
     """The FM4 DLC packs the build uses: one package per pack, from assets/ (or `root`), in
     path order; none when turned off (DSFF_FM4_DLC=0)."""
-    if not enabled():
-        return []
     from dsfforza.build import forza_roster
 
-    return forza_roster.unique_packages(forza_roster.dlc_packages(root))
+    # A car's fingerprint keeps the packs found, none when turned off (fingerprint.answer).
+    with forza_roster.discovery("dlc"):
+        return forza_roster.unique_packages(forza_roster.dlc_packages(root)) if enabled() else []
 
 
 def key(disc: Path, packs: list) -> str:

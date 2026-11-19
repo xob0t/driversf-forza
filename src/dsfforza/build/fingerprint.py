@@ -17,8 +17,17 @@ A worker records, while it converts one car:
   module-level names its executed code mentions (a constant used by a function the
   car ran), and the top level of every package module it had loaded.
 
+A car's worker also records discovery as a question and its answer, not as the reads it
+took (Recorder(queries=True), research/batch.md "What a car's fingerprint holds"): which
+disc images of a game the job's images hold (forza_roster.discs_of, identified by their
+default.xex) and which FM4 DLC packs are under assets/ (fm4_dlc.packages). The reads
+made while answering (every image's header, every pack's, the folders listed) are not
+inputs; what the car then read from a disc is, keyed by the disc ("disc:FH1:1"), not by
+the image's file name. So a disc image added for other cars, or a disc renamed or moved,
+changes no car that didn't ask for that game's discs.
+
 `check` compares a stored fingerprint with the current files and sources; a car is
-reusable only when every recorded input and unit is unchanged.
+reusable only when every recorded input, answer and unit is unchanged.
 """
 
 from __future__ import annotations
@@ -34,8 +43,12 @@ from pathlib import Path
 
 import dsfforza
 
-FORMAT = 1
+# 2: discs by identity, discovery answers ("queries"), the job without its disc list and
+# paths (#588); a format-1 fingerprint is not reused.
+FORMAT = 2
 BIG = 64 << 20  # files above this get a partial digest
+QUERY_EVENT = "dsfforza.discovery"  # sys.audit(QUERY_EVENT, kind, what, begin): forza_roster.discovery
+DISC = "disc:"  # a disc's key in a fingerprint's files: disc:<game>:<disc number>
 EDGE = 4 << 20
 PACKAGE = Path(dsfforza.__file__).resolve().parent
 # module_units of every source text met, by its SHA-256 (CodeUnits): a worker would parse
@@ -280,13 +293,16 @@ def combine(a: dict, b: dict) -> dict:
     code = {m: dict(u) for m, u in a.get("code", {}).items()}
     for module, units in b.get("code", {}).items():
         code.setdefault(module, {}).update(units)
-    return {
+    out = {
         **a,
         "complete": bool(a.get("complete")) and bool(b.get("complete")),
         "files": dict(sorted({**a.get("files", {}), **b.get("files", {})}.items())),
         "dirs": dict(sorted({**a.get("dirs", {}), **b.get("dirs", {})}.items())),
         "code": {m: dict(sorted(code[m].items())) for m in sorted(code)},
     }
+    if "queries" in a or "queries" in b:
+        out["queries"] = dict(sorted({**a.get("queries", {}), **b.get("queries", {})}.items()))
+    return out
 
 
 # --- recording in a worker ----------------------------------------------------------------
@@ -309,9 +325,11 @@ def _unrecorded_folders() -> tuple[str, ...]:
 
 
 class Recorder:
-    """Records a worker's reads and executed code from start() on."""
+    """Records a worker's reads and executed code from start() on. With `queries` (a car's
+    worker), discovery (forza_roster.discovery) is recorded as its question, answered in
+    finish(), and the files and folders read while answering are not recorded."""
 
-    def __init__(self, outputs: list[Path] | None = None):
+    def __init__(self, outputs: list[Path] | None = None, *, queries: bool = False):
         self.opened: list = []  # (path, mode, flags) as the audit hook saw them
         self.listed: list = []
         self.codes: set = set()
@@ -319,6 +337,8 @@ class Recorder:
         self.tool = None
         self.tree = None
         self.active = False
+        self.queries: set[tuple[str, str]] | None = set() if queries else None
+        self.quiet = 0  # discovery calls under way (their reads aren't inputs)
 
     def start(self) -> Recorder:
         self.tree = package_hashes()
@@ -338,6 +358,15 @@ class Recorder:
     def _audit(self, event: str, args) -> None:
         # Keep this cheap and free of audited calls: just remember the raw arguments.
         if not self.active:  # an audit hook can't be removed: after finish() it ignores all
+            return
+        if event == QUERY_EVENT:
+            if self.queries is not None:
+                kind, what, begin = args
+                self.quiet += 1 if begin else -1
+                if begin:
+                    self.queries.add((kind, what))
+            return
+        if self.quiet > 0:
             return
         if event == "open":
             self.opened.append(args)
@@ -481,77 +510,203 @@ class Recorder:
                 complete = False
                 continue
             code_fp[module] = {unit: table[unit] for unit in sorted(wanted[module]) if unit in table}
-        return {
+        tokens = disc_tokens(job.get("isos") or [])  # a car's disc images by their disc
+        out = {
             "format": FORMAT,
             "complete": complete,
             "repo": norm(dsfforza.REPO),  # the checkout: its own files are relocated (relocate)
-            "job": job_key(job),
+            "job": job_key(job, tokens),
             "env": environment(),
-            "files": {p: file_digest(p) for p in sorted(files)},
+            "files": {tokens.get(p, p): file_digest(p) for p in sorted(files)},
             "dirs": {p: dir_digest(p) for p in sorted(dirs)},
             "code": code_fp,
         }
+        if self.queries is not None:
+            out["queries"] = {name: answer(name, tokens) for name in sorted(query_name(*q) for q in self.queries)}
+        return out
 
 
 # --- the job and environment ------------------------------------------------------------
 
-JOB_FIELDS = ("media", "game", "year", "games", "source", "spool_id")
+# The job's fields that decide the car's bytes. spool_id stays: the conversion writes it
+# into more than the four ID fields patch_ids rewrites (clone_vehicle.ID_FIELDS). It
+# seeds the car's resource UIDs (port_car.build_car: uid_prefix("renew"/"geometry",
+# name, spool_id)) and is the namespace of its Wwise IDs (engine_sound.fresh_ids: ID =
+# spool_id << 22 | hash, which keeps two cars on one template bank apart). A car built
+# under one ID is a different chunk from the same car under another. Not the car's year
+# and the games it is on (the roster's, which depend on the discs given): the worker puts
+# them only in its report's manifest entry, and a reused car gets this job's
+# (port_batch.refresh_entry).
+JOB_FIELDS = ("media", "game", "source", "spool_id")
+# Paths kept in the key to place the recorded files, not compared: the files they hold
+# are inputs by content. cache and game_dir are roots a check moves to the job's own
+# (Checker.check); the vanilla archive counts by digest (Checker.moved).
 JOB_PATHS = ("dsf", "game_dir", "cache")
+JOB_COMPARED = (*JOB_FIELDS, "options", "dsf")
+ROOTS = ("cache", "game_dir")
 
 
-def job_key(job: dict) -> dict:
-    """The parts of a port_batch job that decide the car's output (not where it goes)."""
+def job_key(job: dict, tokens: dict[str, str] | None = None) -> dict:
+    """The parts of a port_batch job that decide the car's output (not where it goes),
+    and its paths (JOB_PATHS). Not the disc images given: the car's discovery answers say
+    which it asked for (Recorder queries). `tokens`: disc_tokens of the job's images."""
     out = {k: job.get(k) for k in JOB_FIELDS}
     out["options"] = list(job.get("requested_options", job.get("port_options", [])))
     for k in JOB_PATHS:
         out[k] = norm(job[k]) if job.get(k) else None
-    out["isos"] = [norm(p) for p in job.get("isos", [])]
-    out["source"] = _source_key(out["source"])
+    if tokens is None:
+        tokens = disc_tokens(job.get("isos") or []) if (job.get("source") or {}).get("iso") else {}
+    out["source"] = _source_key(out["source"], tokens)
     return out
 
 
-def _source_key(source: dict | None) -> dict:
-    """A job's car source with its disc image and DLC pack paths as recorded (norm): a pack
-    under the worktree's assets junction is the main checkout's file in every worktree.
-    A pack inside a disc image (content/...) is a path in the image and stays."""
+def _source_key(source: dict | None, tokens: dict[str, str] | None = None) -> dict:
+    """A job's car source with its disc image as its disc (disc_tokens; any file name) and
+    its DLC pack path as recorded (norm): a pack under the worktree's assets junction is
+    the main checkout's file in every worktree. A pack inside a disc image (content/...)
+    is a path in the image and stays."""
     source = dict(source or {})
     for key in ("iso", "package"):
         value = source.get(key)
-        if value and Path(value).is_absolute():
+        if value and not value.startswith(DISC) and Path(value).is_absolute():
             source[key] = norm(value)
+    if source.get("iso") in (tokens or {}):
+        source["iso"] = tokens[source["iso"]]
     return source
+
+
+@functools.cache
+def _identified(path: str, _size: int, _mtime: int) -> tuple[str | None, int]:
+    """(game, disc number) of an image; kept by its size and time stamp (a file rewritten in place
+    is identified again)."""
+    from dsfforza.build import forza_roster
+
+    disc = forza_roster.identify(Path(path))
+    return disc.game, disc.disc
+
+
+def disc_tokens(isos) -> dict[str, str]:
+    """{image path (norm): "disc:<game>:<disc>"} for the Forza disc images among `isos`, by
+    their default.xex (forza_roster.identify), whatever the files are called. Of two
+    images of one disc, the first (forza_roster.discs_of takes it)."""
+    out: dict[str, str] = {}
+    for iso in isos:
+        path = norm(iso)
+        try:
+            st = Path(path).stat()
+        except OSError:
+            continue
+        game, number = _identified(path, st.st_size, st.st_mtime_ns)
+        token = f"{DISC}{game}:{number}"
+        if game and token not in out.values():
+            out.setdefault(path, token)
+    return out
+
+
+def query_name(kind: str, what: str) -> str:
+    """A discovery question as a fingerprint keeps it: "discs FH1", "discs *", "dlc"."""
+    return f"{kind} {what}".strip()
+
+
+def answer(name: str, tokens: dict[str, str]) -> list[str]:
+    """The answer to a discovery question now: the discs of a game among the images
+    (`tokens`: disc_tokens), all of them ("discs *"), or the FM4 DLC packs found (their
+    paths, norm)."""
+    kind, _, what = name.partition(" ")
+    if kind == "discs":
+        game = what.upper()
+        return sorted(t for t in tokens.values() if game == "*" or t.split(":")[1] == game)
+    if kind == "dlc":
+        from dsfforza.build import fm4_dlc
+
+        return sorted(norm(p.path) for p in fm4_dlc.packages())
+    return [f"unknown question {name}"]
+
+
+def _map_paths(fp: dict, move) -> dict:
+    """`fp` with `move` applied to the paths of its job, files and folders."""
+    job = dict(fp.get("job") or {})
+    for k in JOB_PATHS:
+        job[k] = move(job.get(k))
+    source = _source_key(job.get("source"))
+    if source.get("package"):
+        source["package"] = move(source["package"])
+    if source.get("iso") and not source["iso"].startswith(DISC):
+        source["iso"] = move(source["iso"])
+    job["source"] = source
+    # The "dlc" answer is pack paths (answer); disc answers are tokens, not paths.
+    queries = {
+        name: sorted(move(p) for p in ans) if name == query_name("dlc", "") else ans
+        for name, ans in (fp.get("queries") or {}).items()
+    }
+    out = {
+        **fp,
+        "job": job,
+        "files": {move(p): d for p, d in fp.get("files", {}).items()},
+        "dirs": {move(p): d for p, d in fp.get("dirs", {}).items()},
+    }
+    if "queries" in fp:
+        out["queries"] = queries
+    return out
+
+
+_RESOLVED: dict[tuple[str, str], str] = {}
+
+
+def _resolve(new: str, top: str) -> str:
+    """norm(new/top), kept: what a recorder in checkout `new` records for that path."""
+    key = (new, top)
+    if key not in _RESOLVED:
+        _RESOLVED[key] = norm(new + os.sep + top)
+    return _RESOLVED[key]
 
 
 def relocate(fp: dict, old: str | None, new: str | None = None) -> dict:
     """The fingerprint `fp` made in checkout `old` (norm), as it reads in checkout `new`
-    (default this one): the paths of its job, files and folders under `old` (out/db, a
-    worktree's own copy of each game's gamedb, ...) are the same paths under `new`. The
-    rest (out/cache, assets and out/vanilla are junctions to the main checkout, resolved
-    when recorded) stays."""
+    (default this one): a path under `old` becomes the one a recorder in `new` records for
+    it. That is the same path under `new` (out/db, a worktree's own copy of each game's
+    gamedb, ...), or where it resolves when `new` has a junction there: a worktree's
+    out/cache, assets and out/vanilla link to the main checkout's (tools/worktree-setup.ps1),
+    so an entry the main checkout made keeps those paths in a worktree, as the worktree's
+    own recorder writes them (#588). The rest stays."""
     new = norm(dsfforza.REPO) if new is None else new
     if not old or old == new:
         return fp
     head = old + os.sep
 
     def move(path):
-        return new + os.sep + path[len(head) :] if isinstance(path, str) and path.startswith(head) else path
+        if not (isinstance(path, str) and path.startswith(head)):
+            return path
+        parts = path[len(head) :].split(os.sep, 2)  # the junctions are one or two folders down
+        top = _resolve(new, parts[0] if len(parts) == 1 else parts[0] + os.sep + parts[1])
+        return top + os.sep + parts[2] if len(parts) > 2 else top
 
-    job = dict(fp.get("job") or {})
-    for k in JOB_PATHS:
-        job[k] = move(job.get(k))
-    job["isos"] = [move(p) for p in job.get("isos", [])]
-    source = _source_key(job.get("source"))
-    for k in ("iso", "package"):
-        if source.get(k):
-            source[k] = move(source[k])
-    job["source"] = source
-    return {
-        **fp,
-        "repo": new,
-        "job": job,
-        "files": {move(p): d for p, d in fp.get("files", {}).items()},
-        "dirs": {move(p): d for p, d in fp.get("dirs", {}).items()},
-    }
+    return {**_map_paths(fp, move), "repo": new}
+
+
+def move_roots(fp: dict, job: dict) -> dict:
+    """`fp` with the paths under its job's cache and game folder (ROOTS) moved to `job`'s:
+    an extraction cache or a game installed elsewhere holds the same inputs at other paths
+    (each still compared by its digest). The longer root wins (a cache in the game folder)."""
+    old_job, new_job = fp.get("job") or {}, job_key({k: job.get(k) for k in JOB_PATHS}, {})
+    pairs = sorted(
+        ((old_job.get(k), new_job.get(k)) for k in ROOTS if old_job.get(k) and new_job.get(k)),
+        key=lambda pair: -len(pair[0]),
+    )
+    # Unchanged pairs stay in: a nested root that didn't move (a cache in a game folder
+    # that did) must keep its own paths, not take its parent's move.
+    if all(old == new for old, new in pairs):
+        return fp
+
+    def move(path):
+        if not isinstance(path, str):
+            return path
+        for old, new in pairs:
+            if path == old or path.startswith(old + os.sep):
+                return new + path[len(old) :]
+        return path
+
+    return _map_paths(fp, move)
 
 
 # The environment port_batch starts its workers with (run_workers). numpy's OpenBLAS
@@ -576,13 +731,37 @@ class Checker:
     """Compares stored fingerprints with the current files and sources (digests and
     module units computed once per build)."""
 
-    def __init__(self, units=None):
+    def __init__(self, units=None, isos=None):
         """`units`: the code to compare with (CodeUnits: this checkout's; GitUnits: a
-        revision's)."""
+        revision's). `isos`: the disc images a fingerprint's discs are looked up among when
+        no job names them (default: assets/*.iso)."""
         self.units = units if units is not None else CodeUnits()
+        self.isos = isos
         self._files: dict[str, str] = {}
         self._dirs: dict[str, str] = {}
+        self._tokens: dict[tuple, dict[str, str]] = {}
+        self._answers: dict[tuple, list[str]] = {}
         self.env = environment()
+
+    def tokens(self, isos=None) -> dict[str, str]:
+        """disc_tokens of `isos` (default: self.isos, else assets/*.iso), computed once."""
+        if isos is None:
+            isos = self.isos
+        if isos is None:
+            from dsfforza.build import forza_roster
+
+            isos = forza_roster.default_images()
+        key = tuple(norm(p) for p in isos)
+        if key not in self._tokens:
+            self._tokens[key] = disc_tokens(key)
+        return self._tokens[key]
+
+    def answer(self, name: str, isos=None) -> list[str]:
+        tokens = self.tokens(isos)
+        key = (name, tuple(sorted(tokens.items())))
+        if key not in self._answers:
+            self._answers[key] = answer(name, tokens)
+        return self._answers[key]
 
     def file(self, path: str) -> str:
         if path not in self._files:
@@ -599,41 +778,67 @@ class Checker:
         from another place but it has the same digest. dsff install builds from the game's
         Install\dngvehicles.sp the first time and from the install's backup of it
         (dsfcars-backup\Install\dngvehicles.sp; tools/install.ps1 copies it with its
-        time stamp) every time after, and the archive is the same file."""
-        old, new = (fp.get("job") or {}).get("dsf"), job_key(job).get("dsf")
+        time stamp) every time after, and the archive is the same file. `fp` as check
+        compares it (move_roots)."""
+        fp = move_roots(fp, job)
+        old, new = (fp.get("job") or {}).get("dsf"), job_key(job, {}).get("dsf")
         recorded = fp.get("files", {}).get(old) if old else None
         if not new or old == new or recorded is None or self.file(new) != recorded:
             return {}
         return {old: new}
 
-    def check(self, fp: dict, job: dict | None, code: bool = True, moved: dict | None = None) -> str | None:
+    def check(
+        self, fp: dict, job: dict | None, code: bool = True, moved: dict | None = None, *, first_try: bool = False
+    ) -> str | None:
         """None when nothing the fingerprint recorded changed, else the first reason.
-        job None: don't compare the job (a first try, whose options were the job's
-        before the fallback); code False: don't compare the code (--trust-code).
-        moved: recorded input paths read from elsewhere now (default: the vanilla archive
-        when it moved with the same digest, see `moved`)."""
+        job None: no job (a pack's fingerprint); first_try: the job places the files
+        (its cache, game folder and disc images) but isn't compared (a first try, whose
+        options were the job's before the fallback); code False: don't compare the code
+        (--trust-code). moved: recorded input paths read from elsewhere now (default: the
+        vanilla archive when it moved with the same digest, see `moved`)."""
         if fp.get("format") != FORMAT:
             return "no fingerprint of this format"
         if not fp.get("complete"):
             return "fingerprint incomplete (sources changed while the car was built)"
+        isos = None
+        if job is not None:
+            fp = move_roots(fp, job)
+            isos = job.get("isos")
         if moved is None:
             moved = self.moved(fp, job) if job is not None else {}
-        if job is not None:
-            old, new = dict(fp.get("job") or {}), job_key(job)
-            old["source"] = _source_key(old.get("source"))  # recorded before packs were (norm)
+        if job is not None and not first_try:
+            recorded = fp.get("job") or {}
+            old = {k: recorded.get(k) for k in JOB_COMPARED}
+            old["source"] = _source_key(old.get("source"))  # a pack recorded unresolved (#501)
+            new = {k: v for k, v in job_key(job, self.tokens(isos)).items() if k in JOB_COMPARED}
             if old.get("dsf") in moved:
                 old["dsf"] = moved[old["dsf"]]
             if old != new:
-                return "job: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
-        return self.inputs_changed(fp, moved) or (self.code_changed(fp) if code else None)
+                return "job: " + ", ".join(k for k in JOB_COMPARED if old.get(k) != new.get(k))
+        return self.inputs_changed(fp, moved, isos) or (self.code_changed(fp) if code else None)
 
-    def inputs_changed(self, fp: dict, moved: dict | None = None) -> str | None:
-        """The first recorded input (Python and numpy, a file, a folder) that changed, or None."""
+    def inputs_changed(self, fp: dict, moved: dict | None = None, isos=None) -> str | None:
+        """The first recorded input (Python and numpy, a discovery answer, a file, a
+        folder) that changed, or None. `isos`: the disc images the fingerprint's discs are
+        looked up among (default: self.tokens's)."""
         moved = moved or {}
         if fp.get("env") != self.env:
             return "Python or numpy version"
+        for name, recorded in fp.get("queries", {}).items():
+            now = self.answer(name, isos)
+            if now != recorded:
+                return f"{name}: {', '.join(now) or 'none'} now ({', '.join(recorded) or 'none'} before)"
+        discs = None
         for path, digest in fp.get("files", {}).items():
-            if self.file(moved.get(path, path)) != digest:
+            if path.startswith(DISC):
+                if discs is None:
+                    discs = {t: p for p, t in self.tokens(isos).items()}
+                if path not in discs:
+                    return f"input {path} (no image of that disc now)"
+                current = discs[path]
+            else:
+                current = moved.get(path, path)
+            if self.file(current) != digest:
                 return f"input {path}"
         for path, digest in fp.get("dirs", {}).items():
             if self.dir(path) != digest:

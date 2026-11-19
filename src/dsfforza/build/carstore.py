@@ -195,7 +195,7 @@ class Store:
                 continue
             why = checker.check(fp, current, code=code)
             if why is None and first is not None:
-                why = checker.check(first, None, code=code, moved=checker.moved(fp, current))
+                why = checker.check(first, current, code=code, first_try=True)
                 why = why and f"first try: {why}"
             if why is None:
                 return e, None

@@ -609,14 +609,12 @@ def extract_dash_media(isos: list[Path], game: str, cache: Path) -> Path | None:
     target = cache / game.lower() / DASH_MEDIA
     if (target / "done").exists():
         return target
-    from dsfforza.build.forza_roster import TITLES, xex_title
+    from dsfforza.build.forza_roster import discs_of
 
     found = set()
-    for iso in isos:
+    for iso in discs_of(isos, game):  # by default.xex, disc 1 first
         image = XIso(iso)
         try:
-            if TITLES.get(xex_title(image)[0]) != game:
-                continue
             for path, member, sub in DASH_MEDIA_ZIPS:
                 if path in found:
                     continue
