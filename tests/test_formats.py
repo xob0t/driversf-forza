@@ -424,6 +424,35 @@ def test_xds_untile_places_blocks() -> None:
             assert struct.unpack_from("<HH", blocks, (y * 32 + x) * 8) == (x, y)
 
 
+def _packed_xds(width: int, height: int, offset: tuple[int, int], *, packed: bool = True) -> bytes:
+    """A DXT5 xds whose top level's opaque white blocks sit `offset` blocks into the tile."""
+    header = bytearray(xds.HEADER_SIZE)
+    struct.pack_into(">II", header, 0x20, 53, (width - 1) | ((height - 1) << 13))
+    struct.pack_into(">I", header, 0x1C + 20, 0xA00 if packed else 0x200)  # 2D, packed_mips bit 11
+    bw, bh = (width + 3) // 4, (height + 3) // 4
+    white = bytes((0xFF, 0xFF)) + bytes(6) + bytes((0xFF, 0xFF, 0xFF, 0xFF)) + bytes(4)  # alpha 255, colour 0xFFFF
+    swapped = bytes(b for pair in zip(white[1::2], white[0::2]) for b in pair)
+    payload = bytearray(32 * 32 * 16)
+    for n in range(32 * 32):
+        x, y = xds.tiled_x(n, bw, 16) - offset[0], xds.tiled_y(n, bw, 16) - offset[1]
+        if 0 <= x < bw and 0 <= y < bh:
+            payload[n * 16 : n * 16 + 16] = swapped
+    return bytes(header + payload)
+
+
+def test_xds_packed_base_offset() -> None:
+    from dsfforza.convert import dash_scene
+
+    # the Omni GLHS's needle (8 x 90), a 16 x 16 glyph, a 32 x 8 label, a 56 x 12 label
+    for (w, h), offset in (((8, 90), (4, 0)), ((16, 16), (4, 0)), ((32, 8), (0, 4)), ((56, 12), (0, 4))):
+        data = _packed_xds(w, h, offset)
+        assert xds.packed_base_offset(data) == offset, (w, h)
+        img = dash_scene.decode_xds(data)
+        assert img.shape == (h, w, 4) and img[..., 3].min() == 1.0, (w, h)
+    assert xds.packed_base_offset(_packed_xds(32, 32, (0, 0))) == (0, 0)  # no side under 32 px
+    assert xds.packed_base_offset(_packed_xds(8, 90, (0, 0), packed=False)) == (0, 0)
+
+
 def test_xds_dds_header() -> None:
     from dsfforza.convert import dsf_materials
 

@@ -44,6 +44,29 @@ def _log2(n: int) -> int:
     return n.bit_length() - 1
 
 
+PACKED_TAIL_OFFSET = 4  # blocks (16 texels): where a packed base level sits in its tile
+
+
+def packed_base_offset(data: bytes) -> tuple[int, int]:
+    """(x, y) block offset of the top level inside the tiled surface. With the fetch
+    constant's packed_mips bit set (dword5 bit 11; dword5 bits 9..10 are the dimension,
+    1 = 2D) and the smaller side at most 16 texels (ceil(log2) <= 4), the top level is
+    stored in the packed mip tail, 16 texels (4 blocks) in: along y when ceil(log2(width))
+    > ceil(log2(height)) (wider than tall), else along x. Read off every Forza dash
+    texture (1,826 in both games, 390 with a side of 16 px or less, sides 2 to 16 px): each
+    small one has its blocks there and nowhere else, or (Generic_RGB_White, the NSX's
+    txt_km) only its blocks there decode to the picture (research/cockpit.md, "Dash
+    textures with a side of 16 px or less")."""
+    _, width, height = parse_header(data)
+    dword5 = struct.unpack_from(">I", data, 0x1C + 20)[0]
+    if not (dword5 >> 11) & 1:
+        return 0, 0
+    lw, lh = (max(0, (n - 1).bit_length()) for n in (width, height))  # ceil(log2)
+    if min(lw, lh) > 4:
+        return 0, 0
+    return (0, PACKED_TAIL_OFFSET) if lw > lh else (PACKED_TAIL_OFFSET, 0)
+
+
 def tiled_x(offset: int, width: int, texel_pitch: int) -> int:
     aligned_width = (width + 31) & ~31
     log_bpp = _log2(texel_pitch)

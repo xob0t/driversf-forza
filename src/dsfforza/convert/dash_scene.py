@@ -122,9 +122,10 @@ def u32(raw: bytes) -> int:
 
 
 def decode_xds(d: bytes) -> np.ndarray:
-    """RGBA float image. Textures with a side of 16 px (4 blocks) keep their blocks at an offset
-    of 4 blocks inside the tiled surface (packed-mip placement, seen on 16x256, 16x32, 64x16,
-    16x16 dash textures); dsfforza's untile reads them as empty, so locate the blocks here."""
+    """RGBA float image. A texture with a side of 16 px or less keeps its top level in the
+    packed mip tail, 4 blocks into the tiled surface (xds.packed_base_offset: the Omni
+    GLHS's 8 x 90 needle, 16 x 256 strips, 32 x 8 labels); dsfforza's untile reads
+    them as empty, so the blocks are taken from there."""
     fmt, w, h = xds.parse_header(d)
     fourcc, bs = xds.FORMATS[fmt]
     bw, bh = max(1, (w + 3) // 4), max(1, (h + 3) // 4)
@@ -133,11 +134,7 @@ def decode_xds(d: bytes) -> np.ndarray:
     n = np.arange(count, dtype=np.int64)
     x, y = xds.tiled_x(n, bw, bs), xds.tiled_y(n, bw, bs)
     raw = np.frombuffer(payload, np.uint8, count * bs).reshape(count, bs)
-    nz = raw.any(1)
-    ox = oy = 0
-    if nz.any():
-        ox = 4 if bw == 4 and x[nz].min() >= 4 else 0
-        oy = 4 if bh == 4 and y[nz].min() >= 4 else 0
+    ox, oy = xds.packed_base_offset(d)
     out = np.zeros((bw * bh, bs), np.uint8)
     xx, yy = x - ox, y - oy
     ok = (xx >= 0) & (yy >= 0) & (xx < bw) & (yy < bh)
