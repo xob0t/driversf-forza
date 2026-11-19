@@ -724,6 +724,74 @@ Corvette's new crack lines are at the windscreen's edges, outside the probe's
 frame at 0.25; the Aston's windscreen layers stay above it as on master.
 Vanilla 288 shows its own left-pillar cluster.
 
+**How far a set reaches past its window** (#626, confirmed-static, 2026-11-19;
+scripts in `out/i626` of the fix worktree: `where.py`, `extent.py`,
+`exact.py`, `edges.py`, `identity.py`, `variants.py`, `ports.py`). Placed on
+its own window (the identity move), the vanilla sets lost 12,685 of their
+215,734 triangles to the placement's "lands outside the window" test (centroid in a
+filled 1 cm cell, every corner within one cell of one). Two causes:
+
+- The grid. A cell counts as glass when its centre is covered, so the cells
+  along the rim are half outside. Vanilla's rim shards are 3 mm slivers rooted
+  at the edge: of the dropped side-glass triangles, 58% have their centroid
+  on the smear itself (rear windows 37%).
+- The set reaches past the glass. Measured exactly in the window's plane
+  against its glass (the interior smear and the exterior entry's glass on the
+  same panel record, facing like the window: the windscreen's open centre is
+  glass there; the set itself is not):
+
+| window | set triangles with a corner past the glass | that corner's reach p90 / p99 / max | centroid past the glass |
+| --- | --- | --- | --- |
+| windscreen (141) | 25.0% | 5 / 37 / 126 mm | 6.5% |
+| rear (116) | 24.7% | 5 / 24 / 71 mm | 6.2% |
+| side (268) | 22.1% | 3 / 11 / 93 mm | 2.5% |
+
+It is all round the rim (windscreens on every edge, side glass mostly at the
+bottom, into the door, and at the front end; median 3 to 7 mm per edge), and
+mostly shards: 34% of shard_dull triangles reach past, 18% of shard_bright,
+10% of crack. DSF roots its shards at the glass's edge and lets them run over
+the frame, so the glass alone is not the extent of a window's set.
+
+517 of the 527 donor windows have exterior glass on their own record; 2 have
+neither smear nor exterior glass (their set is their only glass).
+
+Rule (`InteriorGlass._place`, `HostWindow.glass`, `HostWindow.overhang`,
+`_Pane.past`): a placed triangle is kept when none of its corners and not its
+centroid lies further past the converted window's glass than it lay past its
+donor window's glass, to one grid cell: `_carry` places each piece against
+rims measured on cell centres (half a cell on each window), so where it lands
+against the true edge is known to a cell. `_Pane.lift` now also extends the
+glass's plane under a corner more than three cells out (it found no triangle
+there and dropped the triangle).
+
+Identity move, every vanilla set (215,734 triangles), dropped triangles:
+
+| pane the set is placed on | old test | new, slack one position step | new, slack one cell |
+| --- | --- | --- | --- |
+| all the window's interior glass (`HostWindow.frame`, the rim `_carry` uses) | 12,685 | 0 | 0 |
+| the window's glass only (smear and exterior; what a converted pane is) | 16,441 | 12,750 | 1,140 |
+
+The 1,140 left are the donor rim's doing: `_carry` measures the donor's rim on
+all its interior glass, set included, and the windscreen's smear has its open
+centre, while a converted window's rim is its glass. With the donor's rim
+taken on its glass too, the identity drops none (with either slack); that
+changes `DonorSet` and with it the donor choice (#628's rule), so it is left
+for a follow-up issue.
+
+Roster, no conversion (`ports.py`: 2,733 windows on 691 cars rebuilt from the
+car store, master's donors), triangles dropped:
+
+| window | set triangles | old test | new rule | dropped share per window, median / p90 (old, new) |
+| --- | --- | --- | --- | --- |
+| windscreen | 419,042 | 26,529 | 12,229 | 4.9 / 10.4% to 1.4 / 6.1% |
+| rear | 250,164 | 15,737 | 6,264 | 4.3 / 12.5% to 0.5 / 6.4% |
+| side | 229,530 | 15,635 | 8,001 | 3.1 / 20.2% to 0.0 / 13.7% |
+
+2,189 windows keep more, 59 keep fewer (159 triangles: the old test let a
+corner lie up to two cells out diagonally). The kept triangles reach past the
+converted glass as vanilla's past theirs: p99 10 to 12 mm, p99.9 15 to 31 mm,
+at most 114 mm (old test: p99 8 mm, at most 20 mm).
+
 
 Survey (293 of the 721 roster cars, the rest not built; `out/i459/survey.txt`
 in the #459 worktree): 899 windows take host layers, against 1,103 with
