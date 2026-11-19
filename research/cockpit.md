@@ -3621,6 +3621,13 @@ hasn't". The other four render alike, since render_compare doesn't draw digital
 displays (`render-compare.md`). `cockpit gauges` at 0/800, 30/2000 and 60/4000 (mph/rpm)
 puts the Omni's needles on 8, 20 and 40 (x100 rpm) and on 0, 30 and 60 mph.
 
+In game (VM, confirmed-runtime; `run-series.ps1 -Vm -HoldMph '40,90'`, the Omni at ID 1;
+runs `vm1-20261119-140127` master and `vm1-20261119-140356` the fix): master shows the
+cluster's faces without needles and the pod beside it; with the fix the pod is gone and the
+cluster's needles turn. At 90.0 mph (the probe's sample) the speedometer sits just past its
+85 mark and the tachometer near 5000 rpm. The run's 40 mph shot came as the cockpit view
+opened, before the hold, so it holds no reading. The car spooled and drove without a crash.
+
 ## Fitted-rule audit (2026-11-05)
 
 Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
