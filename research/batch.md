@@ -527,140 +527,87 @@ above, `jobpool watch --every 1` logging (`out/mem/check.csv` in the worktree of
 - The headroom went below 0 once: diff processes on these 60 cars peaked at up to 2805
   MiB, past the 2400 the first 20 cars gave `DIFF_RAM`; it is 2900 now.
 
-### Selective rebuild
+### Reuse
 
 ```sh
 uv run dsff port_batch build --out out/all2 --list roster.txt --reuse out/all --jobs 8 --gui
-uv run dsff port_batch build --out out/all2 --list roster.txt --reuse out/all \
-    --trust-code --rebuild-where "host == 198" --verify-reuse 4
 ```
 
 `--reuse DIR` copies a car's output from an earlier build (`DIR/work`:
-`<media>.chnk`, the report, the log, `sound/<media>/`) when nothing that
-went into it changed, and converts only the other cars. The pack step after it (merge, lint,
-garage pictures) redoes only what changed too: see "Pack reuse" below.
-Files are hard-linked where the
-volume allows it, so an earlier build of 573 cars costs no second 2 GB.
+`<media>.chnk`, the report, the job, the log, `sound/<media>/`) instead of
+converting it again, and converts only the other cars. The pack step after it
+(merge, lint, garage pictures) redoes only what changed too: see "Pack reuse"
+below. Files are hard-linked where the volume allows it, so an earlier build of
+573 cars costs no second 2 GB. `dsff install` passes the last finished build and
+an interrupted one.
 
-**What decides.** Each worker writes `work/<media>.fp.json`
-(`src/dsfforza/build/fingerprint.py`) next to the chunk:
+**The rule** (`src/dsfforza/build/builder_version.py`, #634). A built car is
+reused when all of these match the earlier build, as its `work/<media>.job.json`
+records them:
 
-- the job: car, game, disc source (by its disc, `disc:FH1:1`, not its file
-  name), spool ID, the requested `--port` options and the vanilla archive
-  (by digest when it moved). The cache and game folders are recorded to place
-  the files under them; a check moves them to the build's own
-  (`fingerprint.move_roots`), so a cache or a game elsewhere with the same
-  files matches. Neither the list of disc images given nor the car's year and
-  roster games are in it (see "What a car's fingerprint holds");
-- its discovery, as questions and answers: which discs of a game the images
-  hold (`forza_roster.discs_of`, `first_disc`, `game_discs`) and which FM4
-  DLC packs are found (`fm4_dlc.packages`);
-- Python and numpy versions;
-- every file the worker opened for reading, from an audit hook on `open`
-  and `sqlite3.connect`, with its SHA-256. Files over 64 MiB (the vanilla
-  archive, the disc images) get size, mtime and the SHA-256 of their first
-  and last 4 MiB. Python's own files and the package sources don't count;
-- every folder it listed (`os.listdir`, `os.scandir`), as a hash of the
-  names, so a file that appears in the car's cache folder counts too;
-- the code it ran. `sys.monitoring` reports each code object the first
-  time it runs. The car then depends on the units it ran: a function, a
-  method, a class body without its methods. It also depends on the
-  module-level assignments and imports whose names its code uses, the
-  classes it names, and the remaining top level of each package module
-  it loaded. A unit's hash is its AST without docstrings, so comments,
-  docstrings and `ruff format` don't count.
+- the **builder version**: a release's version (the zip's `VERSION`, written by
+  `dsff package` from the tag), or in a git checkout the commit. With uncommitted
+  changes to what the converter reads (`src/`, `research/vehicles.tsv` and
+  `forza-roster.tsv`, `tools/re/`, `pyproject.toml`, `uv.lock`,
+  `.python-version`) the version is the commit marked `+dirty`, and nothing is
+  reused, kept in the car store or taken from it, not even the dirty tree's own
+  cars. Neither a release nor a checkout: no reuse. One version for every car;
+- its **media**, with the same requested `--port` options (a fallback build's job
+  keeps the options it was asked for);
+- its **build ID** (spool ID, below);
+- its **own source**: its disc by identity (`FH1`, `FM4 disc 1`, from
+  default.xex) and its path on the disc, or its DLC pack by name (`FM4 DLC /
+  Porsche Expansion Pack`); not the file name or path of the image or the pack.
 
-A car is reused only when the job and environment match and every
-recorded file, folder and unit hashes the same now. The build prints why
-the others are built, grouped (`code dsfforza.convert.cockpit.convert_interior:
-3 (...)`, `input ...`, `job: spool_id`, `no fingerprint`). A failed car is
-never reused. A car built with a fallback is reused only if its first try's
-fingerprint is unchanged too, since a fix might make that try work.
+Anything else converts. So a new commit converts every car once; adding discs or
+DLC packs, or renaming or moving them, converts no car that doesn't come from
+them. A failed car is never reused. The build prints the builder version and,
+grouped, why the other cars convert (`builder version`, `source`, `build ID`,
+`not built there`). `--resume` takes a car from its own folder by the same rule
+(and the same vanilla archive).
 
-The spool ID is part of the job. The chunk's UIDs are seeded from it, so a
-car whose ID moved (a car added before it in the list) is built again. Keep
-the list order, or add new cars at the end. A listed car that can't be built
-keeps its ID slot (see below), so the discs and packs given don't move IDs.
+Until #634 a car was reused by a fingerprint of everything its worker read and
+every code unit it ran (`fingerprint.py`). It saw more (an edit that touched
+one module rebuilt only the cars that ran it), but kept missing on paths
+(worktree junctions, #588; discs and packs, #636; DLC packs, #634), and each miss
+was a full rebuild. The version rule reuses less after a commit and never
+misses for those reasons.
 
-#### What a car's fingerprint holds
+**The spool ID is part of the rule.** The conversion writes it into more than the
+four ID fields `clone_vehicle.patch_ids` rewrites (VSVH, VO3D, SPID, UPVH; the
+car manager stamps its own ID there at install). It seeds the car's resource
+UIDs (`port_car.build_car`: `uid_prefix("renew"/"geometry", name, spool_id)`) and
+is the namespace of the car's Wwise IDs (`engine_sound.fresh_ids`: `spool_id <<
+22 | hash`), which keeps two cars on one template bank apart. A chunk made under
+one ID is not the same car under another. Keep the list order, or add new cars
+at the end.
 
-Only what decides the car's bytes (fingerprint format 2, #588):
+**IDs don't depend on the discs and packs given.** `assign_ids` gives a listed car
+that can't be built (not on the discs given, no usable host) no ID but uses up
+the one it would take without a garage group. Under `--id-policy asi` (dsff
+install) that is the ID it gets once it can be built. `--fm4-dlc-cars` holds a
+placeholder for each car of `tools/batches/fm4-dlc.txt` whose pack isn't there
+(`dlc_slots`; listed nowhere). So an install with the FH1 disc and, later, the
+FM4 discs too gives the FH1 cars the same IDs. Under `--id-policy garage` a car's
+low garage ID still depends on the buildable cars before it, and an unnamed
+roster selection (no `--list`/`--car`) drops the cars it can't build.
 
-- **The spool ID stays.** The conversion writes it into more than the four
-  ID fields `clone_vehicle.patch_ids` rewrites (VSVH, VO3D, SPID, UPVH; the
-  car manager stamps its own ID there at install). It seeds the car's
-  resource UIDs (`port_car.build_car`: `uid_prefix("renew"/"geometry", name,
-  spool_id)`) and is the namespace of the car's Wwise IDs
-  (`engine_sound.fresh_ids`: `spool_id << 22 | hash`). That namespace keeps
-  two cars on one template bank apart, by construction, with no check at
-  merge. A chunk made under one ID is not the same car under another, so the
-  store can't hand a car to another ID by patching it. Making the chunk
-  ID-neutral needs another way to keep the Wwise IDs apart (#635).
-- **IDs don't depend on the discs and packs given.** `assign_ids` gives a
-  listed car that can't be built (not on the discs given, no usable host) no
-  ID but uses up the one it would take without a garage group. Under
-  `--id-policy asi` (dsff install) that is the ID it gets once it can be
-  built. `--fm4-dlc-cars` holds a placeholder for each car of
-  `tools/batches/fm4-dlc.txt` whose pack isn't there (`dlc_slots`; listed
-  nowhere). So an install with the FH1 disc and, later, the FM4 discs too
-  gives the FH1 cars the same IDs. Under `--id-policy garage` a car's low
-  garage ID still depends on the buildable cars before it, and an unnamed
-  roster selection (no `--list`/`--car`) drops the cars it can't build.
-- **Discs by identity, discovery by its answer.** A car's worker
-  (`Recorder(queries=True)`) records each disc lookup as a question
-  (`discs FH1`, `discs *`, `dlc`) and answers it in `finish`: the discs of that
-  game among the job's images (`disc:<game>:<n>`, by default.xex, any file
-  name), or the paths of the packs found. The reads made while answering
-  (every image's header, each pack's header, the listings of `assets\`) are
-  not inputs. What the car then reads from a disc is keyed by the disc, with
-  the image's digest (size, mtime and its first and last 4 MiB, which a
-  renamed or moved image keeps). Before, every car recorded every image in
-  `assets\`, the listing of `assets\` and of each pack folder, and the job
-  held the list of images given, so adding a disc rebuilt every car. Now an
-  FH1 car (BMW_M3E30_91) asks `discs FH1` and `dlc`, and reads `disc:FH1:1`.
-  An FH1 car whose engine tuning is on FM4's discs asks `discs FM4` too, and
-  is built again when they come.
-- **Not the year and the roster games.** The worker puts them only in its
-  report's manifest entry (`games_available`, the display name). They follow
-  the discs given (with the FM4 discs, BMW_M3E30_91 is on "FM4,FH1"), so a
-  reused car gets this job's entry fields (`port_batch.refresh_entry`: name,
-  year, games, the disc image's file name, the cache folder).
-- **Left:** every car asks `dlc`, because `host_select.default_gamedbs` and
-  `handling_dsf.default_dbs` work out FM4's gamedb path (merged with the packs
-  or not) before they know they need it. So adding a DLC pack rebuilds every
-  car, not just the cars that read FM4's gamedb (#634).
+**The year and the roster games** are not in the rule: the worker puts them only
+in its report's manifest entry (`games_available`, the display name), and they
+follow the discs given (with the FM4 discs, BMW_M3E30_91 is on "FM4,FH1"). A
+reused car gets this job's entry fields (`port_batch.refresh_entry`: name, year,
+games, the disc image's file name, the cache folder).
 
-Measured 2026-11-19 (`--jobs 2`, `--id-policy asi`, `--no-store`, a list of 3 FH1 and 3
-FM4 cars interleaved):
-
-- with the FH1 disc only: 3 cars at IDs 1, 3 and 5 (2, 4 and 6 held for the FM4 cars), 92 s;
-- the two FM4 discs added, `--reuse` the first: 3 reused, the 3 FM4 cars converted at 2,
-  4 and 6, 106 s; `--verify-reuse 2`: 2 of 2 identical. Before this change all 6 were
-  converted (the IDs moved, and `isos` was in every job);
-- FH1's image renamed (`my horizon copy.iso`, a hard link), `--reuse` the second: 6 of 6
-  reused; `--verify-reuse 3` on the FH1 cars: 3 of 3 identical.
-
-**What it can't see.** A file whose absence matters but that sits in a
-folder nobody listed. A `stat()` without an open. Code run in the parent
-before the workers start, except what reaches the job (spool IDs, options)
-and the shared caches the workers read (`host-survey.json`,
-`dsf-fleet.json`, `vanilla-banks.json`), which are recorded as files. And
-anything outside Python, numpy and the package, such as a different
-Windows build of the C runtime. `--verify-reuse` exists for these.
-
-**Declared scope.** `--rebuild-where EXPR` builds the cars whose earlier
-report matches a Python expression even when their fingerprints match.
-The expression sees `r` (the report), `entry` (its manifest entry),
-`media`, `game` and `host`. `--trust-code` drops the code from the
-comparison, so a fix that knows its cars only names them:
-`--trust-code --rebuild-where "'cockpit' in entry"`. Inputs still count.
+**What it can't see.** Anything outside the rule: the vanilla archive, the
+extraction cache, an image of the same disc with other bytes, Python and numpy
+outside `uv.lock`. `--verify-reuse` exists for these.
 
 **Verification.** `--verify-reuse N` (default 2 with `--reuse`; 0 turns it
 off) converts N random reused cars again into `work/verify/` with their
 earlier effective options, and stops the build before the merge if any
 chunk differs. The seed is printed; `--verify-seed` repeats a pick.
-`batch-report.json` gets a `reuse` record: source, reused cars, rebuilt
-cars with their reasons, verification results.
+`batch-report.json` gets a `reuse` record: source, builder version, reused cars,
+rebuilt cars with their reasons, verification results.
 
 `--verify-mismatch rebuild` (what `dsff install` passes; the default `stop` is
 for developers) doesn't stop: a car that came out different takes its fresh
@@ -677,27 +624,28 @@ buffers (the low bytes of vertex positions). Without `--damage` it came out
 the same. `PYTHONHASHSEED=0` didn't help; one OpenBLAS thread
 (`OPENBLAS_NUM_THREADS=1`) did, three runs identical, at the same speed (the
 workers are the parallelism). port_batch starts its workers with one BLAS
-thread (`fingerprint.WORKER_ENV`). That is not all of it: AST_DB9_05 (#84)
+thread (`port_batch.WORKER_ENV`). That is not all of it: AST_DB9_05 (#84)
 still differs between runs with one thread (280 to 420 bytes, the same kinds
 of entries; 1250 bytes without `--damage`, so it isn't the damage step), and
 BMW_Z4_11 still now and then (two of seven runs). So `--verify-reuse` can still fail on
 a car whose inputs didn't change; `port_car` run on its own still uses BLAS
 threads.
 
-Tested (4 cars: MAZ_RX7_97, CHE_Express2500Cargo_05, SAL_S5SRaptor_10,
-DEL_DMC12_82@fm4, `out/perf/r*` in the perf worktree):
+Measured 2026-11-19 (`--jobs 2`, `--id-policy asi`, `--no-store` but in the last two, a
+list of 7 cars: 3 FH1, 2 FM4 disc 1, ALF_Giulietta_11 of the Limited Collector's Edition
+pack and AUD_RS3_11 of the November Speed Pack; the discs and packs given step by step):
 
-| Run | Result |
-| --- | --- |
-| `--reuse` of an unchanged tree | 4 reused, 0 built; 2 verified identical; archive byte-identical; 67 s instead of 129 s (56 s of it the verification) |
-| a statement added to `cockpit.convert_interior` | 3 built ("code dsfforza.convert.cockpit.convert_interior"); the Express, which keeps the host's interior, reused and verified identical; archive byte-identical |
-| `SKY_FLOOR` changed in `forza2dsf`, with `--trust-code --rebuild-where "host == 198"` (a wrong claim) | the Express built, 3 reused; verification rebuilt the RX7, found it different and stopped the build (exit 1, no archive) |
-| the same change without `--trust-code` | the fingerprint check names `code dsfforza.convert.forza2dsf.SKY_FLOOR` for every car |
+| Step | Converted | Reused | Time |
+| --- | --- | --- | --- |
+| FH1's disc only (IDs 1, 3, 7; the other 4 cars hold 2, 4, 5, 6) | 3 | 0 | 56 s |
+| the FM4 discs and the Collector's pack added, `--reuse` the first | 3 (the FM4 and the pack's cars) | 3; `--verify-reuse 2`: identical | 91 s |
+| the November pack added | 1 (AUD_RS3_11) | 6; 2 of 2 identical | 56 s |
+| FH1's image and FM4 disc 1's renamed, FH1's moved to a subfolder, the Collector's pack files moved and renamed | 0 | 7; `--verify-reuse 3`: 3 of 3 identical | 47 s |
+| a new commit (docs only) | 7 ("builder version") | 0 | 137 s |
+| a second worktree at that commit (the main checkout's assets: all 16 packs, the original image names) | 0 | 7 from the store; 2 of 2 identical | 49 s |
 
-Recording costs about 2 s per car (34.7 s instead of 32.8 s for the
-Express): mostly hashing the 10 to 30 MiB a car reads and parsing the
-package modules it loaded. Checking 573 cars hashes about 15 GB once,
-then reuses the digests of shared files.
+The pack after renamed discs lints again (the reused cars' manifest entries name the
+images as they are called now), which takes seconds.
 
 ### Pack reuse
 
@@ -713,28 +661,21 @@ the build folder's own (a rerun, `--resume`) and the `--reuse` builds'
 **The record.** Each pack writes `<build>/pack/pack.json`:
 
 - the settings that shape the pack besides the cars: ID policy, root
-  limit, `--gui`, `--wide-glyphs`, the disc images, the vanilla archive's
-  digest;
+  limit, `--gui`, `--wide-glyphs`, the discs (by identity) and DLC packs (by
+  name), the vanilla archive's digest;
+- the builder version that made it ("Reuse" above);
 - the cars in merge order, each with a key: the SHA-256 of its chunk plus
   the report fields the merge reads (entry, host, game, spool IDs). A
   chunk's digest is kept with its file ID, size and mtime, so a
   hard-linked chunk (`--reuse`) isn't read again;
-- a fingerprint of the pack, made like a car's (above): the files it read
-  (vanilla archive, the game's `gui.sp`, `Fonts.fchunk`, locale files, disc
-  images, string tables, `vanilla-banks.json`) and the code units it ran,
-  in this process, the `upvh lint-many` processes (`--record`) and the
-  render processes (`gui_assets._Renders`). The build folders themselves
-  and the chunks don't count: the keys cover them;
 - per car: its lint result with what ties it to other cars, and its
   garage picture's key;
 - the nameplates and Forza logos it drew (`pack/images/`, by text and
   size or by maker);
 - the size and mtime of every file it wrote.
 
-A record is used only when its settings are this build's and its
-fingerprint holds. A game file read from the game folder before an
-install and from `dsfcars-backup\` after it (`gui_assets.vanilla_file`)
-counts as the same input when the digest is the same.
+A record is used only when its settings and builder version are this
+build's (and that version is reusable: no uncommitted converter changes).
 
 **Whole pack.** When an earlier record has the same cars with the same
 keys and its outputs are unchanged, nothing is redone: the archive is
@@ -800,117 +741,50 @@ on the PC (`src/dsfforza/build/carstore.py`, `%LOCALAPPDATA%\dsfforza\store`;
 --no-store`) and takes a matching car from it without `--reuse`. It is on in a git
 checkout and off in a player's copy (no `.git`) unless `DSFFORZA_STORE` names a folder.
 
-- **What it holds.** `cars/<media>/<id>/`: the car's work files (chunk, report, job,
-  log, fingerprint, the first try's of a fallback build) and its `sound/<media>/`, with
-  `meta.json` (spool ID, options, the checkout it was built in). Files from 1 MiB are hard
-  links (the build's own files are never written in place), the small ones copies. The id
-  is the digest of the fingerprints with the checkout's folder written `<repo>`, so the
-  same car built in two worktrees is one entry. `pictures/<key>-<pack>.*`,
-  `images/<name>-<pack>.*` and `packs/<pack>.json`: the pack step's garage pictures
-  (by `PictureCache` key), nameplates and logos, under the fingerprint of the pack that
-  made them, kept once per pack fingerprint; one is used only while that fingerprint
-  holds (as an earlier build's pack record).
-- **Matching** is `--reuse`'s (`fingerprint.Checker`), after the store, for the cars no
-  `--reuse` build has: the same job (spool ID included), environment, inputs and code.
-  Three things made a car of another worktree not match:
-  - files of the worktree itself: each has its own `out\db\<game>_gamedb.slt` (and
-    `out\lua-src`). A fingerprint now records its checkout (`"repo"`; for older ones the
-    store takes the checkout its build folder is in), and `fingerprint.relocate` moves the
-    paths under it to this checkout before the check.
-  - the junctions (#588). In a worktree `out\cache`, `out\vanilla` and `assets\` are
-    junctions to the main checkout, resolved when recorded; in the main checkout they are
-    real folders. An entry the main checkout made named its cache under the main checkout,
-    `relocate` moved that to `<worktree>\out\cache`, and the worktree's own job key (resolved)
-    said `<main>\out\cache`: no car of the main checkout's builds matched in a worktree
-    (`job: cache, isos`, 721 of 721 on the v0.3.0 release branch). `relocate` now moves a
-    path to what this checkout's recorder records for it (resolved through its junctions,
-    one or two folders down), and the job's cache and disc paths are no longer compared as
-    paths (see "What a car's fingerprint holds").
-  - a DLC car's pack file: the job recorded `source.package` as given, under the
-    worktree's `assets\` junction, so DLC cars never matched across worktrees (#501's
-    worker). `job_key` now records it resolved (`norm`), and the check resolves the
-    recorded one too, so earlier fingerprints still match. A pack inside a disc image
-    (`content/...`) is a path in the image and stays.
+- **What it holds.** `cars/<media>/<key>/`: the car's work files (chunk, report, job,
+  log, the first try's of a fallback build) and its `sound/<media>/`, with `meta.json`.
+  The key is the digest of the reuse rule's fields (`builder_version.car_key`: builder
+  version, media, options, build ID, own source), none of them a path, so a worktree at a
+  commit another one built gets its cars. Files from 1 MiB are hard links (the build's own
+  files are never written in place), the small ones copies. `pictures/<key>-<version>.*`
+  and `images/<name>-<version>.*`: the pack step's garage pictures (by `PictureCache` key),
+  nameplates and logos, under the builder version that made them.
+- **Matching** is `--reuse`'s rule, after the `--reuse` builds. Nothing is kept or taken
+  under a dirty version, nor kept when the checkout's version changed while the car was
+  built.
 - **Verification.** `--verify-reuse` defaults to 2 with `--reuse` and to 0 for store
   hits alone; `--verify-reuse N` asks for N.
-- **Putting.** After the conversion (and `--verify-reuse`), every car of the build with
-  a complete fingerprint goes in, the ones taken from `--reuse` or `--resume` too (kept
-  once); after the pack, its pictures and images.
+- **Putting.** After the conversion (and `--verify-reuse`), every car of the build goes
+  in, the ones taken from `--reuse` or `--resume` too (kept once); after the pack, its
+  pictures and images.
 - **Size.** At most `DSFFORZA_STORE_GB` (default 25 GiB: a full build's cars are about
   6 GiB counted file by file, so a few builds' worth). Past it, the entries (cars, pictures, images) used
   longest ago go first, down to 90% (`Store.evict`, after each build). A hit marks its
   entry used. Hard-linked files count in full, though they cost nothing while a build
-  folder holds the same file.
+  folder holds the same file. Entries of the fingerprint store (format 1) are no longer
+  read and go the same way.
 - `uv run dsff carstore status | seed <build> ... | evict [--cap-gb N]`. `seed` puts an
-  earlier build's cars and its pack's pictures and images in.
+  earlier build's cars and its pack's pictures and images in, those of this checkout's
+  builder version.
 
-Measured 2026-11-05:
+Measured 2026-11-19: the last two steps of "Reuse" above. A build at commit 966112c9 put
+its 7 cars in; a second worktree at the same commit (`worktree-setup.ps1`, the main
+checkout's assets: other image names, all 16 DLC packs) took 7 of 7 from the store, 49 s,
+`--verify-reuse 2` identical. Version 2 of the store keys makes every earlier entry miss
+once.
 
-- `carstore seed` of the 8200cfa release build (`driversf-forza-release\out\build`,
-  721 cars, read only): 36 s, 721 cars (hard links).
-- `--list tools/batches/all.txt --max 4 --id-policy asi --root-limit 3003 --gui
-  --wide-glyphs --packages`, with the IDs the release build gave the cars: 4 of 4 from the
-  store, 47 s; the 4 packages' members byte-identical to the release build's.
-- 3 cars (`--car DEL_DMC12_82@fm4 --car SAL_S5SRaptor_10 --car BMW_M1Design_81`, the
-  last an FM4 DLC car), `--gui --packages`: converted in worktree a (104 s); then the same
-  command in worktree b: 3 of 3 cars, 3 of 3 pictures and 10 of 10 images from the store,
-  27 s. `dngvehicles.sp`, `gui/gui.sp`, `Fonts.fchunk`, `hud.lua`, `dngvehicles.lua` and
-  every package member byte-identical to worktree a's fresh build.
-- 2026-11-19, fingerprint format 2: the 6 cars of "What a car's fingerprint holds" seeded
-  from one worktree, then built in a second worktree at the same commit (set up with
-  `worktree-setup.ps1`): 6 of 6 from the store, 14 s; with `--verify-reuse 2`: 2 of 2
-  identical. Format 2 makes every earlier entry miss once (2596 entries, all 721 roster
-  cars, on this PC).
+### Checking a converter change
 
-### Which cars a change affects
+Build about five cars the change should touch and a few it shouldn't, with the same
+command before and after (so they get the same IDs), and compare them:
 
 ```sh
-uv run dsff port_batch affected --roster                     # against the merge base with origin/master
-uv run dsff port_batch build --out out/after --roster --affected --gui --packages
-uv run dsff port_batch build --out out/before --roster --affected --before --gui --packages
-uv run dsff render_compare diff --before out/before --after out/after --out out/rc/<topic>
+# in a worktree of master: the before (store hits when someone built these cars at that commit)
+uv run dsff port_batch build --out out/before --car A --car B ... --gui --packages --jobs 2
+# in your worktree, the change committed
+uv run dsff port_batch build --out out/after --car A --car B ... --gui --packages --jobs 2
+uv run dsff render_compare diff --before <master worktree>/out/before --after out/after --out out/rc/<topic>
 ```
-
-A stored fingerprint names the code units the car ran and the files it read, so the
-store answers offline which cars a change touches (`carstore.affected`). For each car of
-the selection it looks for a base entry: one whose recorded units are those of the
-revision `--base` (default the merge base of HEAD and origin/master), read from git
-(`fingerprint.GitUnits`), preferring the car's own spool ID. The car is
-
-- **affected** when a unit it recorded differs in this checkout, or an input it read
-  changed (every such unit is listed, and the first input);
-- **the same** when none did: this checkout makes the same car;
-- **unknown** when the store has no base entry: a build of the base commit anywhere on the
-  PC puts one in.
-
-`build --affected` builds the affected and unknown cars only, with the IDs of the whole
-selection. `--roster` is dsff install's selection and IDs (`tools/batches/all.txt`, then
-the FM4 DLC packs' cars, `--id-policy asi --root-limit 3003`), so a subset gets the IDs a
-full build gave its cars and the store's full builds match it. `build --before` takes
-every car from the store as `--base`'s code made it (the store's entries checked against
-that revision's units) and converts none; a car with no such entry is listed as failed,
-"not in the car store". The pack step of a `--before` build runs this checkout's pack
-code.
-
-Checked 2026-11-05 against the seeded release build (base 8200cfa):
-
-- No converter change: `affected --roster` 0 affected, 721 the same, 0 unknown, 68 s.
-- `lights._headlight_reflectors` rewritten as an equivalent expression (a test edit,
-  not kept): 12 affected, exactly the 12 cars whose stored fingerprints record that
-  unit (AUD_3_R18TDI_11, CHE_2_MonteCarloSS_11, DOD_Challenger392_12, DOD_RamSRT10_06,
-  FOR_1_Fusion_11, HYU_VelosterRMR_11, MCL_41_McLarenF1GTR_98, MCL_43_McLarenF1GTR_97,
-  MIT_HKS_06, PEU_3_905EVO_93, POR_7_RSSpyder_08, SUZ_1_SX4_11), 709 the same. `build
-  --affected` converted those 12 (411 s at 2 slots), and each new fingerprint carries the
-  changed unit; their chunks are byte-identical to the release build's (the rewrite
-  changes no output). `build --affected --before` took the 12 from the store (127 s). The
-  first 4 roster cars, "the same", converted fresh with the change in place (`--no-store`):
-  no changed unit recorded, chunks identical.
-- A fingerprint records the code a car ran, which can depend on a cache: a car whose
-  sound banks or damage host were cached in one build and computed in the other records
-  the decoding units only in the second. A car that read the cache depends on the cache
-  file (an input), not on the code that wrote it, as for `--reuse`; `affected` answers the
-  same way.
-
 ### Builds past 4 GiB
 
 A CHNK's `total_size` and every entry offset are u32 (`chnk.HEADER`,
