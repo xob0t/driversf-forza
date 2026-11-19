@@ -896,7 +896,8 @@ class InteriorGlass:
     Feed every glass triangle of the entry with `add` (DSF positions, normals,
     sky terms, s9 bytes); `triangles()` then gives, per window (SlotMapper
     group): the surface (smear rows, planar per window; the windscreen's
-    centre cut out), and the crack and shard layers of the vanilla window it
+    centre cut out; side glass behind the driver's eye on its exterior slot
+    instead, as vanilla draws it), and the crack and shard layers of the vanilla window it
     takes them from (`host`: a Donors, donor_library's, or a list of
     HostWindows to choose from), all bound to the window's own s9 so they
     follow its panel's crack state. A Donors shared by several InteriorGlass
@@ -925,7 +926,8 @@ class InteriorGlass:
 
     def triangles(self) -> list[tuple[list, str]]:
         """[(three (position, uv, normal, sky, s9) vertices, region)], region a
-        key of INTERIOR_BLOCKS."""
+        key of INTERIOR_BLOCKS, or "slot:<name>" for the surface of side glass
+        behind the driver's eye (on its exterior slot, _window)."""
         panes = self.panes()
         donors = self._match(
             {g: pane for g, pane in panes.items() if "/lamp/" not in g and pane.area >= MIN_WINDOW_AREA and pane.rim}
@@ -950,9 +952,22 @@ class InteriorGlass:
             s, t = _dot(p, a_axis), _dot(p, b_axis)
             return (min(u1, max(u0, uc + (s - sc) * k)), min(v1, max(v0, vc + (t - tc) * k)))
 
+        region = "surface"
+        behind = self._behind_eye(group)
+        if behind:
+            # Side glass behind the driver's eye: the window's own exterior slot, mapped
+            # as the exterior glass (SlotMapper), whose bands 1-3 crack and shatter.
+            # Vanilla draws 66 of its 74 such interior windows on the exterior slots,
+            # most with the very UVs of the exterior glass on the same panel record
+            # (research/vehicle-model.md, "Side glass behind the driver's eye").
+            def surface_uv(p):
+                return self.frames.uv(group, p)
+
+            region = "slot:" + slot
+
         lamp = "/lamp/" in group
         s9 = Counter(it[3] for it in items).most_common(1)[0][0]
-        cut = slot == "windscreen" and not lamp and pane.area >= WINDSCREEN_OPEN_AREA
+        cut = slot == "windscreen" and not lamp and not behind and pane.area >= WINDSCREEN_OPEN_AREA
         lo, hi, top = WINDSCREEN_OPEN
         cuts = [
             lambda p: (_dot(p, a_axis) - s0) / ws - lo,
@@ -974,11 +989,12 @@ class InteriorGlass:
             for poly in polys:
                 for n in range(1, len(poly) - 1):
                     tri = (poly[0], poly[n], poly[n + 1])
-                    out.append(([(p, surface_uv(p), nrm, sky, tri_s9) for p, nrm, sky in tri], "surface"))
+                    out.append(([(p, surface_uv(p), nrm, sky, tri_s9) for p, nrm, sky in tri], region))
                     c = _cross(_sub(tri[1][0], tri[0][0]), _sub(tri[2][0], tri[0][0]))
                     kept += 0.5 * math.sqrt(_dot(c, c))
         info = {
             "slot": slot,
+            "surface": region,
             "s9": list(s9[:2]),
             "area": round(pane.area, 3),
             "surface_m2": round(kept, 3),
@@ -1010,8 +1026,8 @@ class InteriorGlass:
         front edge is behind the driver's eye (Donors.eye_z), which takes none.
         Vanilla gives a set to 267 of the 286 side windows that reach the eye or lie
         ahead of it (the 19 others are mostly passenger doors of vans and buses whose
-        driver's door has one) and to 2 of the 74 wholly behind it, which mostly
-        sample the exterior glass's side-rear slot instead; 141 of 144 windscreens and
+        driver's door has one) and to 2 of the 74 wholly behind it, 66 of which
+        sample the exterior glass's slots instead (_window); 141 of 144 windscreens and
         117 of 138 rear windows have one (research/vehicle-model.md, "Which vanilla
         window a converted window takes its set from"). Forza's section names don't
         say it: a vent window is glassLF and the door beside the driver glassLM."""
@@ -1019,13 +1035,21 @@ class InteriorGlass:
         if "/roof" in group:
             return None
         if _sideways(tris):
-            eye = self.donors.eye_z
-            if eye is not None and max(p[2] for t in tris for p in t) < eye:
+            if self._behind_eye(group):
                 return None
             x = sum(p[0] for t in tris for p in t)
             return "side", 1 if x > 0 else -1
         kind = {"windscreen": "front", "rear": "rear"}.get(self.frames.slot(group))
         return (kind, 0) if kind else None
+
+    def _behind_eye(self, group: str) -> bool:
+        """Side glass (no lamp cover, no roof glass) whose front edge is behind the
+        driver's eye (Donors.eye_z; never without an eye)."""
+        eye = self.donors.eye_z
+        if eye is None or "/roof" in group or "/lamp/" in group:
+            return False
+        tris = [it[0] for it in self.items[group]]
+        return _sideways(tris) and max(p[2] for t in tris for p in t) < eye
 
     def _match(self, panes: dict[str, _Pane]) -> dict[str, tuple[DonorSet, float]]:
         """Window group -> (the vanilla window whose cracks and shards it takes, the
