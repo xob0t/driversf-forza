@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -284,7 +283,7 @@ def test_reuse_copies_unchanged_cars_and_honours_the_predicate():
         assert (folder / "new" / "sound" / media / "sweep_new.wav").read_bytes() == b"wav"
         # The refreshed report is this build's own file (remerge reads it), not written
         # through the hard link into the earlier build's.
-        assert not os.path.samefile(work / f"{media}.json", old / "work" / f"{media}.json")
+        assert not (work / f"{media}.json").samefile(old / "work" / f"{media}.json")
         assert json.loads((work / f"{media}.json").read_text())["host"] == 198
         again = port_batch.Reuse(argparse.Namespace(**{**vars(args()), "rebuild_where": "host == 198"}), work)
         assert again.take(job) is None and again.rebuilt[media] == "--rebuild-where"
