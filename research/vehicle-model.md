@@ -274,8 +274,10 @@ frames), then emitted in the vanilla layout on each window's own s9:
   v 0.008–0.052, inset from the strip edges); windscreens of 0.3 m² or more
   keep only the part outside `WINDSCREEN_OPEN` (s 0.06–0.94, t below 0.22 of
   the window's frame), cut exactly along those lines;
-- cracks and shards: the host interior's own (`glass.host_windows`, read
-  before the interior is rebuilt; #459, below).
+- cracks and shards: those of the vanilla interior window that matches the
+  window best (`glass.donor_library`; #459, "Which vanilla window a converted
+  window takes its set from" below). Until 2026-11-19 they were the host
+  interior's own (`glass.host_windows`).
 
 Every host triangle that lands on its window is kept, whether or not the
 driver's eye sees it: the port draws the layers its host draws, and the
@@ -347,9 +349,11 @@ triangles are lifted onto the converted glass, on the window's own s9. A
 piece is left out when its depth is past the centre of a smaller window; a
 triangle, when its centroid lands outside the window or a corner more than
 one grid cell (1 cm) outside it. Windows the host has no crack
-and shard triangles for keep the surface only, as on the host (the vanilla
+and shard triangles for kept the surface only (the vanilla
 Challenger 172's cockpit has no side glass; the Charger 176's rear side
-glass is smear only).
+glass is smear only). The placement still holds; which window the set comes
+from is now chosen among every vanilla interior's ("Which vanilla window a
+converted window takes its set from" below).
 
 **Broken glass moves in pieces** (confirmed-static, 2026-11-14; owner's
 report on the installed master 73830ef4: the Solstice GXP port, spool 620 on
@@ -563,6 +567,160 @@ lexan<suffix> (the MC12: cockpit glassF/LF/RF, body lexanF/LF/RF).
 `interior_glass_skin` gives the cockpit pane the lexan section's panel binding
 (the same window, #411), so its layers follow the windscreen's crack state,
 not the chassis'.
+
+**Which vanilla window a converted window takes its set from** (#459,
+2026-11-19; scripts in `out/i459m` of the PR's worktree). The rule above
+paired each converted window with its host's window of the kind, nearest
+centre first. Where the two differ in shape, the pieces crowd, spread or fall
+out; where the host has no set for the kind, the window gets none. Survey of
+the roster without converting (each port's converted windows rebuilt from its
+latest car-store chunk, 3,955 windows on 692 cars; `ports.py`, `portwin.py`,
+`survey.py`): on the 2,201 windows with a host set, the move of the set's
+corners (below) is 58 mm RMS at the median, 197 mm at p90, 700 mm at most, and
+2,972 triangles go past a smaller window's centre. 161's interior has no sets
+at all, 172's cockpit no door glass, 205 and 208 no rear sets, so the
+windscreen, doors or rear window of their ports stayed bare.
+
+Vanilla's sets belong to windows, not to cars (`share.py`: two windows share a
+triangle when its UV triple and its edge lengths to 1 mm match). Pairs of
+vanilla cars whose windscreens share 80% or more of their triangles share
+their rear (12 of 12) and side sets (15 of 22, 14 of 16) too: copies of one
+interior (variants of a model). Where DSF adapted a windscreen set to another
+window (50 to 80% shared), the two cars share their rear set in 17 of 204
+pairs (8%) and their side sets in 9 to 10%, against 1.4 to 2.9% for cars whose
+windscreens share nothing. No vanilla interior carries one set on two windows.
+So each converted window chooses its set on its own, and each vanilla window
+goes to one window of a port.
+
+Which vanilla windows carry a set (`vanilla.py`, 150 interiors; the driver's
+eye from `cockpit.head_camera`, 147 of them):
+
+| window | with a set | without |
+| --- | --- | --- |
+| windscreen | 141 | 3 (161's, smear only; one on the exterior slots; one other) |
+| rear window | 117 | 21 (10 smear only, 11 on the exterior glass's slots) |
+| side glass reaching the eye or ahead of it (front edge at or ahead of the eye's z) | 267 | 19, all on the right (passenger) side but 258's sliver: 126, 127, 129, 130, 149 (two), 156, 159, 160, 167, 189, 242, 246, 284, 285, 287, 290, 291 (15 smear only, 3 on the exterior slots) |
+| side glass wholly behind the eye | 2 (130's rear sides) | 72: 66 on the exterior slots, 4 smear only, 2 other |
+| one record holding both sides' quarter lights | 1 | 39 |
+
+So DSF gives a set to the windscreen, the rear window and the side glass
+beside or ahead of the driver, as a rule, and not to the glass behind the
+driver's head, which it mostly draws with the exterior slot's cracks instead.
+Where a vanilla car lacks one (161, 172's door glass, a van's passenger door),
+it is that car's, not a rule of the window: the 18 bare windows ahead of the eye are the passenger side of 17 cars, 16 of which have a set on the driver's side. Forza's section names don't say
+which side glass is beside the driver: on cars with a vent the vent is glassLF
+and the door glassLM (Aston Martin V8 Vantage '77, Barracuda '68); over the
+roster's converted side glass, glass*F is at or ahead of the eye on all 1,094
+windows, glass*R behind it on 871 of 905, glass*M on 133 of 280 (doors) and
+behind on 147 (rear doors, quarter lights).
+
+Rule (`glass.InteriorGlass._kind`, `_match`, `glass.mismatch`,
+`glass.donor_library`): every vanilla interior window with a set is a donor
+(527: 141 windscreens, 117 rear windows, 141 left and 128 right side windows;
+the one two-sided record is not, its pieces would land on one window from two).
+A converted windscreen, rear window, or side glass whose front edge is at or
+ahead of the driver's eye (`Donors.eye_z`, the Forza eye placed) takes the set
+of the donor of its kind (and side) that the move changes least; side glass
+behind the eye and roof glass take none. Pairs go best first and each donor to
+one window of the port.
+
+The measure is the RMS distance the move (`_carry`, the placement above) moves
+the donor's crack and shard corners, in metres, relative to the two windows'
+box centres. A piece moves by its centroid's shift d and turns by the change of
+its direction's angle phi, so over its corners (mean offset 0 from the
+centroid) the mean squared move is |d|^2 + 2(1 - cos phi) mean |r|^2:
+
+- d holds the rim reach per direction in metres: the piece keeps its depth
+  inside the rim, so it moves exactly by the difference of the two windows'
+  rims in its direction (and with the box, by their size and aspect); a donor
+  of the window's own shape moves nothing;
+- the turn term holds the pieces' turning where the aspect differs (exact, but
+  it changes no choice: the held-out ranks below are the same without it);
+- dropped pieces need no term of their own: a piece is dropped when its depth
+  is past the window's centre, and the same formula counts the move that takes
+  it there;
+- area is not a term: two windows of equal area can differ in reach in every
+  direction, and area alone ranks DSF's own reuse worse (below).
+
+Held out (`heldout.py`): each vanilla window with a set, as the converted
+window, ranks every other car's window of its kind and side; where are the
+windows DSF shared its set with? Rank 1 and the partner's rank (percentile of
+the candidates), by how much of the set the pair shares:
+
+| shared | windows | partner first (chance) | partner's median rank |
+| --- | --- | --- | --- |
+| 80 to 100% (copied interiors) | 150 | 85% (1.0%) | 0% |
+| 50 to 80% (an adapted set) | 245 | 15% (6.0%) | 6.4% |
+| 30 to 50% | 299 | 9% (8.7%) | 11% |
+
+Other measures on the 50 to 80% pairs: without the turn term the same; the
+rim reach over every direction (not only where the set's pieces are) 18%, 7.8%;
+box extents 18%, 6.9%; area 12%, 7.9%. DSF adapted sets among the most similar
+6% of windows, not always the most similar; the shape measures can't be told
+apart this way.
+
+On the roster (`compare.py`, the same windows chosen by each measure):
+
+| measure | windscreen: move, dropped | side: move, dropped, set size | most used donor |
+| --- | --- | --- | --- |
+| set corners (the rule) | 26 mm, 4.9% | 13 mm, 3.0%, 130 | 76 ports |
+| rim reach, every direction | 37 mm, 6.4% | 24 mm, 3.9%, 153 | 121 ports |
+| both | 30 mm, 5.7% | 18 mm, 3.2%, 148 | 104 ports |
+
+The rule moves the pieces least and drops the fewest, because it measures the
+pieces' own move. Measuring where the set has pieces lets it prefer sets that
+sit where the shapes agree: chosen side sets have 130 triangles at the median,
+vanilla's 190 (windscreens 717 and 842).
+
+Roster survey, before (the host's window) and after (`summary.py`; the
+windscreen surfaces cut by `WINDSCREEN_OPEN` are closed again from their UVs'
+frame, +3.8% of area at the median against the converted pane):
+
+| kind | windows | with a set before / after | new donor | gain a set | lose it | dropped triangles before / after |
+| --- | --- | --- | --- | --- | --- | --- |
+| windscreen | 595 | 583 / 595 | 549 | 12 | 0 | 33,911 / 26,529 |
+| rear window | 598 | 505 / 598 | 470 | 93 | 0 | 18,678 / 15,737 |
+| side glass at or ahead of the eye | 1,540 | 1,194 / 1,540 | 1,101 | 346 | 0 | 18,218 / 15,635 |
+| side glass behind the eye, roof | 1,222 | 27 / 0 | | | 27 | |
+
+On the 2,282 windows with a set before and after, the move is 58 mm RMS at
+the median before and 18 mm after (p90 197 and 37 mm), the share of the set's
+triangles dropped 5.7% and 4.1% (p90 18.8 and 14.7%), and the triangles past
+a window's centre 2,972 and 340. 162 windows keep their host's window. Of the
+27 windows that lose their set, 22 had a host window at or ahead of the
+host's eye (a door's set the nearest-centre pairing gave to the glass behind).
+
+What it leaves. A vanilla set placed on its own window drops 5.9% of its
+triangles (12,685 of 215,734) with the placement's "lands outside the window"
+test, so that test, not the donor, is most of what is still dropped.
+Every measure concentrates on a few windows of average shape: 193's doors
+take 86 and 75 ports' side glass, 143's windscreen 63 ports'. Side glass
+behind the eye keeps the smear surface only, where vanilla mostly draws its
+own with the exterior side-rear slot. (#627; the outside test: #626.)
+
+Built (5 cars only, the rest of the roster not built: AST_V8Vantage_77,
+CHE_CorvetteZ06_02, PLY_Barracuda_68, MAS_GranTurismoMC_10, BEN_7_Speed8_03 as
+IDs 1 to 5, at a58a9398 and with the rule; `out/i459m/before5`, `after5`). The
+logs' `interior glass:` lines: the Corvette (host 161) takes sets for its
+windscreen (228's, 18 mm), both doors (184's, 195's, 9 and 10 mm) and rear
+window (138's), where it had none; the Aston's and Barracuda's glassLM and glassRM doors
+take sets (149's and 183's on the Aston, 196's on the Barracuda; 9 to 19 mm); their quarter glass,
+behind the eye, none. The Bentley's lexan windscreen pane (0.28 m², the
+cockpit carbin's, sharing its s9 with the side lexan) takes 183's at 122 mm,
+the largest move of the five. `render_compare diff` (`out/rc/glass-donors`):
+the five differ in the cockpit views only, along the crack and shard geometry.
+`glass.check` passes on all five.
+
+In game (VM runs `vm1-20261119-041346` before, `vm1-20261119-041815` after,
+`-GlassLadder`, IDs 1 to 5, 125 (the Aston's host) and 288 (its new windscreen
+donor)): no crash. The Barracuda's windscreen at 0.25 shows crack lines from
+the left A-pillar and the top right corner (172's set before: one short line
+at the top left). The Maserati's shards at full damage are frosted clusters at
+the top corners, where 221's set crowded along the whole top edge before. The
+Corvette's new crack lines are at the windscreen's edges, outside the probe's
+frame at 0.25; the Aston's windscreen layers stay above it as on master.
+Vanilla 288 shows its own left-pillar cluster.
+
 
 Survey (293 of the 721 roster cars, the rest not built; `out/i459/survey.txt`
 in the #459 worktree): 899 windows take host layers, against 1,103 with

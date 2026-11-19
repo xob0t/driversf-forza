@@ -1,5 +1,5 @@
-"""Cockpit glass (glass.InteriorGlass): the cracks and shards of each converted window
-are the host interior's own (#459).
+"""Cockpit glass (glass.InteriorGlass): each converted window takes the cracks and shards
+of the vanilla window of its kind that matches it best (#459).
 
     uv run python tests/test_interior_glass.py     # or every test: uv run python -m tests
 """
@@ -67,39 +67,107 @@ def test_shard_lands_in_the_same_corner_at_the_same_depth():
     assert g.report["glassf/windscreen"]["host_window"] == [0, 5]
 
 
-def test_each_host_window_goes_to_one_window():
-    """Two converted side windows on the left, one host door window: the nearer one
-    takes its cracks; the other keeps its surface only (vanilla quarter lights)."""
-    crack = (((0.8, 0.5, 0.2), (0.8, 0.5, 0.25), (0.8, 0.505, 0.25)), CRACK_UV, (0.5,) * 3)
-    door = [(((0.8, 0.3, -0.3), (0.8, 0.3, 0.3), (0.8, 0.7, 0.3)), SMEAR_UV, (0.5,) * 3)]
-    door += [(((0.8, 0.3, -0.3), (0.8, 0.7, 0.3), (0.8, 0.7, -0.3)), SMEAR_UV, (0.5,) * 3), crack]
-    host = [glass.HostWindow((10, 13), door, [crack])]
-    g = glass.InteriorGlass(host=host)
-    for name, z0, z1 in (("glassLF", -0.3, 0.3), ("glassLR", -0.8, -0.45)):
-        for pts in (
-            ((0.8, 0.3, z0), (0.8, 0.3, z1), (0.8, 0.7, z1)),
-            ((0.8, 0.3, z0), (0.8, 0.7, z1), (0.8, 0.7, z0)),
-        ):
-            g.add(name, pts, [(1.0, 0.0, 0.0)] * 3, [0.5] * 3, b"\x0a\x0d\x00\x01")
-    regions = {}
+def _side_window(s9, x, z0, z1, overlay, car=None):
+    """A vanilla door-like pane at x (facing along x), z0 to z1, 0.3 to 0.7 m high."""
+    a, b, c, d = (x, 0.3, z0), (x, 0.3, z1), (x, 0.7, z1), (x, 0.7, z0)
+    tris = [((a, b, c), SMEAR_UV, (0.5,) * 3), ((a, c, d), SMEAR_UV, (0.5,) * 3)]
+    return glass.HostWindow(s9, tris + overlay, overlay, car=car)
+
+
+def _add_side(g, section, x, z0, z1):
+    for pts in (((x, 0.3, z0), (x, 0.3, z1), (x, 0.7, z1)), ((x, 0.3, z0), (x, 0.7, z1), (x, 0.7, z0))):
+        g.add(section, pts, [(1.0 if x > 0 else -1.0, 0.0, 0.0)] * 3, [0.5] * 3, bytes((10, 13, 0, 1)))
+
+
+def test_each_vanilla_window_goes_to_one_window():
+    """Two converted front side windows on the left, one vanilla door: the one it fits
+    best takes its cracks, the other keeps its surface only (no vanilla interior carries
+    one set on two windows), and a later InteriorGlass sharing the Donors doesn't get it."""
+    crack = (((0.8, 0.5, 0.5), (0.8, 0.5, 0.55), (0.8, 0.505, 0.55)), CRACK_UV, (0.5,) * 3)
+    donors = glass.Donors(windows=[_side_window((10, 13), 0.8, 0.05, 0.65, [crack], car=7)])
+    g = glass.InteriorGlass(host=donors)
+    _add_side(g, "doorA", 0.8, 0.05, 0.65)  # the donor's own shape
+    _add_side(g, "doorB", 0.8, 0.7, 0.9)
     g.triangles()
-    for group, info in g.report.items():
-        regions[group.split("/")[0]] = info.get("host_window")
-    assert regions == {"glasslf": [10, 13], "glasslr": None}
-    assert host == []  # taken: a later InteriorGlass sharing the list doesn't get it
+    took = {group.split("/")[0]: info.get("host_window") for group, info in g.report.items()}
+    assert took == {"doora": [10, 13], "doorb": None}
+    assert g.report["doora/side_front/l"]["donor_car"] == 7
+    assert g.report["doora/side_front/l"]["donor_rms_mm"] == 0.0
+    assert donors.taken == {(7, (10, 13))}
+    later = glass.InteriorGlass(host=donors)
+    _add_side(later, "doorC", 0.8, 0.05, 0.65)
+    assert {r for _, r in later.triangles()} == {"surface"}
 
 
-def test_no_host_window_on_that_side():
-    """A right-hand host door doesn't go onto a left-hand window."""
-    crack = (((-0.8, 0.5, 0.0), (-0.8, 0.5, 0.05), (-0.8, 0.505, 0.05)), CRACK_UV, (0.5,) * 3)
-    host = [glass.HostWindow((8, 10), [crack], [crack])]
-    g = glass.InteriorGlass(host=host)
-    for pts in (
-        ((0.8, 0.3, -0.3), (0.8, 0.3, 0.3), (0.8, 0.7, 0.3)),
-        ((0.8, 0.3, -0.3), (0.8, 0.7, 0.3), (0.8, 0.7, -0.3)),
-    ):
-        g.add("glassLF", pts, [(1.0, 0.0, 0.0)] * 3, [0.5] * 3, b"\x0a\x0d\x00\x01")
-    assert {r for _, r in g.triangles()} == {"surface"}
+def test_the_window_takes_the_set_that_fits_it_best():
+    """Two vanilla windscreens, 1.4 x 0.7 m (car 1) and 1.0 x 0.5 m (car 2): a 1.0 x 0.5 m
+    converted windscreen takes car 2's set, which the move leaves where it is, whichever
+    car the port's host is."""
+    z = 1.0
+    shard = (((0.48, 0.48, z), (0.46, 0.48, z), (0.48, 0.46, z)), SHARD_UV, (0.5,) * 3)
+    big = _host_window((0, 5), 1.4, 0.7, z, [shard])
+    small = _host_window((0, 3), 1.0, 0.5, z, [shard])
+    big.car, small.car = 1, 2
+    g = _windscreen(1.0, 0.5, 1.1, [big, small])
+    tris = [corners for corners, r in g.triangles() if r != "surface"]
+    assert len(tris) == 1
+    info = g.report["glassf/windscreen"]
+    assert (info["donor_car"], info["host_window"], info["donor_rms_mm"]) == (2, [0, 3], 0.0)
+
+
+def test_mismatch_is_how_far_the_set_moves():
+    """The RMS move of a set's corners: 0 onto a window of its own shape; onto a window
+    2 cm wider on each side, a piece at the left edge moves 2 cm with the rim."""
+    z = 1.0
+    shard = (((0.70, 0.35, z), (0.69, 0.35, z), (0.70, 0.34, z)), SHARD_UV, (0.5,) * 3)
+    d = glass.donor_set(_host_window((0, 5), 1.4, 0.7, z, [shard]))
+    same = glass._Rim(_windscreen(1.4, 0.7, z, []).panes()["glassf/windscreen"])
+    wider = glass._Rim(_windscreen(1.44, 0.7, z, []).panes()["glassf/windscreen"])
+    assert glass.mismatch(d, same) == (0.0, 0.0)
+    rms, dropped = glass.mismatch(d, wider)
+    assert abs(rms - 0.02) < 0.002 and dropped == 0.0
+
+
+def test_side_glass_behind_the_eye_takes_none():
+    """Side glass wholly behind the driver's eye keeps its surface only, even beside a
+    vanilla window of its own shape (vanilla: 2 of 74 such windows have a set); the door
+    beside the eye takes one whatever Forza calls it (glassLM on cars with a vent)."""
+    crack = (((0.8, 0.5, -0.6), (0.8, 0.5, -0.55), (0.8, 0.505, -0.55)), CRACK_UV, (0.5,) * 3)
+    crack2 = (((0.8, 0.5, 0.0), (0.8, 0.5, 0.05), (0.8, 0.505, 0.05)), CRACK_UV, (0.5,) * 3)
+    donors = glass.Donors(
+        windows=[
+            _side_window((10, 13), 0.8, -0.8, -0.45, [crack], car=1),
+            _side_window((10, 13), 0.8, -0.3, 0.3, [crack2], car=2),
+        ],
+        eye_z=-0.1,
+    )
+    g = glass.InteriorGlass(host=donors)
+    _add_side(g, "glassLR", 0.8, -0.8, -0.45)  # behind the eye
+    _add_side(g, "glassLM", 0.8, -0.3, 0.3)  # the door, spanning the eye
+    g.triangles()
+    took = {group.split("/")[0]: info.get("donor_car") for group, info in g.report.items()}
+    assert took == {"glasslr": None, "glasslm": 2}
+
+
+def test_fresh_donors_forget_what_was_taken():
+    """Each conversion attempt starts with every vanilla window free."""
+    crack = (((0.8, 0.5, 0.5), (0.8, 0.5, 0.55), (0.8, 0.505, 0.55)), CRACK_UV, (0.5,) * 3)
+    donors = glass.Donors(windows=[_side_window((10, 13), 0.8, 0.05, 0.65, [crack], car=7)])
+    donors.taken.add((7, (10, 13)))
+    again = donors.fresh(eye_z=0.0)
+    assert not again.taken and again.eye_z == 0.0 and again.sets == donors.sets
+    assert again.window(again.sets[0]) is donors.window(donors.sets[0])
+
+
+def test_a_record_with_panes_on_both_sides_is_no_donor():
+    """One vanilla record holding the left and right quarter lights would put both panes'
+    pieces on one window."""
+    crack = (((0.8, 0.5, -0.6), (0.8, 0.5, -0.55), (0.8, 0.505, -0.55)), CRACK_UV, (0.5,) * 3)
+    left = _side_window((0, 0), 0.8, -0.8, -0.45, [crack])
+    right = _side_window((0, 0), -0.8, -0.8, -0.45, [])
+    both = glass.HostWindow((0, 0), left.tris + right.tris, [crack])
+    assert both.side is None and glass.donor_set(both) is None
+    assert left.side == 1 and right.side == -1
 
 
 def test_rear_window_does_not_take_the_windscreen():
@@ -113,7 +181,7 @@ def test_rear_window_does_not_take_the_windscreen():
     for pts in _quad(-0.5, 0.5, 0.0, 0.4, -1.1):
         g.add("glassR", pts, [(0.0, 0.0, -1.0)] * 3, [0.5] * 3, bytes((0, 22, 0, 1)))
     assert {r for _, r in g.triangles()} == {"surface"}
-    assert [h.kind for h in host] == ["front", "rear"] and host[0] is front  # not taken
+    assert [h.kind for h in host] == ["front", "rear"] and not g.donors.taken
 
 
 def test_rear_window_takes_the_host_rear_layers():
@@ -130,7 +198,7 @@ def test_rear_window_takes_the_host_rear_layers():
     layers = [r for _, r in g.triangles() if r != "surface"]
     assert layers == ["shard_bright"] * 3
     assert g.report["glassr/rear"]["host_window"] == [0, 22]
-    assert host == [front]
+    assert g.donors.taken == {(None, (0, 22))}
 
 
 def test_deeper_than_the_window_reaches():

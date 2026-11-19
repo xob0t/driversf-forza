@@ -87,7 +87,7 @@ def add_geometry(
     rectangle squashes Forza's glass UVs into it, except INTERIOR_GLASS_RECT
     (the interior entry), which lays each window out like vanilla interior glass
     (glass.InteriorGlass; per-window report in builder.interior_glass), with the
-    cracks and shards of the host interior's windows (host_glass: glass.host_windows)."""
+    cracks and shards of the vanilla windows they match (host_glass: glass.donor_library)."""
     textured = textures is not None
     tyre_map = skies = None
     if wheel:
