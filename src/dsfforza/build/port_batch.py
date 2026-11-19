@@ -2712,8 +2712,8 @@ ROSTER_ROOT_LIMIT = 3003  # install.ASI_ROOT_LIMIT: every base ID below 1000 plu
 
 def roster_selection(args) -> None:
     """--roster: the cars and IDs of dsff install's build (tools/batches/all.txt, then the FM4
-    DLC packs' cars; --id-policy asi, --root-limit 3003), so a few cars of it (--car with
-    --roster) get the IDs a full build gave them, and the car store's full builds match it."""
+    DLC packs' cars; --id-policy asi, --root-limit 3003), so its cars get the IDs dsff
+    install's build gives them, and the car store's full builds match it."""
     if getattr(args, "roster", False):
         args.list = [*(args.list or []), ROSTER]
         args.fm4_dlc_cars = True

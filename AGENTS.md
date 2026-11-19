@@ -152,12 +152,10 @@ exceptions, and the PR says where each rule comes from.
   GitHub: a body that references `![alt](./before-after.jpg)` gets that link
   rewritten to the uploaded file. Keep them under ~500 KB each (JPG).
 - Converter changes: say which cars draw differently, not only the ones you
-  meant to change. `uv run dsff port_batch affected --roster` lists the cars
-  your change touches, from the car store's fingerprints, without building.
-  Build those (`port_batch build --out out/after --roster --affected --gui
-  --packages`) and take the before from the store, not from a fresh master
-  build (the same with `--out out/before ... --before`; `research/batch.md`,
-  "Which cars a change affects"). Run
+  meant to change. Build about five cars, the ones the change is for and a
+  few it shouldn't touch, with the same `port_batch build --car ...` command
+  before (a worktree of master) and after (`research/batch.md`, "Checking a
+  converter change"). Run
   `uv run dsff render_compare diff --before out/before --after out/after --out out/rc/<topic>`
   at idle priority, and put its list of changed cars and regions in the PR,
   with its sheet for any car you didn't expect to change
@@ -212,11 +210,10 @@ exceptions, and the PR says where each rule comes from.
   per-build maximum; the pool shares the slots between builds, first come,
   first served (`research/batch.md`, "Job pool").
 - Builds share one car store (`src/dsfforza/build/carstore.py`,
-  `%LOCALAPPDATA%\dsfforza\store`): a car any worktree converted from the same
-  job, inputs and code is taken from it, without `--reuse`, so a build of a
-  commit someone already built is all store hits. `port_batch affected` names
-  the cars the store doesn't know for the base commit; build that commit for
-  them once (in a worktree of it), then they are hits too.
+  `%LOCALAPPDATA%\dsfforza\store`): a car any worktree converted at the same
+  commit, with the same options, ID and source, is taken from it without
+  `--reuse`. A new commit converts every car; uncommitted changes under `src/`
+  reuse nothing (`research/batch.md`, "Reuse").
 - In-game tests go through `tools\wsb\run-series.ps1` (read it and
   `tools\wsb\guest\run-test.ps1`). Runs are serialised by a mutex; never kill
   `Driver.exe` or another run's processes. Prefer `-Vm` (headless VMware
@@ -244,8 +241,8 @@ exceptions, and the PR says where each rule comes from.
   Run heavy offline jobs (surveys, renders, builds) through the pool (the `dsff`
   builds, renders and surveys do) at Idle priority; a heavy job of your own
   outside it takes CPU the pool can't see.
-- Full-roster builds take over an hour and slow everyone's VM runs. Use
-  `--affected` and the store's before instead; survey offline where you can.
+- Full-roster builds take over an hour and slow everyone's VM runs. Build
+  the few cars a change needs instead; survey offline where you can.
 - Never modify the installed game (`DSF_GAME_DIR`) except through
   `tools\install.ps1` when asked.
 
