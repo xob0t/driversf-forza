@@ -781,10 +781,16 @@ def donor_library(stream) -> Donors:
                 if (d := donor_set(w)) is not None
             ]
             if path is not None:
-                folder.mkdir(parents=True, exist_ok=True)
+                # The cache only saves time: a folder that can't be written leaves
+                # the sets in memory and the conversion goes on.
                 tmp = path.with_suffix(f".{os.getpid()}.tmp")
-                tmp.write_bytes(pickle.dumps(sets))
-                tmp.replace(path)
+                try:
+                    folder.mkdir(parents=True, exist_ok=True)
+                    tmp.write_bytes(pickle.dumps(sets))
+                    tmp.replace(path)
+                except OSError:
+                    with contextlib.suppress(OSError):
+                        tmp.unlink(missing_ok=True)
         _LIBRARY[key] = (sets, interiors)
     sets, interiors = _LIBRARY[key]
     loaded: dict = {}
