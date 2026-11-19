@@ -215,11 +215,11 @@ def technique_source(name: str) -> str:
     return name
 
 
-# Virtual dials drawn on blank digital displays, display faces or a virtual display
-# (cockpit.virtual_gauges): flat colour cells of the interior atlas, no Forza texture
-# behind them.
-_add(TRIM, None, "dsf_dial_mark dsf_dial_mark_dark dsf_dial_red dsf_dial_display dsf_dial_bezel")
-_add(TRIM, None, "dsf_needle dsf_needle_hub")
+# A virtual display's screen and housing (cockpit.pod_display, a steering-wheel display
+# moved onto the dash) and the dash scene's needles (cockpit.dash_needles): flat colour
+# cells of the interior atlas, no Forza texture behind them.
+_add(TRIM, None, "dsf_dial_display dsf_dial_bezel")
+_add(TRIM, None, "dsf_needle")
 # Livery decal slots: their raw UV0 spans the whole unit square, i.e. a texture of
 # their own (the player's livery), squeezed by m_UVOffsetScale onto an arbitrary patch
 # of the car atlases. The KOE_Agera_11's rear-wing pair lands on a 3-texel column at the

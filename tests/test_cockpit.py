@@ -95,63 +95,18 @@ def test_upgrade_bonnets_left_out():
     assert kept == [n for n in names if n not in dropped], kept
 
 
-class _Car:
-    """handling.ForzaCar's two fields the virtual dials read."""
-
-    redline = 6800.0
-    top_speed_mph = 150.0
-
-
-def test_virtual_dials_on_a_blank_display():
-    # CL65-like: no speed or tach needle, a blank 16 x 10 cm display 0.7 m ahead of the eye.
-    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
-    eye = (0.08, 0.05, 0.7)
-    dials, report, extra = cockpit.virtual_gauges({"interior": panel}, {}, eye, _Car(), 2)
-    assert extra == {}
-    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"]
-    assert set(report["dials"]) == {"tach", "speed"}
-    for needle, face, g, cal in dials:
-        assert cal.source == "virtual dial" and not cal.reverse and cal.rest_deg == 0
-        assert g.normal[2] < -0.99  # into the dash
-        assert abs(g.pivot[2]) < 1e-9 and 0 < g.pivot[0] < 0.16 and 0 < g.pivot[1] < 0.10
-        # The engine turns the needle sweep x input degrees: the whole scale at the dial's end.
-        unit = cockpit.GAUGE_UNITS[g.family]
-        assert abs(cal.sweep * cal.dial_max / unit - g.sweep_deg) < 1e-6
-        assert needle.name == f"{g.family}_min" and cockpit.NEEDLE.match(needle.name)
-        # At rest the needle points at 0, half the span left of straight up (driver's view).
-        tip = max(cockpit.section_points(needle), key=lambda p: (p[0] - g.pivot[0]) ** 2 + (p[1] - g.pivot[1]) ** 2)
-        rest = math.degrees(math.atan2(tip[0] - g.pivot[0], tip[1] - g.pivot[1]))
-        assert abs(rest + g.sweep_deg / 2) < 2.0, (rest, g.sweep_deg)
-        assert all(p[2] > 0 for p in cockpit.section_points(face))  # over the display, towards the driver
-        for sub in face.subsections:
-            assert cockpit.FORCE_FLAT.match(sub.material)
-            assert fm.classify_cockpit(sub.material, "interior") == (fm.TRIM, None)
-    tach, speed = (cal for _, _, _, cal in dials)
-    assert tach.dial_max == 7000 and speed.dial_max == 160  # the first major mark at or past the redline, the top speed
-    assert dials[0][2].pivot[0] < dials[1][2].pivot[0]  # tachometer on the left
-
-
-def test_virtual_dial_marks_take_the_colour_that_contrasts_more():
-    # WCAG 2 contrast against the two mark colours: (226, 226, 222) and (22, 22, 22) cross at grey 114.
-    assert cockpit.mark_technique((12, 14, 16)) == "dsf_dial_mark"
-    assert cockpit.mark_technique((110, 110, 110)) == "dsf_dial_mark"
-    assert cockpit.mark_technique((118, 118, 118)) == "dsf_dial_mark_dark"
-    assert cockpit.mark_technique((200, 196, 170)) == "dsf_dial_mark_dark"
-
-
 def test_needles_the_host_cannot_turn_are_dropped():
     # Vanilla 250 (the Volt's host) has no gauge record, so add_gauge_records can't give
-    # it one: a needle (here a virtual dial) whose id the host can't turn is left out.
-    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
-    dials, report, _ = cockpit.virtual_gauges({"interior": panel}, {}, (0.08, 0.05, 0.7), _Car(), 2)
-    cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {"interior": panel}, {}, virtual=report)
-    for needle, face, g, cal in dials:
-        cf.gauges[g.family], cf.calibration[g.family], cf.needles[g.family] = g, cal, {"min": needle}
-        cf.static[face.name] = face
+    # it one: a needle whose id the host can't turn is left out, and reported.
+    cf = cockpit.CockpitFit(None, {}, (0, 0, 0), (0, 0, 0), "", {}, {}, {})
+    for family in ("tach", "speed"):
+        needle = _needle_pose(f"{family}_min", 0)
+        cf.gauges[family] = cockpit.Gauge(family, (0.3, 0.7, -0.7), (0.0, 0.0, -1.0), 270.0, needle)
+        cf.needles[family], cf.calibration[family] = {"min": needle}, object()
     assert cockpit.drop_unturned(cf, {2: 0}) == ["tach"]
-    assert set(cf.gauges) == {"speed"} and set(cf.needles) == {"speed"}
-    assert "dsf_dial_tach" not in cf.static and "dsf_dial_speed" in cf.static
-    assert set(cf.virtual["dials"]) == {"speed"} and cf.virtual["no_host_gauge"] == ["tach"]
+    assert set(cf.gauges) == {"speed"} and set(cf.needles) == {"speed"} and set(cf.calibration) == {"speed"}
+    assert cf.unturned == ["tach"]
+    assert cockpit.drop_unturned(cf, {2: 0}) == [] and cf.unturned == []
 
 
 def _gauge_hierarchy(gauge_id: int) -> bytes:
@@ -219,49 +174,6 @@ def test_one_gauge_host_gets_the_other_record():
         assert cockpit.add_gauge_records(data, {have}) == (data, [])
 
 
-def test_no_virtual_dial_on_the_steering_wheel_or_for_needles():
-    panel = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
-    eye = (0.08, 0.05, 0.7)
-    # Needles are drawn in the car's frame: they wouldn't turn with the wheel (without
-    # the wheel's fit there is no virtual display either).
-    dials, report, extra = cockpit.virtual_gauges({"steering_wheel": panel}, {}, eye, _Car(), 2)
-    assert dials == [] and extra == {} and report == {"missing": ["tach", "speed"]}
-    # A car with both needles keeps its display as it is.
-    both = {"speed": object(), "tach": object()}
-    assert cockpit.virtual_gauges({"interior": panel}, both, eye, _Car(), 2) == ([], {}, {})
-    # Too small for a dial (a 4 x 2 cm gear readout).
-    small = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.04, height=0.02)
-    dials, report, _ = cockpit.virtual_gauges({"interior": small}, {}, eye, _Car(), 2)
-    assert dials == [] and "too small" in report["rejected"][0]
-
-
-def test_virtual_dials_on_a_display_face():
-    # Panoz Esperante GTLM, Viper Competition Coupe, FG Falcon racers: the only display
-    # has a face of its own (a light grey LCD with a printed bar outline). The dials go
-    # on it, the face is drawn flat in its colour, and on a light face the marks are dark.
-    labels, face = (0.126, 0.746, 0.301, 0.463), (0.009, 0.784, 0.008, 0.244)
-    panel, _ = cockpit.with_display_faces(_display(labels + face, width=0.175, height=0.071))
-    atlas = (4, 4, bytearray([110, 116, 104, 255] * 16))
-    eye = (0.08, 0.05, 0.7)
-    static = {"interior": panel}
-    dials, report, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, atlas=atlas)
-    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and extra == {}
-    assert report["face"] == {"section": "interior", "subsection": 0, "colour": [110, 116, 104], "front_mm": 0.0}
-    assert all(rep["on"] == "face" for rep in report["dials"].values())
-    for _, dial, _, _ in dials:
-        assert {sub.material for sub in dial.subsections} <= {"dsf_dial_mark_dark", "dsf_dial_red"}
-        assert all(p[2] > 0 for p in cockpit.section_points(dial))
-    assert cockpit.flatten_face(static, report["face"]) == 2
-    sub = static["interior"].subsections[0]
-    assert sub.material == "digital_gauge" and sub.display_rgba == (110, 116, 104, 255)
-    assert panel.subsections[0].material == cockpit.DISPLAY_FACE  # the fit's copy, not the source
-    # A blank display still comes first.
-    blank = _display((0.5, 0.0, 0.5, 0.0) * 2, width=0.16, height=0.10)
-    blank.name = "dash"
-    _, report, _ = cockpit.virtual_gauges({"interior": panel, "dash": blank}, {}, eye, _Car(), 2, atlas=atlas)
-    assert "face" not in report and report["dials"]["tach"]["display"] == "dash"
-
-
 def _quad_section(name: str, corners, materials=("plastic",)) -> carbin.Section:
     """A section of one quad per technique, all over the same four corners."""
     verts = [carbin.Vertex(p, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0, 1.0)) for p in corners]
@@ -293,8 +205,8 @@ def _wheel_disc(centre, axis, radius: float, steps: int = 24) -> carbin.Section:
 
 
 def test_virtual_display_past_the_steering_wheel():
-    # ARX-02a, R15 TDI, GT-R GT1: the only readout is on the steering wheel. A virtual
-    # display goes on the dashboard above the rim, facing the eye, clear of the wheel.
+    # A virtual display (where a steering-wheel display moves) goes on the dashboard
+    # above the rim, facing the eye, clear of the wheel at any angle.
     eye = (0.0, 0.0, 0.0)
     axis = cockpit._norm((0.0, 0.36, 0.93))
     wheel = cockpit.Wheel((0.0, -0.25, -0.45), axis, 0.17)
@@ -302,39 +214,35 @@ def test_virtual_display_past_the_steering_wheel():
         "interior", [(-0.6, -0.6, -0.85), (0.6, -0.6, -0.85), (0.6, -0.02, -0.85), (-0.6, -0.02, -0.85)]
     )
     static = {"interior": dash, "steering_wheel": _wheel_disc(wheel.centre, axis, wheel.radius)}
-    dials, report, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel)
-    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"], report
-    assert set(extra) == {"dsf_dial_panel"}
+    d, housing, report = cockpit.pod_display(static, eye, wheel, 2, {}, 2)
+    assert d is not None, report
     pod = report["virtual_display"]
     assert pod["size_cm"] == [16.0, 8.0] and pod["depth_cm"] < 10, pod
-    housing = extra["dsf_dial_panel"]
     assert {sub.material for sub in housing.subsections} == {"dsf_dial_display", "dsf_dial_bezel"}
     for sub in housing.subsections:
         assert cockpit.FORCE_FLAT.match(sub.material) and fm.classify_cockpit(sub.material)[0] == fm.TRIM
-    # In front of the dash, beside or above the rim as the driver sees it, and outside it at any angle.
     screen = cockpit.section_points(housing, {"dsf_dial_display"})
     assert all(-0.85 < p[2] < -0.85 + 0.1 for p in screen), screen  # the housing's sides reach into the dash
-    for _, _, g, _ in dials:
-        assert g.normal[2] < -0.9 and g.pivot[1] > wheel.centre[1]
-        t = cockpit._dot(cockpit._sub(wheel.centre, eye), axis) / cockpit._dot(cockpit._norm(g.pivot), axis)
-        crossing = cockpit._scale(cockpit._norm(g.pivot), t)
-        assert math.dist(crossing, wheel.centre) > wheel.radius + cockpit.POD_WHEEL_CLEAR
-    # A Forza needle where the display would go keeps it away (the tach's dial is clear).
+    assert d.normal[2] < -0.9 and d.centre[1] > wheel.centre[1]
+    for u in d.rect[:2]:
+        for v in d.rect[2:]:
+            ray = cockpit._norm(d.point(u, v))
+            t = cockpit._dot(cockpit._sub(wheel.centre, eye), axis) / cockpit._dot(ray, axis)
+            assert math.dist(cockpit._scale(ray, t), wheel.centre) > wheel.radius + cockpit.POD_WHEEL_CLEAR
+    # A Forza needle where the display would go keeps it away.
     needle = _needle_pose("tach_min", 0)
     tach = cockpit.Gauge("tach", (0.0, 0.0, 0.0), (0.0, 0.0, -1.0), 270.0, needle)
-    tach.pivot = cockpit._scale(cockpit._norm(dials[0][2].pivot), 0.84)
-    for v in needle.lod0_vertices:
-        v.position = cockpit._add(tach.pivot, cockpit._sub(v.position, (0.3, 0.7, -0.7)))
-    dials2, _, _ = cockpit.virtual_gauges(static, {"tach": tach}, eye, _Car(), 2, wheel=wheel)
-    assert [g.family for _, _, g, _ in dials2] == ["speed"]
+    tach.pivot = cockpit._scale(cockpit._norm(d.centre), 0.84)
+    for vert in needle.lod0_vertices:
+        vert.position = cockpit._add(tach.pivot, cockpit._sub(vert.position, (0.3, 0.7, -0.7)))
+    d2, _, _ = cockpit.pod_display(static, eye, wheel, 2, {"tach": tach}, 2)
+    assert d2 is not None
     reach = max(math.dist(p, tach.pivot) for p in cockpit.section_points(needle))
-    for p in cockpit.section_points(dials2[0][1]):
-        crossing = cockpit._scale(cockpit._norm(p), tach.pivot[2] / cockpit._norm(p)[2])
-        assert math.dist(crossing, tach.pivot) > reach
-    # No digital readout anywhere: the car has no such gauge, nothing is added.
-    rim = [v.position for v in _wheel_disc(wheel.centre, axis, wheel.radius).lod0_vertices[1:5]]
-    plain = {"interior": dash, "steering_wheel": _quad_section("steering_wheel", rim, ("leather",))}
-    assert cockpit.virtual_gauges(plain, {}, eye, _Car(), 2, wheel=wheel) == ([], {}, {})
+    for u in d2.rect[:2]:
+        for v in d2.rect[2:]:
+            ray = cockpit._norm(d2.point(u, v))
+            crossing = cockpit._scale(ray, tach.pivot[2] / ray[2])
+            assert math.dist(crossing, tach.pivot) > reach
 
 
 def _needle_pose(name: str, deg: float, extra: bool = False) -> carbin.Section:
@@ -731,9 +639,6 @@ def test_cowl_holds_a_virtual_display_in_an_open_cockpit():
     lo = [min(p[i] for p in box) for i in range(2)]
     hi = [max(p[i] for p in box) for i in range(2)]
     assert not any(lo[0] < p[0] < hi[0] and lo[1] < p[1] < hi[1] for p in corners)
-    # #92's dials on an open cockpit go there too.
-    dials, report, _ = cockpit.virtual_gauges(_open_cockpit()[0], {}, eye, _Car(), 2, wheel=wheel)
-    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and report["virtual_display"]["cowl"]
 
 
 def test_wheel_display_moves_onto_a_virtual_display():
@@ -819,20 +724,14 @@ def test_virtual_display_keeps_clear_of_the_hands():
                 assert math.dist(hit, g) > cockpit.POD_HAND_CLEAR
 
 
-def test_placeholder_cockpit_gets_virtual_dials():
-    # Issue #148: a placeholder cockpit carbin's cabin (the main carbin's) has no needle
-    # and no display; the car still has a speedometer and a tachometer.
-    eye = (0.0, 0.0, 0.0)
-    axis = cockpit._norm((0.0, 0.36, 0.93))
-    wheel = cockpit.Wheel((0.0, -0.25, -0.45), axis, 0.17)
-    dash = _quad_section(
-        "interior", [(-0.6, -0.6, -0.85), (0.6, -0.6, -0.85), (0.6, -0.02, -0.85), (-0.6, -0.02, -0.85)]
-    )
-    rim = [v.position for v in _wheel_disc(wheel.centre, axis, wheel.radius).lod0_vertices[1:5]]
-    static = {"interior": dash, "steering_wheel": _quad_section("steering_wheel", rim, ("leather",))}
-    assert cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel) == ([], {}, {})
-    dials, _, extra = cockpit.virtual_gauges(static, {}, eye, _Car(), 2, wheel=wheel, assume=("tach", "speed"))
-    assert [g.family for _, _, g, _ in dials] == ["tach", "speed"] and set(extra) == {"dsf_dial_panel"}
+def test_no_generic_gauges():
+    # Where the converter can't put a live needle on the car's own gauges it adds
+    # nothing: the virtual dials (#49, #92, #148) are gone (research/cockpit.md, "No
+    # virtual dials"). The pod stays only for a steering-wheel display moved onto the dash.
+    for name in ("virtual_gauges", "virtual_dial", "flatten_face", "mark_technique", "blank_displays"):
+        assert not hasattr(cockpit, name) and not hasattr(displays, name), name
+    assert not any(p.search(m) for p, _ in cockpit.geometry.FLAT_COCKPIT for m in ("dsf_dial_mark", "dsf_dial_red"))
+    assert "virtual" not in cockpit.CockpitFit.__dataclass_fields__
 
 
 def _coarse_wheel(centre, radius: float, tilt_deg: float):
@@ -1007,13 +906,3 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
-
-
-def test_virtual_tach_ends_on_a_major_mark():
-    def tach(redline):
-        return displays.virtual_scale("tach", types.SimpleNamespace(redline=redline))[:2]
-
-    assert tach(7200) == (8000.0, 1000.0)
-    assert tach(10000) == (10000.0, 1000.0)
-    assert tach(11000) == (12000.0, 2000.0)  # past 10,000 rpm the marks are 2,000 apart
-    assert tach(10500) == (12000.0, 2000.0)

@@ -1,9 +1,11 @@
-"""Digital displays and virtual dials: blank displays found and given dials, the steering-wheel
-pod, the dash scene drawn live on the displays (digital_displays)."""
+"""Digital displays: the dash scene drawn live on the cockpit's displays (digital_displays),
+a steering-wheel display moved onto a virtual display on the dash (wheel_display_pod), and
+the scene's needles as DSF needles (dash_needles). Where the converter can't put a live
+needle on the car's own gauges it adds none: no generic dials (research/cockpit.md, "No
+virtual dials")."""
 
 from __future__ import annotations
 
-import itertools
 import math
 import re
 from dataclasses import dataclass
@@ -12,10 +14,8 @@ from pathlib import Path
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert.cockpit.geometry import (
     DIGITAL_TECHNIQUES,
-    DISPLAY_COLOUR,
     DISPLAY_FACE,
     FALLBACK_DIAL_MAX,
-    FLAT_COCKPIT,
     GAUGE_IDS,
     GAUGE_UNITS,
     CockpitFit,
@@ -31,52 +31,14 @@ from dsfforza.convert.cockpit.geometry import (
     _sub,
     section_points,
 )
-from dsfforza.convert.cockpit.hierarchy import ARMS_GRIPS, GaugeSight, camera_eye
+from dsfforza.convert.cockpit.hierarchy import ARMS_GRIPS, camera_eye
 from dsfforza.convert.cockpit.visibility import _raster, _screen_parts
 from dsfforza.formats import carbin
-
-# --- virtual dials on blank digital displays -------------------------------------------
-# Where Forza's speedometer or tachometer is a digital readout (a digital_gauge display
-# its shader fills at run time: the CL65's centre TFT, race-car LCDs), DSF has nothing
-# to draw there and no way to draw changing digits: its gauges are needles turned by
-# the engine (research/cockpit.md, "Gauges"). On a blank display in the dashboard the
-# missing gauge becomes a dial: tick marks, seven-segment numerals and a red zone as
-# flat-colour geometry, and a needle driven by the host's gauge entry like any Forza
-# needle (research/cockpit.md, "Virtual dials"). Where no blank display can hold one, a
-# display with its own face (a static picture of the LCD, display_face) takes it, drawn
-# flat in the face's colour under the dial; where neither can (the readout is on the
-# steering wheel, or only small strips), a virtual display on the dashboard does
-# (pod_display; research/cockpit.md, "Virtual dials on display faces and virtual displays").
-VIRTUAL_MIN_AREA = 0.0025  # m^2: the display's rectangle (25 cm^2; race LCDs are 13-16 x 5-9 cm)
-VIRTUAL_MAX_TILT_DEG = 60.0  # display normal against the direction to the eye
-VIRTUAL_MIN_SIGHT = 0.5  # share of the display the eye sees past the wheel and the cowl
-VIRTUAL_INSET = 0.08  # of each cell side, kept clear around a dial
-VIRTUAL_MARK_LIFT = 0.0012  # m towards the driver: dial marks over the display
-VIRTUAL_NEEDLE_LIFT = 0.0025  # m: the needle over the marks
-VIRTUAL_HUB_LIFT = 0.0035
-VIRTUAL_NEEDLE_COLOURS = {
-    "dsf_needle": (252, 45, 8, 255),  # Forza's needle swatch (interior_LOD0)
-    "dsf_needle_hub": (40, 40, 42, 255),
-}
-VIRTUAL_SOURCE = "virtual dial"  # GaugeCalibration.source of a virtual dial
-FACE_FRONT_DEPTH = 0.02  # m: digital patches this near a face's plane may stand in front of it
-_SEGMENTS = {  # seven-segment digits: a top, b upper right, c lower right, d bottom, e lower left, f upper left, g middle
-    "0": "abcdef",
-    "1": "bc",
-    "2": "abged",
-    "3": "abgcd",
-    "4": "fgbc",
-    "5": "afgcd",
-    "6": "afgedc",
-    "7": "abc",
-    "8": "abcdefg",
-    "9": "abcdfg",
-}
 
 
 @dataclass
 class Display:
-    """A blank digital_gauge display: its plane and rectangle, Forza space."""
+    """A virtual display's screen (pod_display): its plane and rectangle, Forza space."""
 
     section: str
     centre: tuple
@@ -84,9 +46,6 @@ class Display:
     up: tuple  # unit, in the plane
     right: tuple  # unit, in the plane: the driver's right
     rect: tuple  # (u0, u1, v0, v1): extent along right and up from the centre
-    subsection: int | None = None  # index in its section's subsections
-    colour: tuple = DISPLAY_COLOUR  # what the dial is drawn on: a face's median texel
-    kind: str = "display"  # "display" (blank), "face" (display_face) or "virtual" (pod_display)
 
     @property
     def size(self) -> tuple[float, float]:
@@ -95,31 +54,6 @@ class Display:
     def point(self, u: float, v: float, lift: float = 0.0) -> tuple:
         """The display point at (u, v) of its plane, `lift` towards the driver."""
         return _add(_add(_add(self.centre, _scale(self.right, u)), _scale(self.up, v)), _scale(self.normal, -lift))
-
-
-def _touching_groups(tris: list[list[tuple]], cell: float = 0.01) -> list[list[int]]:
-    """Indices of each group of triangles that touch: union-find over triangles with a
-    vertex in the same `cell` grid cell."""
-    parent = list(range(len(tris)))
-
-    def find(a: int) -> int:
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
-    first: dict[tuple, int] = {}
-    for i, t in enumerate(tris):
-        for p in t:
-            k = tuple(round(c / cell) for c in p)
-            if k in first:
-                parent[find(i)] = find(first[k])
-            else:
-                first[k] = i
-    groups: dict[int, list] = {}
-    for i in range(len(tris)):
-        groups.setdefault(find(i), []).append(i)
-    return list(groups.values())
 
 
 def display_patches(static: dict, eye, on_wheel: bool = False) -> list:
@@ -158,156 +92,6 @@ def display_patches(static: dict, eye, on_wheel: bool = False) -> list:
     return out
 
 
-def face_colour(section: carbin.Section, sub: carbin.SubSection, tris: list[int], atlas) -> tuple:
-    """Median RGBA of a display face's texels (UV0 through its first transform, the
-    face's: display_face) at the corners, edge midpoints and centre of `tris`."""
-    width, height, rgba = atlas
-    xo, xs, yo, ys = sub.uv_transform[:4]
-    pool = section.vertices_for(sub)
-    triangles = sub.triangles()
-    samples = []
-    for k in tris:
-        uv = [pool[i].uv0 for i in triangles[k]]
-        pts = uv + [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in itertools.combinations(uv, 2)]
-        pts.append((sum(u for u, _ in uv) / 3, sum(v for _, v in uv) / 3))
-        for u, v in pts:
-            x = min(width - 1, max(0, int((u * xs + xo) % 1.0 * width)))
-            y = min(height - 1, max(0, int((v * ys + yo) % 1.0 * height)))
-            o = (y * width + x) * 4
-            samples.append(tuple(rgba[o : o + 3]))
-    if not samples:
-        return DISPLAY_COLOUR
-    return tuple(sorted(c[k] for c in samples)[len(samples) // 2] for k in range(3)) + (255,)
-
-
-def luminance(colour) -> float:
-    return 0.299 * colour[0] + 0.587 * colour[1] + 0.114 * colour[2]
-
-
-def relative_luminance(colour) -> float:
-    """WCAG 2 relative luminance of an sRGB colour (0..255): Rec. 709 weights on the
-    linearised channels."""
-
-    def linear(c):
-        c = c / 255.0
-        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-    r, g, b = (linear(c) for c in colour[:3])
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
-def contrast(a, b) -> float:
-    """WCAG 2 contrast ratio of two sRGB colours: (L1 + 0.05) / (L2 + 0.05), L1 the lighter."""
-    la, lb = relative_luminance(a), relative_luminance(b)
-    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
-
-
-def mark_technique(face) -> str:
-    """The dial marks' colour on a display of colour `face`: whichever of the two mark
-    colours (FLAT_COCKPIT dsf_dial_mark, dsf_dial_mark_dark) contrasts more with it."""
-    light, dark = (
-        next(c for p, c in FLAT_COCKPIT if p.pattern == f"^{t}$") for t in ("dsf_dial_mark", "dsf_dial_mark_dark")
-    )
-    return "dsf_dial_mark_dark" if contrast(face, dark) > contrast(face, light) else "dsf_dial_mark"
-
-
-def blank_displays(static: dict, eye, faces: bool = False, atlas=None) -> list[Display]:
-    """digital_gauge patches (triangles sharing a vertex position within 1 cm)
-    in the cabin sections, not on the steering wheel (needles don't turn with
-    it), each with its plane and rectangle. Textured faces (display_face) are
-    not digital_gauge any more and don't count; with `faces` they are what is
-    listed instead, each with its median colour from `atlas` (interior_LOD0)."""
-    import numpy as np
-
-    techniques = {DISPLAY_FACE} if faces else DIGITAL_TECHNIQUES
-    out = []
-    for name, s in static.items():
-        if fm.COCKPIT_EXTERIOR_SECTIONS.match(name) or name.lower() == "steering_wheel":
-            continue
-        for ui, sub in enumerate(s.subsections):
-            if sub.lod or sub.material.lower() not in techniques:
-                continue
-            pool = s.vertices_for(sub)
-            tris = [[pool[i].position for i in t] for t in sub.triangles()]
-            for group in _touching_groups(tris):
-                pts = [p for k in group for p in tris[k]]
-                p = np.array(pts, dtype=np.float64)
-                c = p.mean(axis=0)
-                _, vecs = np.linalg.eigh(np.cov((p - c).T))
-                n = tuple(float(x) for x in vecs[:, 0])
-                if _dot(n, _sub(tuple(c), eye)) < 0:
-                    n = _scale(n, -1)
-                up = _sub((0.0, 1.0, 0.0), _scale(n, n[1]))
-                if _dot(up, up) < 1e-6:
-                    continue  # a display facing straight up or down
-                up = _norm(up)
-                right = _cross(n, up)
-                us = (p - c) @ np.array(right)
-                vs = (p - c) @ np.array(up)
-                out.append(
-                    Display(
-                        name,
-                        tuple(float(x) for x in c),
-                        n,
-                        up,
-                        right,
-                        tuple(float(x) for x in (us.min(), us.max(), vs.min(), vs.max())),
-                        ui,
-                        face_colour(s, sub, group, atlas) if faces and atlas is not None else DISPLAY_COLOUR,
-                        "face" if faces else "display",
-                    )
-                )
-    return out
-
-
-def pick_display(displays: list[Display], sight: GaugeSight | None, eye) -> tuple[Display | None, dict]:
-    """The largest display the driver can read: at least VIRTUAL_MIN_AREA,
-    facing the eye within VIRTUAL_MAX_TILT_DEG, and VIRTUAL_MIN_SIGHT of a
-    5 x 3 grid over it in sight. Returns (display or None, why)."""
-    best, why = None, {"displays": len(displays)}
-    for d in sorted(displays, key=lambda d: -d.size[0] * d.size[1]):
-        w, h = d.size
-        if w * h < VIRTUAL_MIN_AREA:
-            why.setdefault("rejected", []).append(f"{d.section} {w * 100:.0f} x {h * 100:.0f} cm: too small")
-            continue
-        to_eye = _norm(_sub(eye, d.centre))
-        tilt = math.degrees(math.acos(max(-1.0, min(1.0, -_dot(d.normal, to_eye)))))
-        if tilt > VIRTUAL_MAX_TILT_DEG:
-            why.setdefault("rejected", []).append(f"{d.section}: faces {tilt:.0f} deg away from the eye")
-            continue
-        if sight is not None:
-            u0, u1, v0, v1 = d.rect
-            grid = [
-                d.point(u0 + (u1 - u0) * (i + 0.5) / 5, v0 + (v1 - v0) * (j + 0.5) / 3, VIRTUAL_MARK_LIFT)
-                for i in range(5)
-                for j in range(3)
-            ]
-            seen = sight.fraction(eye, grid)
-            if seen < VIRTUAL_MIN_SIGHT:
-                why.setdefault("rejected", []).append(f"{d.section}: {seen:.0%} in sight")
-                continue
-        best = d
-        break
-    return best, why
-
-
-def virtual_scale(family: str, forza) -> tuple[float, float, float, float | None]:
-    """(dial max, major step, minor step, red zone start) for a virtual dial,
-    from the Forza car (handling.ForzaCar: top speed, redline) or None. The scale
-    ends at the first major mark at or past the car's top speed, or its redline:
-    VO3D p605 stops the speedometer there (fit.gauge_params), and DSF's rpm stops at
-    the redline (p42). Without Forza's figures, FALLBACK_DIAL_MAX."""
-    if family == "speed":
-        top = getattr(forza, "top_speed_mph", 0.0) or FALLBACK_DIAL_MAX["speed"]
-        step = 20.0 if top <= 160 else 40.0
-        dial = step * math.ceil(top / step)
-        return dial, step, step / 2, None
-    redline = getattr(forza, "redline", 0.0) or FALLBACK_DIAL_MAX["tach"]
-    major = 1000.0 if redline <= 10000 else 2000.0
-    dial = major * math.ceil(redline / major)  # the first major mark at or past the redline
-    return dial, major, major / 2, redline
-
-
 def _quad(pool, idx, corners, normal):
     """Append a double-sided quad (four Forza points, in order round it)."""
     base = len(pool)
@@ -332,121 +116,9 @@ def _dial_section(name: str, version: int, parts: dict[str, list]) -> carbin.Sec
     return carbin.Section(name, zero, zero, zero, pool, pool, subs, version)
 
 
-def virtual_dial(d: Display, cell: tuple, family: str, forza, version: int):
-    """(needle section, face section, Gauge, GaugeCalibration, report) for a
-    dial in `cell` ((u0, u1, v0, v1) of the display). A 240-degree dial, or a
-    180-degree one where that makes it larger (wide, low cells). The scale is
-    drawn at the sweep the gauge table can hold (whole degrees per unit)."""
-    u0, u1, v0, v1 = cell
-    w, h = (u1 - u0) * (1 - 2 * VIRTUAL_INSET), (v1 - v0) * (1 - 2 * VIRTUAL_INSET)
-    # Extent under the pivot: a 240-degree dial's arc ends reach r cos 60 = 0.5 r below
-    # it; a 180-degree dial's lowest part is its hub (0.08 r; the needle at rest lies
-    # along the pivot's line, 0.035 r wide).
-    r240, r180 = min(w / 2, h / 1.5), min(w / 2, h / 1.08)
-    span, r = (180.0, r180) if r180 > r240 else (240.0, r240)
-    below = 0.5 * r if span == 240.0 else 0.08 * r
-    pu = (u0 + u1) / 2
-    pv = (v0 + v1) / 2 - (r + below) / 2 + below
-    dial_max, major, minor, red = virtual_scale(family, forza)
-    unit = GAUGE_UNITS[family]
-    sweep = max(1, round(span * unit / dial_max))
-    span = sweep * dial_max / unit
-    start = -span / 2  # degrees clockwise from up, where the needle rests (0)
-    back = d.normal  # vertex normal: the quads face the driver (-normal); normals point back at him
-    nrm = _scale(back, -1)
-
-    def at(rad, deg, lift, along=0.0):
-        a = math.radians(deg)
-        du, dv = math.sin(a), math.cos(a)
-        return d.point(pu + rad * du + along * dv, pv + rad * dv - along * du, lift)
-
-    def radial(r_in, r_out, deg, width, lift):
-        return [at(rr, deg, lift, side * width / 2) for rr, side in ((r_in, -1), (r_out, -1), (r_out, 1), (r_in, 1))]
-
-    marks, reds = [], []
-    steps = round(dial_max / minor)
-    for k in range(steps + 1):
-        value = k * minor
-        deg = start + span * value / dial_max
-        is_major = abs(value / major - round(value / major)) < 1e-6
-        length, width = (0.17 * r, 0.035 * r) if is_major else (0.09 * r, 0.018 * r)
-        (reds if red is not None and value >= red - 1e-6 else marks).append(
-            (radial(r - length, r, deg, width, VIRTUAL_MARK_LIFT), nrm)
-        )
-    arc_steps = max(8, round(span / 4))
-    for k in range(arc_steps):
-        a0, a1 = start + span * k / arc_steps, start + span * (k + 1) / arc_steps
-        value = dial_max * (k + 0.5) / arc_steps
-        in_red = red is not None and value >= red
-        r_in = r - (0.07 * r if in_red else 0.015 * r)
-        quad = [at(rr, aa, VIRTUAL_MARK_LIFT) for rr, aa in ((r_in, a0), (r, a0), (r, a1), (r_in, a1))]
-        (reds if in_red else marks).append((quad, nrm))
-    # Numerals (thousands of rpm on the tachometer) on every major mark, or every
-    # second, third... where neighbours would touch along the arc.
-    digit_h = 0.16 * r
-    digit_w, thick, gap = 0.55 * digit_h, 0.16 * digit_h, 0.28 * digit_h
-    longest = len(str(round(dial_max / 1000 if family == "tach" else dial_max)))
-    label_w = longest * digit_w + (longest - 1) * gap
-    every = 1
-    while 0.66 * r * math.radians(span * major * every / dial_max) < 1.3 * label_w and every < 8:
-        every += 1
-    k = 0
-    while k * major <= dial_max + 1e-6:
-        value = k * major
-        if k % every:
-            k += 1
-            continue
-        text = str(round(value / 1000)) if family == "tach" else str(round(value))
-        deg = start + span * value / dial_max
-        a = math.radians(deg)
-        cu, cv = pu + 0.66 * r * math.sin(a), pv + 0.66 * r * math.cos(a)
-        width = len(text) * digit_w + (len(text) - 1) * gap
-        for n, ch in enumerate(text):
-            x0 = cu - width / 2 + n * (digit_w + gap)
-            y0 = cv - digit_h / 2
-            boxes = {
-                "a": (0, digit_w, digit_h - thick, digit_h),
-                "d": (0, digit_w, 0, thick),
-                "g": (0, digit_w, (digit_h - thick) / 2, (digit_h + thick) / 2),
-                "f": (0, thick, digit_h / 2, digit_h),
-                "e": (0, thick, 0, digit_h / 2),
-                "b": (digit_w - thick, digit_w, digit_h / 2, digit_h),
-                "c": (digit_w - thick, digit_w, 0, digit_h / 2),
-            }
-            for seg in _SEGMENTS[ch]:
-                bx0, bx1, by0, by1 = boxes[seg]
-                corners = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)]
-                marks.append(([d.point(x0 + x, y0 + y, VIRTUAL_MARK_LIFT) for x, y in corners], nrm))
-        k += 1
-    mark = mark_technique(d.colour)
-    face = _dial_section(f"dsf_dial_{family}", version, {mark: marks, "dsf_dial_red": reds})
-    # The needle at rest (0 mph / 0 rpm) and its hub; the engine turns both about the pivot.
-    outline = ((-0.16 * r, -0.035 * r), (0.9 * r, -0.008 * r), (0.9 * r, 0.008 * r), (-0.16 * r, 0.035 * r))
-    blade = [at(rr, start, VIRTUAL_NEEDLE_LIFT, side) for rr, side in outline]
-    hub = []
-    for k in range(8):
-        a0, a1 = 45.0 * k, 45.0 * (k + 1)
-        corners = ((0.0, a0), (0.08 * r, a0), (0.08 * r, a1), (0.0, a1))
-        hub.append(([at(rr, aa, VIRTUAL_HUB_LIFT) for rr, aa in corners], nrm))
-    needle = _dial_section(f"{family}_min", version, {"dsf_needle": [(blade, nrm)], "dsf_needle_hub": hub})
-    pivot = d.point(pu, pv)
-    gauge = Gauge(family, pivot, d.normal, span, needle)
-    cal = GaugeCalibration(family, GAUGE_IDS[family], sweep, False, 0.0, round(dial_max, 1), 0.0, VIRTUAL_SOURCE)
-    report = {
-        "display": d.section,
-        "on": d.kind,
-        "display_cm": [round(100 * x, 1) for x in d.size],
-        "radius_cm": round(100 * r, 1),
-        "span_deg": round(span, 1),
-        "dial_max": dial_max,
-        "red_from": red,
-    }
-    return needle, face, gauge, cal, report
-
-
-# A virtual display (pod_display): where the readout Forza draws is on the steering
-# wheel or too small for a dial, a screen in a housing on the dashboard, facing the eye,
-# where the driver sees it past the wheel at any steering angle.
+# A virtual display (pod_display): where Forza's only display is on the steering wheel
+# (wheel_display_pod), a screen in a housing on the dashboard, facing the eye, where the
+# driver sees it past the wheel at any steering angle.
 POD_SIZES = {  # dials -> display sizes (m) tried, largest first
     2: ((0.16, 0.08), (0.14, 0.07), (0.12, 0.06), (0.10, 0.05)),
     1: ((0.10, 0.075), (0.09, 0.0675), (0.08, 0.06), (0.07, 0.0525)),
@@ -687,7 +359,7 @@ def pod_display(
             up = _norm(_sub((0.0, 1.0, 0.0), _scale(n, n[1])))
             right = _cross(n, up)
             centre = _add(eye, _scale(n, front))
-            d = Display(name, centre, n, up, right, (-w / 2, w / 2, -h / 2, h / 2), kind="virtual")
+            d = Display(name, centre, n, up, right, (-w / 2, w / 2, -h / 2, h / 2))
             housing = _housing(d, back - front, version)
             report = {
                 "virtual_display": {
@@ -761,147 +433,19 @@ def _housing(d: Display, depth: float, version: int) -> carbin.Section:
     )
 
 
-def _face_front(static: dict, d: Display) -> float:
-    """How far digital patches over a face's rectangle stand in front of it (the
-    LFA's round dial face 4.7 mm in front of the cluster face behind it)."""
-    front = 0.0
-    u0, u1, v0, v1 = d.rect
-    for name, s in static.items():
-        if name.lower() == "steering_wheel":
-            continue
-        for sub in s.subsections:
-            if sub.lod or not (sub.material.lower() in DIGITAL_TECHNIQUES or sub.material == DISPLAY_FACE):
-                continue
-            for p in section_points(s, {sub.material}):
-                rel = _sub(p, d.centre)
-                depth = _dot(rel, d.normal)
-                if (
-                    -FACE_FRONT_DEPTH < depth < FACE_FRONT_DEPTH
-                    and u0 <= _dot(rel, d.right) <= u1
-                    and v0 <= _dot(rel, d.up) <= v1
-                ):
-                    front = max(front, -depth)
-    return front
-
-
-def virtual_gauges(
-    static: dict,
-    gauges: dict,
-    eye,
-    forza,
-    version: int,
-    sight_sections=None,
-    wheel: Wheel | None = None,
-    atlas=None,
-    readout=(),
-    provided=(),
-    assume=(),
-) -> tuple[list, dict, dict]:
-    """Virtual dials for the speedometer and tachometer Forza has no needle
-    for, on the largest blank display the driver can read (pick_display); else
-    on the largest display face (blank_displays with faces; `atlas` gives its
-    colour, fit draws it flat in it); else, where the car has a digital
-    readout anywhere (on the steering wheel, small strips), on a virtual
-    display on the dashboard (pod_display, needs `wheel`). Two side by side
-    along the long side when both are missing (tachometer first: left or
-    top). `readout`: the triangles of displays a dash scene is drawn on
-    (digital_displays), which count as a digital readout and stay clear;
-    `provided`: the readouts that scene drives (no dial for those); `assume`: readouts
-    the car has though nothing in its cockpit shows them (a placeholder cockpit
-    carbin's cabin): dials on a virtual display. Returns
-    ([(needle, face, Gauge, GaugeCalibration)], report, extra static sections (the
-    virtual display's housing))."""
-    missing = [f for f in ("tach", "speed") if f not in gauges and f not in provided]
-    if not missing:
-        return [], {}, {}
-    digital = any(
-        sub.lod == 0 and (sub.material.lower() in DIGITAL_TECHNIQUES or sub.material == DISPLAY_FACE)
-        for name, s in static.items()
-        if not fm.COCKPIT_EXTERIOR_SECTIONS.match(name)
-        for sub in s.subsections
-    )
-    if not digital and not readout and not set(missing) & set(assume):
-        return [], {}, {}
-    sight = GaugeSight(list(sight_sections if sight_sections is not None else static.values()), [])
-    report: dict = {"missing": missing}
-    extra = {}
-    displays = blank_displays(static, eye)
-    d, why = pick_display(displays, sight, eye) if displays else (None, {})
-    report.update(why)
-    if d is None:
-        faces = blank_displays(static, eye, faces=True, atlas=atlas)
-        if faces:
-            d, why = pick_display(faces, sight, eye)
-            report["faces"] = why
-            if d is not None:
-                front = _face_front(static, d)
-                d.centre = _add(d.centre, _scale(d.normal, -front))
-                report["face"] = {
-                    "section": d.section,
-                    "subsection": d.subsection,
-                    "colour": list(d.colour[:3]),
-                    "front_mm": round(1000 * front, 1),
-                }
-    if d is None and wheel is not None:
-        d, housing, why = place_pod(
-            static, eye, wheel, len(missing), gauges, version, sight_sections, avoid=list(readout)
-        )
-        report.update(why)
-        if d is not None:
-            extra[housing.name] = housing
-    if d is None:
-        return [], report, {}
-    u0, u1, v0, v1 = d.rect
-    w, h = d.size
-    cells = []
-    for k in range(len(missing)):
-        if w >= h:
-            cells.append((u0 + w * k / len(missing), u0 + w * (k + 1) / len(missing), v0, v1))
-        else:
-            cells.append((u0, u1, v1 - h * (k + 1) / len(missing), v1 - h * k / len(missing)))
-    out = []
-    report["dials"] = {}
-    for family, cell in zip(missing, cells):
-        needle, face, gauge, cal, rep = virtual_dial(d, cell, family, forza, version)
-        out.append((needle, face, gauge, cal))
-        report["dials"][family] = rep
-    return out, report, extra
-
-
-def flatten_face(static: dict, face: dict) -> int:
-    """The display face a virtual dial went on (virtual_gauges' report["face"])
-    back to a blank display in the face's colour (sub.display_rgba), so its
-    static artwork (bar outlines, printed scales, "0 MPH") doesn't show through
-    the dial. Returns its triangle count."""
-    import copy
-
-    s = copy.copy(static[face["section"]])
-    s.subsections = list(s.subsections)
-    sub = copy.copy(s.subsections[face["subsection"]])
-    sub.material = next(iter(DIGITAL_TECHNIQUES))
-    sub.display_rgba = tuple(face["colour"]) + (255,)
-    s.subsections[face["subsection"]] = sub
-    static[face["section"]] = s
-    return len(sub.triangles())
-
-
 def drop_unturned(cf: CockpitFit, gauge_slots: dict[int, int]) -> list[str]:
-    """Take out the speed and tach needles (Forza's or virtual dials) whose
+    """Take out the speed and tach needles (Forza's or the dash scene's) whose
     gauge id the host's gauge table has no entry for, after add_gauge_records:
     only hosts without any gauge record (vanilla 250, the Volt's, and four
     unused ones). The engine would leave such a needle unturned, so it isn't
-    drawn at all. Returns the families dropped."""
+    drawn at all. Returns the families dropped (cf.unturned, the report's
+    `no_host_gauge`)."""
     dropped = [f for f in cf.gauges if f in GAUGE_IDS and GAUGE_IDS[f] not in gauge_slots]
     for f in dropped:
         cf.gauges.pop(f)
         cf.needles.pop(f, None)
         cf.calibration.pop(f, None)
-        cf.static.pop(f"dsf_dial_{f}", None)
-        cf.virtual.get("dials", {}).pop(f, None)
-    if dropped and not cf.virtual.get("dials"):
-        cf.static.pop("dsf_dial_panel", None)  # a virtual display with no dial left
-    if dropped:
-        cf.virtual["no_host_gauge"] = dropped
+    cf.unturned = dropped
     return dropped
 
 

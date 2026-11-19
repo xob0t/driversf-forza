@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 
 from dsfforza.convert import forza_materials as fm
 from dsfforza.convert import glass
-from dsfforza.convert.cockpit.displays import VIRTUAL_NEEDLE_COLOURS
 from dsfforza.convert.cockpit.geometry import (
     DIGITAL_TECHNIQUES,
     DISPLAY_COLOUR,
@@ -230,7 +229,7 @@ class CockpitBinding:
 
     def triangle_uvs(self, section, sub, triangle_index, raw_uvs):
         if sub.material.lower() in DIGITAL_TECHNIQUES:
-            key = ("display",) + getattr(sub, "display_rgba", DISPLAY_COLOUR)
+            key = ("display",) + DISPLAY_COLOUR
             return [self.texturing.solid_uv(key)] * len(raw_uvs), key
         if (
             FORCE_FLAT.match(sub.material)
@@ -252,8 +251,6 @@ class CockpitBinding:
 def _needle_colour(atlases, section, sub) -> tuple[int, int, int, int]:
     if getattr(sub, "needle_rgba", None) is not None:  # a dash scene's needle (dash_needles)
         return sub.needle_rgba
-    if sub.material in VIRTUAL_NEEDLE_COLOURS:
-        return VIRTUAL_NEEDLE_COLOURS[sub.material]
     m = fm.resolve(section, sub, fm.classify_cockpit)
     if m.family is not None:
         try:
@@ -363,14 +360,8 @@ def convert_interior(
         for c in [_needle_colour(atlases, g.rest, sub)]
     }
     needle_colours[("display",) + DISPLAY_COLOUR] = DISPLAY_COLOUR
-    for s in sections:  # display faces under a virtual dial (flatten_face)
-        for sub in s.subsections:
-            colour = getattr(sub, "display_rgba", None)
-            if colour is not None:
-                needle_colours[("display",) + colour] = colour
-    # The flat cells every interior's atlas has; a virtual dial's dark marks and a
-    # virtual display add theirs only where they are drawn (other cars' atlases stay
-    # as they were).
+    # The flat cells every interior's atlas has; a virtual display (a steering-wheel
+    # display moved onto the dash) adds its own only where it is drawn.
     used = {sub.material for s in [*sections, *chase_variants[0]] for sub in s.subsections}
     flat = {
         c
@@ -618,7 +609,7 @@ def convert_interior(
         "parked_needles": sorted(f for f in cf.needles if f not in animated),
         "digital_triangles": cf.digital,
         "display_face_triangles": cf.display_faces,
-        **({"virtual_gauges": cf.virtual} if cf.virtual else {}),
+        **({"no_host_gauge": cf.unturned} if cf.unturned else {}),
         **({"digital_displays": digital_report} if digital_report else {}),
         "atlas": t.summary(),
         **({"gloss": {k: sum(v.values()) for k, v in t.gloss_report.items()}} if t.gloss_materials else {}),

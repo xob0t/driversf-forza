@@ -50,9 +50,6 @@ FACE_MIN_DENSITY = 1.0
 # Mustang's wood rim and dash) sample DSF's trim texture with Forza UVs, which
 # shows unrelated texture cells. They get one flat cell of the interior atlas.
 FLAT_COCKPIT = [
-    (re.compile(r"^dsf_dial_mark$"), (226, 226, 222, 255)),  # virtual dials (virtual_gauges)
-    (re.compile(r"^dsf_dial_mark_dark$"), (22, 22, 22, 255)),  # ... on a light display face
-    (re.compile(r"^dsf_dial_red$"), (214, 32, 18, 255)),
     (re.compile(r"^dsf_dial_display$"), DISPLAY_COLOUR),  # a virtual display's screen (pod_display)
     (re.compile(r"^dsf_dial_bezel$"), (30, 30, 32, 255)),  # ... and its housing
     (re.compile(r"^mirror", re.I), (46, 50, 56, 255)),
@@ -60,7 +57,7 @@ FLAT_COCKPIT = [
     (re.compile(r"chrome|metal", re.I), (150, 150, 155, 255)),
 ]
 FLAT_DEFAULT = (34, 34, 36, 255)
-VIRTUAL_ONLY_FLAT = {r"^dsf_dial_mark_dark$", r"^dsf_dial_display$", r"^dsf_dial_bezel$"}
+VIRTUAL_ONLY_FLAT = {r"^dsf_dial_display$", r"^dsf_dial_bezel$"}  # only where a wheel display moved (pod_display)
 # The engine's interior paint material: used by every vanilla interior that has
 # painted parts (227, 147, 229, 193, 251, 266 checked; out/cockpit2/host_shared.py).
 INTERIOR_PAINT = bytes.fromhex("10122b9653b14e2a")
@@ -69,7 +66,7 @@ INTERIOR_PAINT = bytes.fromhex("10122b9653b14e2a")
 # smear into neighbouring cells (white blocks on the Raptor's wheel, a
 # speckled band under the M5's cluster). Drawn flat.
 FORCE_FLAT = re.compile(
-    r"^(mottled|bump_stitching|stitching|dsf_dial_mark|dsf_dial_mark_dark|dsf_dial_red|dsf_dial_display|dsf_dial_bezel)$",
+    r"^(mottled|bump_stitching|stitching|dsf_dial_display|dsf_dial_bezel)$",
     re.I,
 )
 DASHBOARD_INSTRUMENT = 0x75FAD367  # VDCL name hash of the needle buffers' semantic 8 (u, v, gauge id, 0)
@@ -677,7 +674,7 @@ class CockpitFit:
     shell_skip: set = field(default_factory=set)  # main-carbin sections kept out of the shell too
     camera: tuple | None = None  # final head camera (Forza space), set by forza2dsf after camera_eye
     display_faces: int = 0  # digital_gauge triangles drawn textured (display_face)
-    virtual: dict = field(default_factory=dict)  # virtual_gauges report: dials drawn on a blank display
+    unturned: list = field(default_factory=list)  # drop_unturned: needles the host has no gauge record for
     digital_plan: object = None  # digital_dash.DigitalPlan: live digital displays (DSF's digital dials)
     digital_displays: dict = field(default_factory=dict)  # digital_displays' report
 
