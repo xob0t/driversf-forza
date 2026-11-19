@@ -211,6 +211,51 @@ def test_deeper_than_the_window_reaches():
     assert {r for _, r in g.triangles()} == {"surface"}
 
 
+def test_a_shard_reaching_over_the_frame_is_kept():
+    """Vanilla shards are rooted at the glass's edge and reach past it, over the frame
+    (#626): a shard 4 cm past the host windscreen's top edge stays on a converted
+    windscreen of the same shape, where the old test (a corner at most one 1 cm cell
+    outside) dropped it."""
+    z = 1.0
+    shard = (((0.0, 0.69, z), (0.02, 0.69, z), (0.01, 0.74, z)), SHARD_UV, (0.5,) * 3)
+    host = [_host_window((0, 5), 1.4, 0.7, z, [shard])]
+    assert [round(x, 3) for x in host[0].overhang[0]] == [0.0, 0.0, 0.04, 0.007]
+    g = _windscreen(1.4, 0.7, z, host)
+    assert [r for _, r in g.triangles() if r != "surface"] == ["shard_bright"]
+
+
+def test_a_shard_no_further_past_the_glass_than_on_its_donor():
+    """The window's extent for a triangle is the glass plus how far that triangle reached
+    past its own window's glass, to one grid cell: a corner landing 3 cm past the glass
+    is dropped when it was on the donor's glass, kept when it was 3 cm past it there."""
+    pane = _windscreen(1.0, 0.5, 1.0, []).panes()["glassf/windscreen"]
+    q = [_s(pane, x, y) for x, y in ((0.0, 0.48), (0.02, 0.48), (0.01, 0.53))]
+    assert abs(pane.past(q[2]) - 0.03) < 1e-9 and pane.past(q[0]) == 0.0
+    tri = (None, SHARD_UV, (0.5,) * 3)
+    args = (pane, tri, q, q[0], q[0], 0.0, b"\0\0\0\0", [(0.0, 0.0, 1.0)] * 3, [0.0] * 3)
+    assert glass.InteriorGlass._place(*args, (0.0, 0.0, 0.0, 0.0)) == []
+    assert len(glass.InteriorGlass._place(*args, (0.0, 0.0, 0.03, 0.0))) == 1
+
+
+def _s(pane, x, y):
+    """The plane point of the car-space point (x, y) on a windscreen facing +z."""
+    p = (x, y, 1.0)
+    return (glass._dot(p, pane.a), glass._dot(p, pane.b))
+
+
+def test_the_window_glass_is_closed_by_the_exterior():
+    """A vanilla windscreen's interior smear is a frame with an open centre; the exterior
+    glass on its panel record is the whole pane (#626): a crack in the centre is on the
+    window's glass, not 0.2 m past it."""
+    z = 1.0
+    top = [(p, SMEAR_UV, (0.5,) * 3) for p in _quad(-0.7, 0.7, 0.55, 0.7, z)]
+    crack = (((0.0, 0.3, z), (0.05, 0.3, z), (0.05, 0.303, z)), CRACK_UV, (0.5,) * 3)
+    open_centre = glass.HostWindow((0, 5), [*top, crack], [crack])
+    closed = glass.HostWindow((0, 5), [*top, crack], [crack], exterior=_quad(-0.7, 0.7, 0.0, 0.7, z + 0.005))
+    assert min(open_centre.overhang[0]) > 0.2
+    assert closed.overhang[0] == (0.0, 0.0, 0.0, 0.0)
+
+
 def test_a_crack_line_moves_as_one_piece():
     """A crack line of slivers sharing vertices, rooted at the host's left edge and running
     in towards the centre at an angle, keeps its shape on a smaller window: the slivers

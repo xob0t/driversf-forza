@@ -40,7 +40,7 @@ import re
 import struct
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
@@ -302,6 +302,20 @@ def _bary(q, p):
     return (w0, w1, 1.0 - w0 - w1)
 
 
+def _distance(q, p) -> float:
+    """Distance from plane point p to the plane triangle q (0 inside it)."""
+    w = _bary(q, p)
+    if w is not None and min(w) >= 0.0:
+        return 0.0
+    best = math.inf
+    for (ax, ay), (bx, by) in ((q[0], q[1]), (q[1], q[2]), (q[2], q[0])):
+        ex, ey = bx - ax, by - ay
+        ee = ex * ex + ey * ey
+        f = min(1.0, max(0.0, ((p[0] - ax) * ex + (p[1] - ay) * ey) / ee)) if ee > 0 else 0.0
+        best = min(best, math.hypot(p[0] - ax - f * ex, p[1] - ay - f * ey))
+    return best
+
+
 class _Pane:
     """One window in its own plane (s, t metres along the frame axes): an
     occupancy grid, its rim, and points lifted back onto the glass."""
@@ -315,6 +329,8 @@ class _Pane:
                 continue  # edge-on (the glass's thickness rim)
             self.tris.append((q, pts, normals))
         self.cells: dict[tuple[int, int], list[int]] = defaultdict(list)
+        self.touch: dict[tuple[int, int], list[int]] = defaultdict(list)  # cells each triangle's box reaches
+        self.span = (0, 0)
         if not self.tris:
             self.s0 = self.t0 = 0.0
             self.area, self.rim, self.filled = 0.0, [], set()
@@ -326,9 +342,11 @@ class _Pane:
             j0, j1 = self._j(min(y for _, y in q)), self._j(max(y for _, y in q))
             for i in range(i0, i1 + 1):
                 for j in range(j0, j1 + 1):
+                    self.touch[(i, j)].append(k)
                     w = _bary(q, self._centre(i, j))
                     if w and min(w) >= -1e-6:
                         self.cells[(i, j)].append(k)
+        self.span = (max(i for i, _ in self.touch), max(j for _, j in self.touch))
         if not self.cells:
             # Every triangle too small to cover a cell centre (a sliver of lamp
             # glass): no area, so the window gets its surface only (max() over
@@ -375,23 +393,46 @@ class _Pane:
     def inside(self, p) -> bool:
         return (self._i(p[0]), self._j(p[1])) in self.filled
 
-    def near(self, p) -> bool:
-        """Inside, or in a cell next to one inside: the grid knows the rim to a cell."""
+    def _rings(self, i, j):
+        """(r, cells at Chebyshev distance r from cell (i, j)) for r = 0, 1, ... until
+        the rings cover the whole grid."""
+        last = max(abs(i), abs(i - self.span[0]), abs(j), abs(j - self.span[1]))
+        for r in range(last + 1):
+            yield (
+                r,
+                [(i + di, j + dj) for di in range(-r, r + 1) for dj in ((-r, r) if abs(di) != r else range(-r, r + 1))],
+            )
+
+    def past(self, p) -> float:
+        """How far plane point p lies outside the window's glass, in metres: 0 on a
+        triangle or in a gap the pane counts as glass (a filled cell no triangle
+        reaches), else the distance to the nearest triangle (inf without glass)."""
         i, j = self._i(p[0]), self._j(p[1])
-        return any((i + di, j + dj) in self.filled for di in (-1, 0, 1) for dj in (-1, 0, 1))
+        if (i, j) in self.filled and (i, j) not in self.touch:
+            return 0.0
+        best = math.inf
+        for r, ring in self._rings(i, j):
+            if (r - 1) * CELL >= best:
+                break  # p lies in its own cell: a triangle first reached in ring r is (r - 1) cells away
+            for k in {k for c in ring for k in self.touch.get(c, ())}:
+                best = min(best, _distance(self.tris[k][0], p))
+                if best == 0.0:
+                    return 0.0
+        return best
 
     def lift(self, p):
         """(position, normal) on the glass under plane point p, LIFT inside it;
-        just outside the pane the nearest triangle's plane is extended. Where
-        the glass has two layers, the inner one."""
+        outside the pane the plane of the nearest triangle (within three cells,
+        else the first one found further out) is extended. Where the glass has
+        two layers, the inner one."""
         i, j = self._i(p[0]), self._j(p[1])
         best = None
-        for r in range(4):
+        for r, ring in self._rings(i, j):
+            if best is not None and (best[0][0] == 0 or r >= 4):
+                break
             seen = set()
-            for di in range(-r, r + 1):
-                for dj in range(-r, r + 1):
-                    if max(abs(di), abs(dj)) == r:
-                        seen.update(self.cells.get((i + di, j + dj), ()))
+            for c in ring:
+                seen.update(self.cells.get(c, ()))
             for k in seen:
                 q, pts, normals = self.tris[k]
                 w = _bary(q, p)
@@ -405,8 +446,6 @@ class _Pane:
                 key = (round(miss, 4), _dot(pos, self.out))
                 if best is None or key < best[0]:
                     best = (key, pos, nrm or self.out)
-            if best is not None and best[0][0] == 0:
-                break
         if best is None:
             return None
         _, pos, nrm = best
@@ -486,13 +525,17 @@ class HostWindow:
     and shard layers (interior_block crack, shard_dull, shard_bright), its kind
     (host_kinds: "front", "rear" or "side") and the vanilla car (spool ID) whose
     interior it is. Normals may be left out (three-element triangles): the
-    triangle's own facing stands in, as vanilla stores it (_own_normals)."""
+    triangle's own facing stands in, as vanilla stores it (_own_normals).
+    `exterior`: the points of the car's exterior glass on the same panel record
+    and facing like the window (host_windows), the rest of its glass where the
+    interior draws none (the windscreen's open centre)."""
 
     s9: tuple[int, int]
     tris: list
     overlay: list
     kind: str = ""
     car: int | None = None
+    exterior: list = field(default_factory=list)
 
     @cached_property
     def centre(self) -> tuple:
@@ -542,6 +585,32 @@ class HostWindow:
     def fin_heights(self) -> list[list[float]]:
         return _fin_heights([tri[0] for tri in self.overlay], self.frame[2])
 
+    @cached_property
+    def glass(self) -> _Pane:
+        """The window's glass in its own frame, without the set: its interior glass
+        other than the crack and shard layers (the smear) and the exterior glass on
+        its panel record; the set's own triangles for a window with neither."""
+        ha, hb, hn, pane = self.frame
+        layers = {id(t) for t in self.overlay}
+        pts = [t[0] for t in self.tris if id(t) not in layers] + list(self.exterior)
+        if not pts:
+            return pane
+        return _Pane([(p, (hn,) * 3, (0.5,) * 3, b"") for p in pts], ha, hb, hn)
+
+    @cached_property
+    def overhang(self) -> list[tuple[float, ...]]:
+        """Per crack and shard triangle, how far (metres, in the window's plane) its
+        three corners and its centroid lie outside the window's glass (glass, past):
+        vanilla's sets reach past their window's glass, rooted at its edge
+        (research/vehicle-model.md, "How far a set reaches past its window")."""
+        ha, hb = self.frame[:2]
+        out = []
+        for tri in self.overlay:
+            q = [(_dot(p, ha), _dot(p, hb)) for p in tri[0]]
+            centroid = (sum(x for x, _ in q) / 3, sum(y for _, y in q) / 3)
+            out.append(tuple(self.glass.past(x) for x in (*q, centroid)))
+        return out
+
 
 def _sideways(tris) -> bool:
     """A side window (facing along x) rather than a windscreen, rear window or
@@ -567,10 +636,15 @@ def host_kinds(windows: list[HostWindow]) -> list[HostWindow]:
     return windows
 
 
-def host_windows(stream, vehc, car: int | None = None) -> list[HostWindow]:
+def host_windows(stream, vehc, car: int | None = None, exterior=None) -> list[HostWindow]:
     """The vanilla interior's glass (GLOBAL_Glass_LOD5 in part 0, mask 64) as
     windows, one per s9 group: vanilla binds each window to its own panel
-    record (windscreen (0, 5) on the Desanne, rear (0, 20), doors)."""
+    record (windscreen (0, 5) on the Desanne, rear (0, 20), doors), in the
+    full, interior and exterior entries alike. With `exterior` (the car's
+    exterior VEHC entry) each window also gets the exterior glass on its record
+    (HostWindow.exterior) that faces like it (_sideways) and, for side glass,
+    lies on its side: a record can hold the glass's edge strips, or the
+    chassis record several panes."""
     from dsfforza.convert.damage import load_mesh
     from dsfforza.convert.damage.core import _angles_of, _normal_of
     from dsfforza.formats import vehicle_mesh as vm
@@ -593,12 +667,23 @@ def host_windows(stream, vehc, car: int | None = None) -> list[HostWindow]:
             # Semantic 5 bytes 0, 1: the normal's angles, decoded as the vertex shader does.
             normals = tuple(_normal_of(*_angles_of(*vb.read(e5, i)[:2])) for i in idx) if e5 else None
             groups[tuple(vb.read(e9, idx[0])[:2])].append((pts, uvs, skies, normals))
-    return host_kinds(
+    windows = host_kinds(
         [
             HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")], car=car)
             for s9, tris in sorted(groups.items())
         ]
     )
+    if exterior is not None:
+        outside: dict[tuple, list] = defaultdict(list)
+        for _, s9s, pts in _glass_triangles(stream, exterior, (2,)):
+            outside[tuple(s9s[0])].append(tuple(pts))
+        for w in windows:
+            w.exterior = [
+                pts
+                for pts in outside.get(tuple(w.s9), ())
+                if _sideways([pts]) == w.sideways and (not w.side or (sum(p[0] for p in pts) > 0) == (w.side > 0))
+            ]
+    return windows
 
 
 # --- donors: the vanilla windows whose crack and shard sets ports take (#459) ---------
@@ -730,7 +815,7 @@ class Donors:
         return self._windows[key]
 
 
-_LIBRARY: dict = {}  # cache key -> (DonorSets, {car: interior entry})
+_LIBRARY: dict = {}  # cache key -> (DonorSets, {car: interior entry}, {car: exterior entry})
 
 
 def _donor_cache_dir() -> Path | None:
@@ -767,6 +852,7 @@ def donor_library(stream) -> Donors:
         ssic = find(root.entries, "SSIC")
         records = parse_sslp(payload(stream, find(find(ssic.children, "NONR").children, "SSLP")))
         interiors = {sid - 1000: root.entries[i] for sid, i, kind in records if kind == 1}
+        exteriors = {sid - 2000: root.entries[i] for sid, i, kind in records if kind == 2}
         folder = _donor_cache_dir()
         path = folder / f"{key}.pkl" if folder else None
         sets = None
@@ -791,13 +877,14 @@ def donor_library(stream) -> Donors:
                 except OSError:
                     with contextlib.suppress(OSError):
                         tmp.unlink(missing_ok=True)
-        _LIBRARY[key] = (sets, interiors)
-    sets, interiors = _LIBRARY[key]
+        _LIBRARY[key] = (sets, interiors, exteriors)
+    sets, interiors, exteriors = _LIBRARY[key]
     loaded: dict = {}
 
     def load(car, s9):
         if car not in loaded:
-            loaded[car] = {tuple(w.s9): w for w in host_windows(stream, interiors[car], car)}
+            windows = host_windows(stream, interiors[car], car, exteriors.get(car))
+            loaded[car] = {tuple(w.s9): w for w in windows}
         return loaded[car][s9]
 
     return Donors(sets=list(sets), load=load)
@@ -969,8 +1056,11 @@ class InteriorGlass:
         the rim, in metres, both taken at the piece's centroid, turned with that
         direction; then its triangles are lifted onto the glass. A piece deeper
         than a smaller window reaches (past its centre) is left out; so is a
-        triangle that lands outside the window (its centroid outside, or a corner
-        more than one cell of the occupancy grid outside it).
+        triangle that reaches further past this window's glass than it reached
+        past its own window's glass (HostWindow.overhang): vanilla's shards are
+        rooted at the glass's edge and reach over the frame, by 3 to 7 mm at the
+        median and up to 13 cm, so the glass alone is not the window's extent
+        (research/vehicle-model.md, "How far a set reaches past its window").
 
         Each vertex keeps the host's normal, turned with its piece (_turn_normal):
         vanilla stores on every crack and shard vertex the facing of its own
@@ -982,7 +1072,7 @@ class InteriorGlass:
         onto the glass flattened to lines (research/vehicle-model.md, "Crack and
         shard fins")."""
         ha, hb, hn, _ = host.frame
-        hrim, fin_heights = host.rim, host.fin_heights
+        hrim, fin_heights, overhang = host.rim, host.fin_heights, host.overhang
         if hrim is None:
             return []
         rim = _Rim(pane)
@@ -1003,22 +1093,28 @@ class InteriorGlass:
                 normals = [
                     _turn_normal(m, host_frame, frame, turn, flip) for m in (_host_normals(tri) or _own_normals(tri[0]))
                 ]
-                out += self._place(pane, tri, flat_tris[n], g, gp, turn, s9, normals, fin_heights[n])
+                out += self._place(pane, tri, flat_tris[n], g, gp, turn, s9, normals, fin_heights[n], overhang[n])
         return out
 
     @staticmethod
-    def _place(pane: _Pane, tri, q, g, gp, turn, s9, normals, heights) -> list:
+    def _place(pane: _Pane, tri, q, g, gp, turn, s9, normals, heights, overhang) -> list:
         """One host triangle (plane points q) of a piece moved from g to gp and
         turned by turn, lifted onto the glass and raised off it by each corner's
         height (metres, along the window's outward normal), with the given vertex
-        normals; [] where it lands outside."""
+        normals; [] where a corner or the centroid lands further outside the glass
+        than `overhang` (the host's own, per corner and centroid) lets it, to one
+        CELL: the move knows each window's rim to half a cell (_Rim measures it on
+        cell centres), so where a piece lands against the true edge is known to a
+        cell. Without that cell the vanilla sets placed on their own windows'
+        glass lose 12,750 of 215,734 triangles, with it 1,140
+        (research/vehicle-model.md, "How far a set reaches past its window")."""
         uvs, skies = tri[1], tri[2]
         flat = []
         for x, y in q:
             d = _rotate((x - g[0], y - g[1]), turn)
             flat.append((gp[0] + d[0], gp[1] + d[1]))
         centroid = (sum(x for x, _ in flat) / 3, sum(y for _, y in flat) / 3)
-        if not pane.inside(centroid) or not all(pane.near(c) for c in flat):
+        if any(pane.past(x) > allowed + CELL for x, allowed in zip((*flat, centroid), overhang)):
             return []
         corners = [pane.lift(c) for c in flat]
         if any(c is None for c in corners):
