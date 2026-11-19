@@ -5,8 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from dsfforza.convert import forza_materials as fm
-from dsfforza.convert.cockpit.displays import dash_needles, digital_displays, flatten_face, virtual_gauges
+from dsfforza.convert.cockpit.displays import dash_needles, digital_displays
 from dsfforza.convert.cockpit.geometry import (
     DIGITAL_TECHNIQUES,
     GAUGE_IDS,
@@ -50,15 +49,15 @@ def fit(
     gamedbs: list[Path],
     folder: Path | None = None,
     main_sections: list[carbin.Section] | None = None,
-    virtual: bool = True,
 ) -> CockpitFit:
     """Measure the cockpit; `folder` (the extracted car) supplies the
     CarAttribs.xml tick tables for the gauge calibration. `main_sections`
     (the main carbin) stands in when the cockpit carbin is a stub (its
     interior, seats and steering wheel at their finest LOD, main atlases) or
-    lacks a steering wheel (the main carbin's, drawn flat). With `virtual`, a
-    speedometer or tachometer Forza shows as a digital readout gets a virtual
-    dial on a blank display (virtual_gauges; the gamedbs give its scale)."""
+    lacks a steering wheel (the main carbin's, drawn flat). Gauges are Forza's
+    needles and what its dash scene draws (digital_displays, dash_needles); a
+    readout neither gives gets nothing in its place (research/cockpit.md, "No
+    virtual dials")."""
     source, wheel_source, lod0 = "cockpit", "cockpit", True
     dropped: set = set()
     main = {s.name.lower(): s for s in (main_sections or [])}
@@ -122,11 +121,10 @@ def fit(
         for n, s in static.items():
             static[n], k = with_display_faces(s)
             faces += k
-    virtual_report = {}
     digital_plan, digital_report = None, {}
     forza = None
     version = next((s.version for s in static.values()), 3)
-    if virtual or lod0:
+    if lod0:
         from dsfforza.build import handling
 
         try:
@@ -146,38 +144,6 @@ def fit(
                 if g.family not in gauges:  # Forza's own needle first
                     gauges[g.family], calibration[g.family] = g, cal
                     needles[g.family] = {"min": g.rest}
-    provided = set(digital_report.get("provides", ()))
-    if virtual:
-        drawn = [s for n, s in static.items() if n not in SKIP_SECTIONS and not LIGHT_SECTIONS.search(n)]
-        try:
-            atlas = fm.AtlasCache(folder, lod0=True).get(fm.INTERIOR) if folder is not None and lod0 else None
-        except FileNotFoundError:
-            atlas = None
-        # Readouts the dash scene drives (digital_displays) need no virtual dial.
-        readout = [tri for p in getattr(digital_plan, "patches", []) for tri in p.points]
-        dials, virtual_report, extra = virtual_gauges(
-            static,
-            gauges,
-            eye_point(wheel, offset),
-            forza,
-            version,
-            drawn,
-            wheel=wheel,
-            atlas=atlas,
-            readout=readout,
-            provided=provided,
-            # A placeholder cockpit carbin (the main carbin's cabin) has no
-            # needle and no display; the car has a speedometer and a tachometer all the same.
-            assume=() if lod0 else ("tach", "speed"),
-        )
-        if dials and "face" in virtual_report:
-            faces -= flatten_face(static, virtual_report["face"])
-        static.update(extra)
-        for needle, face, g, cal in dials:
-            needles[g.family] = {"min": needle}
-            gauges[g.family] = g
-            calibration[g.family] = cal
-            static[face.name] = face
     digital = sum(
         len(sub.triangles())
         for s in static.values()
@@ -200,7 +166,6 @@ def fit(
         lod0,
         dropped,
         display_faces=faces,
-        virtual=virtual_report,
         digital_plan=digital_plan,
         digital_displays=digital_report,
     )

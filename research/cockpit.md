@@ -60,13 +60,12 @@ and so are their materials.
   Fuel, temperature and other needles are parked. Forza's digital displays are
   drawn live from their dash scenes on DSF's digital dials (`digital_dash`;
   "Digital displays"), with rpm pieces made of 1 mm cells and whole segments
-  ("Shimmer"). Where no scene drives a readout, a virtual dial or a virtual
-  display stands in ("Gauges under the cowl", "Virtual dials on display
-  faces"). A display only on the steering wheel is moved, live, onto a
-  virtual display on the dash or an open cockpit's cowl; a placeholder cockpit
-  gets virtual dials; virtual displays are placed from the head camera and
-  clear of DSF's HUD ("Displays on the steering wheel, placeholder cockpits",
-  #147, #148). Open: #172 (stray
+  ("Shimmer"). A readout neither a Forza needle nor a scene drives gets
+  nothing in its place: no virtual dials since 2026-11-19 ("No virtual
+  dials"). A display only on the steering wheel is moved, live, onto a
+  virtual display on the dash or an open cockpit's cowl, placed from the head
+  camera and clear of DSF's HUD ("Displays on the steering wheel, placeholder
+  cockpits", #147). Open: #172 (stray
   hundreds digit), #195 (1-pixel specks).
 - Head camera: VO3D p430..432 from the Forza eye (`CameraOverrides`, else the
   fleet median), raised to see the rim 7.9 degrees down, but not so far that
@@ -477,8 +476,8 @@ no camera.
 - side mirror glass centres; eye from `CameraOverrides` (the fleet median
   for an all-zero row).
 - digital displays: the dash scene's plan (`digital_displays`, "Digital
-  displays") and, where no scene drives a readout, virtual dials
-  (`virtual_gauges`).
+  displays"); until 2026-11-19, where no scene drove a readout, virtual dials
+  ("No virtual dials").
 - the shell LOD (`shell_closes`, below).
 
 `forza2dsf.convert(..., interior=)` with `ConvertOptions.cockpit`:
@@ -1574,6 +1573,8 @@ their rims.
 
 ## Gauges under the cowl, and virtual dials (2026-10-25)
 
+The virtual dials (fix 2) were taken out on 2026-11-19 ("No virtual dials").
+
 User report on the installed full roster (`out/final-gui2`): the Mercedes
 CL65 AMG (FM4, ID 537, host 279) shows no gauges in the cockpit view.
 
@@ -1798,6 +1799,9 @@ with the gauge records taken out of their hierarchies, the Spark reports id 2
 S2000 (4, both readouts digital) and the Volt report none.
 
 ## Virtual dials on display faces and virtual displays (2026-10-26, issue #63)
+
+Replaced on 2026-11-19 ("No virtual dials"): no dials on faces, blank displays or
+virtual displays. `pod_display` stays for steering-wheel displays.
 
 Since "Digital displays" below, these virtual dials are the fallback: where no
 dash scene can be drawn (steering-wheel displays, cars without a scene) and for a
@@ -3027,7 +3031,7 @@ cluster seen through the rim), then the Beetle 1963, Corvette 1960, Cobra
 5. **Placeholder cockpits** (`is_stub`, the main carbin's cabin): Forza has
    no needle and no display there, and the tick tables are mostly empty, but
    these are road cars and trucks with a speedometer and a tachometer
-   (`virtual_gauges(assume=)`): #92's virtual display with two dials on the
+   (`virtual_gauges(assume=)`, taken out 2026-11-19: "No virtual dials"): #92's virtual display with two dials on the
    dash, scales from Forza's top speed and redline. The Leaf and Prius get a
    tachometer too: Forza models both with gears and a redline (Leaf 6550 rpm,
    5 gears), so nothing in its data tells them apart.
@@ -3628,6 +3632,67 @@ cluster's needles turn. At 90.0 mph (the probe's sample) the speedometer sits ju
 85 mark and the tachometer near 5000 rpm. The run's 40 mph shot came as the cockpit view
 opened, before the hold, so it holds no reading. The car spooled and drove without a crash.
 
+## No virtual dials (2026-11-19, owner's decision)
+
+Where the converter can't put a live needle on the car's own gauges, it adds nothing.
+The owner's report on the Omni GLHS (a generic two-dial pod floating over its dash,
+"Dash textures with a side of 16 px or less") ended the stand-ins of "Gauges under the
+cowl" (#49), "Virtual dials on display faces" (#92) and the placeholder cockpits'
+dials (#148).
+
+**What went** (`convert/cockpit/`):
+
+- `virtual_gauges` and what only it used: `blank_displays`, `pick_display`,
+  `virtual_scale`, `virtual_dial`, the seven-segment numerals, `face_colour`,
+  `mark_technique` and the contrast helpers, `flatten_face`, `_face_front`, the
+  `VIRTUAL_*` constants;
+- the atlas cells `dsf_dial_mark`, `dsf_dial_mark_dark` and `dsf_dial_red`, and the
+  `dsf_needle_hub` material. Every interior atlas carried the first and last of those
+  cells, so every cockpit atlas loses two flat cells. Nothing drew them except the
+  dials;
+- `CockpitFit.virtual` and the report's `cockpit.interior.virtual_gauges`.
+  `drop_unturned` now reports the needles a host can't turn as
+  `cockpit.interior.no_host_gauge`.
+
+**What stays.**
+
+- `pod_display`/`place_pod` and their `dsf_dial_display`/`dsf_dial_bezel` cells: a
+  display only on the steering wheel is still moved onto a virtual display
+  (`wheel_display_pod`). It shows Forza's own display, drawn live from its scene.
+- The dash scene's needles (`dash_needles`, `dsf_needle`).
+
+**Who loses a virtual dial.** Survey of the installed build (`out/build`, master of
+2026-11-19: `cockpit.interior.virtual_gauges.dials` in the 718 cockpit reports;
+`out/omni/vd_survey.py`): 31 cars.
+
+| On | Cars |
+| --- | --- |
+| a virtual display (pod), both dials | Durango 99, R10 #14 and #2, A4 Avant 04, Tour Bus 12, PT Cruiser 04, Explorer 10, Focus ZX4 05, Yukon XL 01, T440 12, Leaf 11, Camry 07, Corolla DX 95, Prius 11, RAV4 Sport 04, XC70 12, Beetle 04, Shelby Omni GLHS 86 |
+| a virtual display, speedometer only | M3 GT2 #79, F40 Competizione, Lola #33 (HON_33_Lola_11), 962C #17 |
+| a virtual display, tachometer only | Reventon, Reventon Roadster, Evora Type 124, Aygo, Tuscan S, Coronet 67, Roadster S, ForTwo 12 |
+| a blank display, both dials | MP4-12C GT3 #59 |
+
+With the dash-texture fix ("Dash textures with a side of 16 px or less") the Omni GLHS
+has its own needles. The other 30 now have no speedometer, tachometer, or neither in
+the cockpit view: the placeholder cockpits (Durango, Explorer, Camry...), the cars
+whose readout is a scene the converter can't draw, and the cars whose Forza cockpit
+lacks that gauge.
+
+**Check** (5 cars at `--jobs 2`, master `out/pr2/before`, this change
+`out/pr1/after`; `render_compare diff`, `out/rc/pr1-no-virtual-dials`):
+
+- The Omni GLHS, ForTwo, M3 GT2 and Camry draw differently: the pod is gone from the
+  cockpit view (39 to 74% of the "added" region) and from the glass in the side or
+  front-three-quarter view.
+- The F458 (no virtual dial) renders alike, so dropping the two atlas cells changes no
+  drawing.
+
+In game (VM, confirmed-runtime; `run-series.ps1 -Vm -HoldMph '40,90'`, IDs 1, 2 and 5;
+runs `vm1-20261119-140127` master and `vm1-20261119-140636` this change): the ForTwo's pod
+on its A-pillar and the Camry's on its dash are gone at 90 mph, and the ForTwo's own
+speed needle stays. The Omni GLHS has no needle in its cluster without the dash-texture fix.
+All three cars spooled and drove without a crash.
+
 ## Fitted-rule audit (2026-11-05)
 
 Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
@@ -3645,8 +3710,8 @@ distribution, a fleet median used as a per-car value, a per-car exception), **un
 
 | Rule | Was | Now | Source |
 | --- | --- | --- | --- |
-| Virtual dial scale (`displays.virtual_scale`) | speed: top speed x 1.05, at least 120 mph; tach: redline + 250 rpm, at least 6000 | the first major mark at or past the top speed or the redline | p605 stops the speedometer at the dial's end (`fit.gauge_params`); DSF's rpm stops at the redline (p42) |
-| Virtual dial marks (`displays.mark_technique`) | dark marks above Rec. 601 luma 100 | the mark colour with the higher WCAG 2 contrast ratio against the display (crossover at grey 114) | the definition of contrast (relative luminance of linearised sRGB) |
+| Virtual dial scale (`displays.virtual_scale`) | speed: top speed x 1.05, at least 120 mph; tach: redline + 250 rpm, at least 6000 | the first major mark at or past the top speed or the redline | p605 stops the speedometer at the dial's end (`fit.gauge_params`); DSF's rpm stops at the redline (p42) (removed 2026-11-19 with the virtual dials) |
+| Virtual dial marks (`displays.mark_technique`) | dark marks above Rec. 601 luma 100 | the mark colour with the higher WCAG 2 contrast ratio against the display (crossover at grey 114) | the definition of contrast (relative luminance of linearised sRGB) (removed 2026-11-19 with the virtual dials) |
 | 180-degree dial (`displays.virtual_dial`) | chosen over 240 only when 15% larger; 0.12 r under the pivot | chosen when larger; 0.08 r under the pivot | the dial's own drawing: under the pivot lie the hub (0.08 r) and the resting needle (0.035 r half-width) |
 | Forza needles kept clear by a virtual display (`pod_display`) | 1.2 x the needle's length | the needle's length (its sweep); the gauge face is already kept clear as a gauge material | the needle's geometry |
 | Outside parts' texels in the cockpit atlas (`CockpitOptions`) | nodamage_LOD0 lifted to 40, brightness 0.85, saturation 0.55, alpha < 16 filled with (10, 10, 12), plain (40, 40, 42) | converted as the exterior converts the same texels (Texturing's defaults) | the same Forza texels through the exterior's conversion; the lift and tone were tuned when cabin trims were wrongly read from nodamage_LOD0 (Risks 8, "Cabin trims sample interior_LOD0") |
@@ -3666,7 +3731,7 @@ distribution, a fleet median used as a per-car value, a per-car exception), **un
 | `calibrate_gauge` linear min to max; `PARK_MID`; needle colour (200, 200, 200); the dash-scene needle fit over 25% of full scale and up; `SPEED_MAX` 200 | | unknown / fitted | Forza's needle code is undecoded | #504 |
 | `HUD_DOWN_DEG` 13.5, `HUD_LEFT_DEG` 7, `HUD_RIGHT_DEG` 23 | | runtime, approximate | read off 1280 x 720 shots with an unlogged FOV; needs the HUD layout and the head camera's FOV | #505, #287 |
 | `POD_SIZES`, `WHEEL_DISPLAY_SCALES`, `WHEEL_DISPLAY_SMALL_SCALES`, `POD_BEZEL`, `POD_DEPTH`, `POD_RANGE`, the `/ 0.8` in `far`, `POD_SIDE_DEG`, `POD_MAX_DEG`, `POD_BELOW_EYE`, `POD_COWL_SUPPORT`, `POD_WHEEL_CLEAR`, `POD_HAND_CLEAR` | | fitted / design | sizes and bounds of a stand-in; the hand keep-out needs DSF's arms mesh | #505, #287 |
-| `VIRTUAL_MIN_AREA`, `VIRTUAL_MAX_TILT_DEG`, `VIRTUAL_MIN_SIGHT`, `FACE_FRONT_DEPTH`, `_touching_groups`' 1 cm, `VIRTUAL_INSET`, the dial's proportions, the virtual dial colours | | fitted / design | as above | #505, #507 |
+| `VIRTUAL_MIN_AREA`, `VIRTUAL_MAX_TILT_DEG`, `VIRTUAL_MIN_SIGHT`, `FACE_FRONT_DEPTH`, `_touching_groups`' 1 cm, `VIRTUAL_INSET`, the dial's proportions, the virtual dial colours | | removed 2026-11-19 with the virtual dials ("No virtual dials") | | #505, #507 |
 | `place_pod` from `camera_eye` without the gauge-sight limit | | unknown | goes with #503 | #505 |
 | Dash-scene readouts DSF has no value for (`dash_scene.apply_state`): fuel 75%, water 190, temperature ranges 100-260 and 100-300, oil = water + 10, oil pressure 0.5; texts "1234", "56.7", "12:00", "50", "200", "72", "0.0" | | fitted (TODO) | `g_fDigiData` holds rpm, speed and gear only (FUN_00891670). Blanking them (tried in #513) looked worse than the placeholders, and a fit stays until a derived rule replaces it. 308 of 415 scenes bind at least one (fuel meter 81, odometer 232, trip 160, clock 125, outside temperature 134) | #506 |
 | Shift lights (`dash_scene`): top 35% of the tach range, FLASH at 150 ms | | fitted (TODO) | the SHIFT_LIGHTS behaviour's props are undecoded; a plain rpm/max drive is no more derived | #506 |
@@ -3688,8 +3753,8 @@ distribution, a fleet median used as a per-car value, a per-car exception), **un
   first and last marker (FUN_0088D3B0, FUN_0088E310), p538/p559 (FUN_005743E0), p95/p87
   (unused slots, the plugin's interface), `camera_params` (FUN_0088DF80), the
   `g_fDigiData` slots, `DIGIT_PITCH` 23/256, `GEAR_PITCH` 1/7, `BAR_LIT_FROM`,
-  `SPEED_SLOTS` 3 (the 255 mph clamp), `GEAR_CHARS`; why virtual dials exist (DSF draws no
-  changing digits) and why wheel displays move (the digital program has no skin input).
+  `SPEED_SLOTS` 3 (the 255 mph clamp), `GEAR_CHARS`; why virtual dials existed (DSF draws no
+  changing digits; removed 2026-11-19) and why wheel displays move (the digital program has no skin input).
 - **Vanilla parts:** `INTERIOR_MASK` 64, `INTERIOR_MDXN_LIMIT` (Sports Coupe 10),
   `INTERIOR_PAINT` (6 hosts checked; #507), the glass, trim and chrome materials, the
   needle buffer layouts (stride 20 and 16), `DASHBOARD_INSTRUMENT`, the Volt's digital
