@@ -1871,6 +1871,7 @@ class Reuse:
             if report is None:
                 self.rebuilt[media] = "store: the entry went meanwhile"
                 return None
+            report = refresh_entry(report, job)
             self.taken[media] = report
             self.taken_from[media] = STORE
             return {**report, "reused_from": STORE}
@@ -1887,6 +1888,7 @@ class Reuse:
             if dst.exists():
                 shutil.rmtree(dst)
             shutil.copytree(sound_src, dst, copy_function=_link_or_copy)
+        report = refresh_entry(report, job)
         self.taken[media] = report
         self.taken_from[media] = str(source)
         return {**report, "reused_from": str(source)}
@@ -2025,6 +2027,35 @@ class Reuse:
             "trust_code": self.trust_code,
             "rebuild_where": self.where,
         }
+
+
+ENTRY_FROM_JOB = ("name", "year", "games_available", "source", "cache")
+
+
+def refresh_entry(report: dict, job: dict) -> dict:
+    """A reused car's report with the manifest fields port_car.car_entry takes from the job
+    and not from the conversion (ENTRY_FROM_JOB: its year and display name, the games it is
+    on, its disc image's file name, the cache folder) set from this job: those aren't part
+    of a car's fingerprint (fingerprint.JOB_FIELDS), so they may differ from the build it
+    was made in (the FM4 discs added, a disc renamed)."""
+    from dsfforza.build import port_car
+    from dsfforza.build.forza_roster import Source
+
+    entry = report.get("entry")
+    if not entry:
+        return report
+    fresh = port_car.car_entry(
+        job["media"],
+        job.get("year"),
+        job.get("games", ""),
+        Source(**job["source"]),
+        Path(job["cache"]),
+        job["spool_id"],
+        entry.get("host"),
+        entry.get("host_name"),
+        {},
+    )
+    return {**report, "entry": {**entry, **{k: fresh[k] for k in ENTRY_FROM_JOB}}}
 
 
 def _link_or_copy(src, dst) -> None:

@@ -533,8 +533,11 @@ class Recorder:
 # seeds the car's resource UIDs (port_car.build_car: uid_prefix("renew"/"geometry",
 # name, spool_id)) and is the namespace of its Wwise IDs (engine_sound.fresh_ids: ID =
 # spool_id << 22 | hash, which keeps two cars on one template bank apart). A car built
-# under one ID is a different chunk from the same car under another.
-JOB_FIELDS = ("media", "game", "year", "games", "source", "spool_id")
+# under one ID is a different chunk from the same car under another. Not the car's year
+# and the games it is on (the roster's, which depend on the discs given): the worker puts
+# them only in its report's manifest entry, and a reused car gets this job's
+# (port_batch.refresh_entry).
+JOB_FIELDS = ("media", "game", "source", "spool_id")
 # Paths kept in the key to place the recorded files, not compared: the files they hold
 # are inputs by content. cache and game_dir are roots a check moves to the job's own
 # (Checker.check); the vanilla archive counts by digest (Checker.moved).
@@ -590,7 +593,7 @@ def disc_tokens(isos) -> dict[str, str]:
     for iso in isos:
         path = norm(iso)
         try:
-            st = os.stat(path)
+            st = Path(path).stat()
         except OSError:
             continue
         game, number = _identified(path, st.st_size, st.st_mtime_ns)
@@ -667,7 +670,7 @@ def relocate(fp: dict, old: str | None, new: str | None = None) -> dict:
         if not (isinstance(path, str) and path.startswith(head)):
             return path
         parts = path[len(head) :].split(os.sep, 2)  # the junctions are one or two folders down
-        top = _resolve(new, os.sep.join(parts[:2]))
+        top = _resolve(new, parts[0] if len(parts) == 1 else parts[0] + os.sep + parts[1])
         return top + os.sep + parts[2] if len(parts) > 2 else top
 
     return {**_map_paths(fp, move), "repo": new}

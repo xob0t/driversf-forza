@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -461,7 +460,7 @@ def test_discs_count_by_what_the_car_asked_for_not_by_file_name():
         # FH1's disc renamed and moved (time stamp kept, as a move or Copy-Item keeps it).
         moved = folder / "elsewhere" / "fh1 (renamed).iso"
         moved.parent.mkdir()
-        os.replace(fh1, moved)
+        fh1.replace(moved)
         again = {**job, "isos": [str(moved)], "source": {**job["source"], "iso": str(moved)}}
         assert fingerprint.Checker().check(fp, again) is None
         # Another image of FH1's disc with other bytes: its content is an input.
@@ -502,7 +501,7 @@ def test_the_dlc_packs_found_are_an_answer_not_folder_listings():
 
         def packages(_root=None):
             with forza_roster.discovery("dlc"):
-                sorted(os.listdir(folder))  # the listing of assets/: not an input
+                sorted(folder.iterdir())  # the listing of assets/: not an input
                 return list(packs)
 
         fm4_dlc.packages = packages
@@ -538,7 +537,7 @@ def test_the_cache_and_the_game_folder_may_move():
         try:
             for path in ("cache1/sub/x.bin", "game1/sub/x.bin", "game1/vanilla.sp"):
                 (folder / path).read_bytes()
-            sorted(os.listdir(folder / "cache1" / "sub"))
+            sorted((folder / "cache1" / "sub").iterdir())
         finally:
             fp = recorder.finish(job)
         for old, new in (("cache1", "cache2"), ("game1", "game2")):
@@ -580,6 +579,40 @@ def test_workers_run_with_one_blas_thread():
             port_batch.subprocess.Popen = real
         assert results["TEST_Car_10"]["ok"]
         assert seen and all(seen[0].get(k) == v for k, v in fingerprint.WORKER_ENV.items())
+
+
+def test_a_reused_cars_manifest_entry_follows_this_job():
+    """The roster's games and the disc image's name are no input of the conversion (the
+    worker puts them in its report alone): a car built with only FH1's disc, reused once the
+    FM4 discs are there, says it is on both games, and names the disc as it is called now."""
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        job = _job(folder)
+        job["source"] = {
+            "game": "FH1",
+            "where": "FH1",
+            "path": "media/cars/x.zip",
+            "size": 1,
+            "files": 1,
+            "kind": "car",
+        }
+        job["source"]["iso"] = str(folder / "fh1.iso")
+        report = {
+            "media": job["media"],
+            "ok": True,
+            "host": 198,
+            "host_name": "Host",
+            "entry": {"spool_id": 7, "host": 198},
+        }
+        report["entry"].update(name="Test Car (2010)", year=2010, games_available="FH1", batch_fallback="x")
+        now = {**job, "games": "FM4,FH1", "source": {**job["source"], "iso": str(folder / "renamed.iso")}}
+        entry = port_batch.refresh_entry(report, now)["entry"]
+        assert entry["games_available"] == "FM4,FH1" and entry["source"]["iso"] == "renamed.iso"
+        assert entry["batch_fallback"] == "x" and entry["spool_id"] == 7  # the rest is the build's
+        assert report["entry"]["games_available"] == "FH1"  # the earlier report stays as it was
+        (folder / "car").mkdir()
+        (folder / "car" / "input.bin").write_bytes(bytes(64))
+        assert fingerprint.Checker().check(_record(folder, job), {**job, "games": "FM4,FH1"}) is None
 
 
 if __name__ == "__main__":
