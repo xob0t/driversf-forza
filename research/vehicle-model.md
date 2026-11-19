@@ -347,8 +347,10 @@ depth inside the rim, in metres, along that direction (the rim per 2°
 direction, `_Rim`). The piece turns with the direction as one body and its
 triangles are lifted onto the converted glass, on the window's own s9. A
 piece is left out when its depth is past the centre of a smaller window; a
-triangle, when its centroid lands outside the window or a corner more than
-one grid cell (1 cm) outside it. Windows the host has no crack
+triangle, when it reaches further past the window's glass than it reached past
+its own window's glass (until 2026-11-19: when its centroid landed outside the
+window or a corner more than one grid cell (1 cm) outside it; "How far a set
+reaches past its window" below). Windows the host has no crack
 and shard triangles for kept the surface only (the vanilla
 Challenger 172's cockpit has no side glass; the Charger 176's rear side
 glass is smear only). The placement still holds; which window the set comes
@@ -692,7 +694,8 @@ host's eye (a door's set the nearest-centre pairing gave to the glass behind).
 
 What it leaves. A vanilla set placed on its own window drops 5.9% of its
 triangles (12,685 of 215,734) with the placement's "lands outside the window"
-test, so that test, not the donor, is most of what is still dropped.
+test, so that test, not the donor, is most of what is still dropped (fixed:
+"How far a set reaches past its window" below).
 Every measure concentrates on a few windows of average shape: 193's doors
 take 86 and 75 ports' side glass, 143's windscreen 63 ports'. Side glass
 behind the eye keeps the smear surface only, where vanilla mostly draws its
