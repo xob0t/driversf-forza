@@ -231,7 +231,8 @@ def port_car_args(argv: list[str]) -> argparse.Namespace:
 class Pick:
     """One car of a selection, as plan prints it and build converts it: the car and its
     Forza source, body, drive and power, the best host and the vanilla counterpart, the
-    spool ID assign_ids gives it, and notes (a car with notes isn't built)."""
+    spool ID assign_ids gives it, and notes (a car with notes isn't built). A placeholder
+    holds the ID of a --fm4-dlc-cars car whose pack isn't there, and is listed nowhere."""
 
     media: str
     game: str
@@ -251,6 +252,7 @@ class Pick:
     host_guess: bool = False  # car not extracted yet: doors from the body class, the build may pick another host
     notes: list[str] = field(default_factory=list)
     notes_soft: str = ""  # informational (e.g. why no garage ID)
+    placeholder: bool = False
 
 
 def load_roster(isos: list[Path]):
@@ -275,6 +277,20 @@ def dlc_requests(cars: dict, path: Path = DLC_LIST) -> list[tuple[str, str | Non
         if car is not None and any(s.dlc and s.kind == "car" for s in car.sources):
             out.append((car.name, game))
     return out
+
+
+def dlc_slots(picks: list[Pick], path: Path = DLC_LIST) -> list[Pick]:
+    """`picks` (those of dlc_requests, in its order) with a placeholder for each other car of
+    `path`, in the list's order, so a DLC car's ID doesn't depend on which packs are there
+    (assign_ids): adding a pack leaves the other DLC cars' IDs, and so their converted
+    copies, as they were."""
+    by_media = {p.media.lower(): p for p in picks}
+    out = []
+    for media, game in read_list(path):
+        pick = by_media.pop(media.lower(), None)
+        note = "its FM4 DLC pack isn't there"
+        out.append(pick or Pick(media, game or "FM4", None, "", {}, notes=[note], placeholder=True))
+    return out + list(by_media.values())
 
 
 def gamedbs(isos: list[Path], cache: Path) -> dict[str, Path]:
@@ -414,6 +430,9 @@ def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
     --diverse and --max, each car once."""
     requests, named = selection_requests(args, cars)
     picks = describe_cars(cars, requests, dsf, dbs, args.cache)
+    if getattr(args, "fm4_dlc_cars", False):  # the DLC cars come last (selection_requests)
+        head = len(picks) - len(dlc_requests(cars))
+        picks = picks[:head] + dlc_slots(picks[head:])
     excluded = {e.lower() for e in args.exclude or []}
     keep = (lambda _: True) if named else roster_filter(args)  # a named list is taken as given
     out = [p for p in picks if p.media.lower() not in excluded and keep(p)]
@@ -594,13 +613,28 @@ def assign_ids(
     IDs in 62..303 the vanilla archive doesn't use, then first_high up, each car
     garage-listed by the plugin while the maker list (ASI_GROUPS_CAP groups) has
     room; the plugin's groups take any number of cars. List order decides which cars get the garage IDs (garage) or the group
-    slots (asi). IDs some mod is known to use (RESERVED_IDS) are skipped."""
+    slots (asi). IDs some mod is known to use (RESERVED_IDS) are skipped.
+
+    A car with notes (not on the discs given, its DLC pack not there, no usable host) gets
+    no ID but uses up the one it would take without a garage group, so the cars after it
+    keep theirs when it can be built later: with the FM4 discs added, the FH1 cars of a list
+    keep their IDs, and with them their converted copies (the ID is part of a car's
+    fingerprint, fingerprint.JOB_FIELDS). Under asi that is the ID it would take anyway."""
     low = [i for i in GARAGE_IDS if i not in taken] if policy == "garage" else []
     asi = [i for i in ASI_LOW_IDS if i not in taken and i not in RESERVED_IDS] if policy == "asi" else []
     counts, group_of = garage_groups() if (low or policy == "asi") else ({}, {})
-    groups = car_groups(picks, group_of, isos) if (low or policy == "asi") else {}
+    built = [p for p in picks if not p.notes]
+    groups = car_groups(built, group_of, isos) if (low or policy == "asi") and built else {}
     next_id = first_high
     for p in picks:
+        if p.notes:
+            if asi:
+                asi.pop(0)
+                continue
+            while next_id in taken or next_id in RESERVED_IDS:
+                next_id += 1
+            next_id += 1
+            continue
         own = groups.get(p.media)
         group = garage_group(own, counts, GARAGE_GROUP_CAP, GARAGE_GROUPS_CAP) if low else None
         if group is not None:
@@ -705,7 +739,7 @@ def worker(job_path: Path) -> int:
         from dsfforza.build import fingerprint
 
         outputs = [out_chunk.parent] + ([Path(job["sound_dir"])] if job.get("sound_dir") else [])
-        recorder = fingerprint.Recorder(outputs).start()
+        recorder = fingerprint.Recorder(outputs, queries=True).start()
     started = time.time()
     lines: list[str] = []
 
@@ -1619,7 +1653,8 @@ def cmd_plan(args) -> None:
     dsf, isos, cars, dbs = common(args)
     picks = select(args, cars, dsf, dbs)
     _, taken = vanilla_ids(dsf)
-    assign_ids([p for p in picks if not p.notes], taken, args.id_policy, args.first_id, isos)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
+    picks = [p for p in picks if not p.placeholder]
     print_plan(picks)
     print(f"{len(picks)} cars")
     if args.tsv:
@@ -1696,9 +1731,10 @@ def cmd_affected(args) -> None:
     """Which of the selected cars a change since --base affects, from the car store's
     fingerprints (carstore.affected), without building anything."""
     dsf, isos, cars, dbs = common(args)
-    picks = [p for p in select(args, cars, dsf, dbs) if not p.notes]
+    picks = select(args, cars, dsf, dbs)
     _, taken = vanilla_ids(dsf)
-    assign_ids(picks, taken, args.id_policy, args.first_id, isos)
+    assign_ids(picks, taken, args.id_policy, args.first_id, isos)  # as build gives them
+    picks = [p for p in picks if not p.notes]
     found = affected_cars(args, picks)
     if args.write_list:
         todo = [p for p in picks if found[p.media]["status"] != "same"]
@@ -1817,8 +1853,7 @@ class Reuse:
         why = self.checker.check(fp, current, code=not self.trust_code)
         first = old / f"{media}.first-try.fp.json"
         if why is None and first.exists():  # a fallback build: the first try must be unchanged too
-            moved = self.checker.moved(fp, current)
-            why = self.checker.check(fingerprint.read(first) or {}, None, code=not self.trust_code, moved=moved)
+            why = self.checker.check(fingerprint.read(first) or {}, current, code=not self.trust_code, first_try=True)
             why = why and f"first try: {why}"
         if why is None and self.where and self._predicate(report, job):
             why = "--rebuild-where"
@@ -2058,10 +2093,10 @@ def plan_build(args, dsf: Path, isos: list[Path], cars: dict, dbs: dict[str, Pat
     the root limit). IDs are given over the whole selection; with --affected only the cars
     a change since --base affects stay. The plan is printed and sent as the plan event."""
     picks = select(args, cars, dsf, dbs)
-    skipped = [p for p in picks if p.notes]
-    picks = [p for p in picks if not p.notes]
     vanilla_entries, taken = vanilla_ids(dsf)
     assign_ids(picks, taken, args.id_policy, args.first_id, isos)
+    skipped = [p for p in picks if p.notes and not p.placeholder]
+    picks = [p for p in picks if not p.notes]
     root_limit = root_limit_of(args)
     room = (root_limit - vanilla_entries) // 3  # 453 root entries in the vanilla archive
     if len(picks) > room:
