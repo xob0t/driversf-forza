@@ -98,12 +98,13 @@ PAIRS = {
 }
 
 
-def default_dbs() -> list[Path]:
-    """out/db's gamedbs (dsff game_data prepare); FM4's with the DLC packs' rows when written
-    (fm4_dlc.gamedb_path)."""
+def default_dbs():
+    """out/db's gamedbs (dsff game_data prepare), then FM4's with the DLC packs' rows when
+    written: an iterable of paths, the packs looked up only for a car the disc gamedbs lack
+    (fm4_dlc.Lookup)."""
     from dsfforza.build import fm4_dlc
 
-    return [fm4_dlc.gamedb_path(game) for game in ("FH1", "FM4")]
+    return fm4_dlc.Lookup("FH1", "FM4")
 
 
 # Parameters set by other steps or tied to the body geometry and the converter.

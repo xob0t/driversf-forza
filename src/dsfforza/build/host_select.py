@@ -57,12 +57,12 @@ from dsfforza.game import game_paths
 DEFAULT_LUA = REPO / "out" / "lua-src" / "LuaScripts" / "vehiclestats" / "vehiclestats.lua"
 
 
-def default_gamedbs() -> dict[str, Path]:
-    """out/db's gamedbs (dsff game_data prepare); FM4's with the DLC packs' rows when written
-    (fm4_dlc.gamedb_path)."""
+def default_gamedbs() -> dict:
+    """out/db's gamedbs (dsff game_data prepare), then FM4's with the DLC packs' rows when
+    written; the packs are looked up only for a car the disc gamedbs lack (fm4_dlc.Lookup)."""
     from dsfforza.build import fm4_dlc
 
-    return {game: fm4_dlc.gamedb_path(game) for game in ("FH1", "FM4")}
+    return {game: fm4_dlc.Lookup(game) for game in ("FH1", "FM4")}
 
 
 SURVEY_CACHE = REPO / "out" / "cache" / "host-survey.json"
@@ -689,6 +689,28 @@ class ForzaInfo:
     notes: list[str] = field(default_factory=list)
 
 
+def _gamedb_rows(path, media: str) -> tuple[dict, dict | None] | None:
+    """(Data_Car row with its cylinders, Data_CarBody row or None) of `media` in a gamedb,
+    or None when the file or the car isn't there."""
+    if path is None or not Path(path).exists():
+        return None
+    con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            "SELECT c.*, cy.Number AS CylNumber, cy.Rotors AS CylRotors FROM Data_Car c "
+            "LEFT JOIN List_Cylinders cy ON cy.CylinderID = c.CylinderID "
+            "WHERE lower(c.MediaName) = lower(?)",
+            (media,),
+        ).fetchone()
+        if row is None:
+            return None
+        body = con.execute("SELECT * FROM Data_CarBody WHERE Id = ?", (row["Id"] * 1000,)).fetchone()
+        return dict(row), dict(body) if body else None
+    finally:
+        con.close()
+
+
 def forza_info(
     media: str,
     gamedbs: dict[str, Path] | None = None,
@@ -696,33 +718,25 @@ def forza_info(
     folder: Path | None = None,
     doors_memo=None,
 ) -> ForzaInfo:
-    """What host selection needs about a Forza car, from gamedb.slt ({game: path}, the
-    game the car is taken from first; None: out/db). `folder`: the extracted car, for a
-    door-count hint from the carbin's glass sections. `doors_memo` (door_memo()): the
+    """What host selection needs about a Forza car, from gamedb.slt ({game: path, or the
+    paths to try in order}, the game the car is taken from first; None: out/db's, with FM4's
+    DLC rows only for a car the discs' lack, default_gamedbs). `folder`: the extracted car,
+    for a door-count hint from the carbin's glass sections. `doors_memo` (door_memo()): the
     door counts of earlier runs, for port_batch's plan."""
     dbs = gamedbs if isinstance(gamedbs, dict) else default_gamedbs()
     order = sorted(dbs.items(), key=lambda kv: (kv[0] != game,))
     row = body = None
     used = None
-    for name, path in order:
-        if path is None or not Path(path).exists():
-            continue
-        con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        try:
-            row = con.execute(
-                "SELECT c.*, cy.Number AS CylNumber, cy.Rotors AS CylRotors FROM Data_Car c "
-                "LEFT JOIN List_Cylinders cy ON cy.CylinderID = c.CylinderID "
-                "WHERE lower(c.MediaName) = lower(?)",
-                (media,),
-            ).fetchone()
-            if row is not None:
-                body = con.execute("SELECT * FROM Data_CarBody WHERE Id = ?", (row["Id"] * 1000,)).fetchone()
+    for name, paths in order:
+        # A lazy list of paths (fm4_dlc.Lookup) is resolved only as far as the car is looked for.
+        for path in [paths] if paths is None or isinstance(paths, (str, Path)) else paths:
+            found = _gamedb_rows(path, media)
+            if found is not None:
+                row, body = found
                 used = name or Path(path).name
-                row, body = dict(row), dict(body) if body else None
                 break
-        finally:
-            con.close()
+        if row is not None:
+            break
     parts = media.split("_")
     make_code = parts[0].upper()
     model = norm("".join(parts[1:-1]) if len(parts) > 2 else (parts[1] if len(parts) > 1 else ""))

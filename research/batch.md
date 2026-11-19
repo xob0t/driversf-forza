@@ -617,7 +617,7 @@ Only what decides the car's bytes (fingerprint format 2, #588):
   renamed or moved image keeps). Before, every car recorded every image in
   `assets\`, the listing of `assets\` and of each pack folder, and the job
   held the list of images given, so adding a disc rebuilt every car. Now an
-  FH1 car (BMW_M3E30_91) asks `discs FH1` and `dlc`, and reads `disc:FH1:1`.
+  FH1 car (BMW_M3E30_91) asks `discs FH1` and reads `disc:FH1:1`.
   An FH1 car whose engine tuning is on FM4's discs asks `discs FM4` too, and
   is built again when they come.
 - **Not the year and the roster games.** The worker puts them only in its
@@ -625,10 +625,23 @@ Only what decides the car's bytes (fingerprint format 2, #588):
   the discs given (with the FM4 discs, BMW_M3E30_91 is on "FM4,FH1"), so a
   reused car gets this job's entry fields (`port_batch.refresh_entry`: name,
   year, games, the disc image's file name, the cache folder).
-- **Left:** every car asks `dlc`, because `host_select.default_gamedbs` and
-  `handling_dsf.default_dbs` work out FM4's gamedb path (merged with the packs
-  or not) before they know they need it. So adding a DLC pack rebuilds every
-  car, not just the cars that read FM4's gamedb (#634).
+- **Only a DLC car asks `dlc` (#634).** The lookups by media name that don't
+  get the car's gamedb from the job (`handling_dsf.apply`'s host ranking,
+  `host_select.forza_info` with no gamedbs, `forza2dsf.car_dims`'s door hint
+  and `damage.engine_placement` through `fm4_dlc.beside`) try the disc
+  gamedbs first and look the packs up only for a car none of them has
+  (`fm4_dlc.Lookup`, `fm4_dlc.beside`). Before, they worked out FM4's merged
+  gamedb up front, so every car asked `dlc` and adding a pack rebuilt every
+  car. A disc car finds the same rows either way: the merge keeps every disc
+  row and only appends (`INSERT OR IGNORE`), and on the 16 packs every such
+  lookup (`host_select.forza_info`, `handling.load_forza`,
+  `handling_dsf.specs_from_forza`, `forza2dsf.gamedb_body`,
+  `paint.forza_colours`, `damage.engine_placement`) gives the same result on
+  the disc's and the merged gamedb for all 503 FM4 disc cars. It is also the
+  gamedb the car is built from (`fm4_dlc.for_source`). A pack whose rows
+  reached a disc car's (an upgrade row keyed by its `Ordinal`, say) would
+  have changed only these side lookups, not the conversion's own gamedb, so
+  the disc's is the consistent answer for them too.
 
 Measured 2026-11-19 (`--jobs 2`, `--id-policy asi`, `--no-store`, a list of 3 FH1 and 3
 FM4 cars interleaved):

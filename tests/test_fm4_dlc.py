@@ -14,7 +14,7 @@ from pathlib import Path
 
 from tests.test_dlc import _assets
 
-from dsfforza.build import fm4_dlc, forza_roster, install, port_batch
+from dsfforza.build import fm4_dlc, forza_roster, host_select, install, port_batch
 
 
 def _disc_db(path: Path) -> Path:
@@ -122,6 +122,75 @@ def test_a_disc_car_is_built_from_the_disc_gamedb_and_a_dlc_car_from_the_merged_
             assert fm4_dlc.existing(cache) == merged
             assert fm4_dlc.beside(cache / "fm4" / "POR_959_87") == merged
             assert fm4_dlc.beside(cache / "fh1" / "BMW_M3E30_91") == cache / "fh1" / "gamedb.slt"
+
+
+@contextmanager
+def _asked(found):
+    """fm4_dlc.packages() giving `found`, counting the calls (each one is the "dlc" question
+    of a car's fingerprint)."""
+    calls = []
+    real = fm4_dlc.packages
+
+    def packages(_root=None):
+        calls.append(1)
+        return list(found)
+
+    fm4_dlc.packages = packages
+    try:
+        yield calls
+    finally:
+        fm4_dlc.packages = real
+
+
+def _lookup_db(path: Path, media: str) -> Path:
+    """A gamedb with what host_select.forza_info reads of one car."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE Data_Car (Id INTEGER PRIMARY KEY, MediaName TEXT, CylinderID INT, Year INT)")
+    db.execute("CREATE TABLE List_Cylinders (CylinderID INTEGER PRIMARY KEY, Number INT, Rotors INT)")
+    db.execute("CREATE TABLE Data_CarBody (Id INTEGER PRIMARY KEY, ModelWheelbase REAL)")
+    db.execute("INSERT INTO Data_Car VALUES (5, ?, 1, 2010)", (media,))
+    db.execute("INSERT INTO List_Cylinders VALUES (1, 6, 0)")
+    db.execute("INSERT INTO Data_CarBody VALUES (5000, 2.5)")
+    db.commit()
+    db.close()
+    return path
+
+
+def test_only_a_car_the_disc_gamedbs_lack_looks_up_the_packs():
+    """#634: the default gamedbs of host selection and handling (fm4_dlc.Lookup) and the
+    gamedb beside a car folder look the packs up only for a car the discs' gamedbs lack, so
+    adding a pack leaves an FH1 car's and an FM4 disc car's fingerprint as it is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        packs = forza_roster.unique_packages(forza_roster.dlc_packages(_assets(root)))
+        cache, out_db = root / "cache", root / "db"
+        _disc_db(cache / "fm4" / "gamedb.slt")
+        _lookup_db(out_db / "fh1_gamedb.slt", "BMW_M3E30_91")
+        _lookup_db(out_db / "fm4_gamedb.slt", "DSC_Car_10")
+        with _packs(packs):
+            merged = fm4_dlc.merged_gamedb([], cache, packs, log=lambda _: None)
+        lookup = fm4_dlc.Lookup("FH1", "FM4", folder=out_db, cache=cache)
+        with _asked(packs) as calls:
+            # a lookup that stops at a disc's gamedb doesn't ask
+            assert next(iter(lookup)) == out_db / "fh1_gamedb.slt"
+            assert next(db for db in lookup if fm4_dlc.lists(db, "dsc_car_10")) == out_db / "fm4_gamedb.slt"
+            for media, game in (("BMW_M3E30_91", "FH1"), ("DSC_Car_10", "FM4"), ("DSC_Car_10", None)):
+                dbs = {g: fm4_dlc.Lookup(g, folder=out_db, cache=cache) for g in ("FH1", "FM4")}
+                info = host_select.forza_info(media, dbs, game)
+                assert (info.game, info.year) == ("FH1" if media.startswith("BMW") else "FM4", 2010)
+            assert fm4_dlc.beside(cache / "fm4" / "DSC_Car_10") == cache / "fm4" / "gamedb.slt"
+            assert fm4_dlc.beside(cache / "fh1" / "BMW_M3E30_91") == cache / "fh1" / "gamedb.slt"
+            assert calls == []
+            # a car only the packs have: the merged gamedb, after the discs'
+            assert list(lookup) == [out_db / "fh1_gamedb.slt", out_db / "fm4_gamedb.slt", merged]
+            assert fm4_dlc.beside(cache / "fm4" / "POR_959_87") == merged
+            assert next(db for db in lookup if fm4_dlc.lists(db, "POR_959_87")) == merged
+            assert calls
+        # no merged gamedb written for the packs found: the disc's, as before
+        with _asked([]):
+            assert list(lookup) == [out_db / "fh1_gamedb.slt", out_db / "fm4_gamedb.slt"]
+            assert fm4_dlc.beside(cache / "fm4" / "POR_959_87") == cache / "fm4" / "gamedb.slt"
 
 
 def test_no_fm4_dlc_leaves_the_packs_out():

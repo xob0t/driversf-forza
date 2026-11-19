@@ -20,9 +20,11 @@ key with a row of a disc car's in Data_Car, Data_CarBody, Combo_Colors or Data_E
 It is written once per set of packs, to out/cache/fm4/dlc-<key>/gamedb.slt (the key: a hash
 of the disc gamedb's size and each pack's display name and size). The disc's own copies
 (out/cache/fm4/gamedb.slt, out/db/fm4_gamedb.slt) stay as they are. A disc car is built from
-the disc gamedb (`for_source`); a DLC car from the merged one. Readers that look a car up by
-its media name in "FM4's gamedb" (host selection, handling, wheel clearance, render_compare)
-get the merged one (`gamedb_path`): it holds every disc row unchanged.
+the disc gamedb (`for_source`); a DLC car from the merged one. Readers outside the build that
+look a car up by its media name in "FM4's gamedb" (wheel clearance, render_compare) get the
+merged one (`gamedb_path`): it holds every disc row unchanged. A car's conversion tries the
+disc gamedbs first and asks for the packs only for a car they lack (`Lookup`, `beside`), so
+adding a pack converts again only the cars that need it (#634).
 
     uv run dsff fm4_dlc [--cache out/cache]       the packs found and the merged gamedb
 """
@@ -212,13 +214,64 @@ def gamedb_path(game: str, folder: Path | None = None) -> Path:
     return (Path(folder) if folder else REPO / "out" / "db") / f"{game.lower()}_gamedb.slt"
 
 
+def lists(gamedb: Path, media: str) -> bool:
+    """Whether a gamedb's Data_Car has a row for `media` (any case)."""
+    gamedb = Path(gamedb)
+    if not gamedb.is_file():
+        return False
+    con = sqlite3.connect(f"file:{gamedb.as_posix()}?mode=ro", uri=True)
+    try:
+        return con.execute("SELECT 1 FROM Data_Car WHERE lower(MediaName) = lower(?)", (media,)).fetchone() is not None
+    except sqlite3.Error:
+        return False
+    finally:
+        con.close()
+
+
+class Lookup:
+    """The gamedbs of `games`, in order, for a lookup by media name that stops at the first
+    one with the car (host_select.default_gamedbs, handling_dsf.default_dbs): each game's
+    out/db/<game>_gamedb.slt (the disc's, dsff game_data prepare), and after FM4's the merged
+    one when it has been written for the packs found (existing).
+
+    Lazy and re-iterable: the packs are looked up (packages, the "dlc" question of a car's
+    fingerprint) only when a lookup gets past FM4's disc gamedb, for a car no disc gamedb
+    has. So an FH1 car, or an FM4 disc car, doesn't depend on the packs (#634). A disc car
+    finds the same rows in the disc's gamedb as in the merged one: the merge keeps every disc
+    row and only appends (merge), and on the user's 16 packs every lookup by media name the
+    conversion makes (host_select.forza_info, handling.load_forza, handling_dsf.specs_from_forza,
+    forza2dsf.gamedb_body, paint.forza_colours, damage.engine_placement) gives the same result
+    on both for all 503 disc cars (research/batch.md, "What a car's fingerprint holds"). It is
+    also the gamedb a disc car is built from (for_source)."""
+
+    def __init__(self, *games: str, folder: Path | None = None, cache: Path | None = None):
+        self.games = [g.upper() for g in games]
+        self.folder = Path(folder) if folder else REPO / "out" / "db"
+        self.cache = cache  # where the merged gamedb is (existing; default out/cache)
+
+    def __iter__(self):
+        for game in self.games:
+            yield self.folder / f"{game.lower()}_gamedb.slt"
+            if game == "FM4" and (merged := existing(self.cache)) is not None:
+                yield merged
+
+    def __repr__(self) -> str:
+        return f"Lookup({', '.join(self.games)} in {self.folder})"
+
+
 def beside(car_folder: Path) -> Path:
-    """The gamedb next to an extracted car folder (<cache>/<game>/<car>/..): FM4's merged one
-    when written for the packs found, else <cache>/<game>/gamedb.slt."""
-    parent = Path(car_folder).parent
-    if parent.name.lower() == "fm4" and (merged := existing(parent.parent)) is not None:
-        return merged
-    return parent / "gamedb.slt"
+    """The gamedb next to an extracted car folder (<cache>/<game>/<car>/..):
+    <cache>/<game>/gamedb.slt, or for an FM4 car that gamedb lacks (a DLC car), the merged one
+    when written for the packs found. The packs are looked up only for such a car, so a disc
+    car's conversion doesn't depend on them (#634; it finds the same rows in both, Lookup)."""
+    car_folder = Path(car_folder)
+    parent = car_folder.parent
+    disc = parent / "gamedb.slt"
+    if parent.name.lower() == "fm4" and not lists(disc, car_folder.name):
+        merged = existing(parent.parent)
+        if merged is not None:
+            return merged
+    return disc
 
 
 def car_names(media: list[str], isos: list[Path] | None = None, cache: Path | None = None) -> dict[str, dict]:
