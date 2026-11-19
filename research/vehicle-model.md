@@ -776,7 +776,7 @@ all its interior glass, set included, and the windscreen's smear has its open
 centre, while a converted window's rim is its glass. With the donor's rim
 taken on its glass too, the identity drops none (with either slack); that
 changes `DonorSet` and with it the donor choice (#628's rule), so it is left
-for a follow-up issue.
+for #629.
 
 Roster, no conversion (`ports.py`: 2,733 windows on 691 cars rebuilt from the
 car store, master's donors), triangles dropped:
