@@ -3547,6 +3547,87 @@ the 360 Modena and the M3 E30 now show the centre console, the gear gate and the
 passenger seat. The Sport quattro shows Forza's LOD-1 cabin where it had the ring's
 LOD-0 cabin over an LOD-2 body: coarser inside, finer outside.
 
+## Dash textures with a side of 16 px or less (2026-11-19, confirmed-static)
+
+The owner's in-game report on master fba0aaa1: the Dodge Shelby Omni GLHS (FM4
+`DOD_ShelbyOmniGLHS_86`, ID 765) shows its own three-dial cluster with no live
+needles, and a two-dial virtual pod on the right of the dash.
+
+**Why.**
+
+- The Omni's cockpit carbin has no needle sections (`speed_min` and the like).
+  Its whole cluster is one `digital_gauge` subsection of `interior` (1,280
+  triangles): Forza's dash scene draws the dials on it.
+- The scene does turn needles (`dash_dod_shelbyomniglhs_86`): `TACH`
+  (`METER_TACH`, element 22) and `SPEEDO` (`METER_SPEED`, element 34) each
+  turn a `Needle` quad through a rotation track on their PROGRESS slide.
+- Their textures, `dod_shelbyomniglhs_86_needle_02.xds` (8 x 90) and
+  `_needle_01.xds` (8 x 128, DXT5), decoded fully transparent. So the scene at
+  60 mph and 4000 rpm draws every dial face but no needle, and
+  `digital_dash._needles` found 0 pixels for both. The report said
+  `digital_displays.needles: []`.
+- With no speed or tach needle, `virtual_gauges` put a pod on the dash
+  (`virtual_gauges.missing: [tach, speed]`, `virtual_display` 16 x 8 cm, under
+  the HUD).
+
+**The decode.** `dash_scene.decode_xds` moved a texture's blocks 4 blocks in
+only when a side was exactly 16 px (4 blocks), and only if no block lay before
+that. The 8 px needles keep their blocks at x 4 to 5 of the tiled surface, so
+nothing landed in the image.
+
+The rule is the Xenos packed mip tail. With the fetch constant's
+`packed_mips` bit set (dword5 bit 11; bits 9..10 are the dimension, 1 = 2D)
+and the smaller side at most 16 texels (ceil(log2) <= 4), the top level sits
+16 texels (4 blocks) into its tile. It lies along y when ceil(log2(width)) >
+ceil(log2(height)), else along x (`xds.packed_base_offset`).
+
+Survey (`out/omni/xdsflag.py`, every `digitalgauge` and `dash_media` texture of
+both games, 1,826 files; all have `packed_mips` set):
+
+| Smaller side | Files | Blocks |
+| --- | ---: | --- |
+| over 16 px | 1,436 | from (0, 0) (some start later behind transparent margins) |
+| 16 px or less | 374 | at the predicted offset and nowhere else: 32 x 16 and 16 x 8 along y, 16 x 16, 10 x 12, 8 x 128, 2 x 16 along x |
+| 16 px or less | 16 | at (0, 0) and at the predicted offset |
+
+The last 16 are copies of two shared textures. Decoded at (0, 0), `hon_18_nsx_05_txt_km`
+(32 x 16) is empty and `Generic_RGB_White` (16 x 16) a mean grey of 112. At the predicted
+offset they are the "km" label and pure white. No car texture outside the dash scenes
+has a side under 17 px (`out/omni/untile_survey.py`), so `xds.untile` (atlases, GUI) is
+unaffected.
+
+**What changes.** 62 dash textures decode differently; 46 of them were fully transparent.
+93 roster cars' scenes reference one of them. The cars' dash plans
+(`digital_dash.build_plan` with the old and the new decode, the cockpit's own displays;
+`out/omni/plan_diff.py`):
+
+- **The Omni** alone gains needles: both of its scene needles are found and become DSF
+  needles (`dash_needles`, source "dash scene needle"), so the virtual pod is gone.
+- **88 cars** change texels in their dash texture. What was missing comes back:
+  - the F458's labels and tach scale (65,007 texels). Its new white labels raise the
+    display's 95th-percentile luminance to 223, so the existing glare rule
+    (`DISPLAY_PEAK_LUMINANCE`, "Flicker and glare") scales the whole texture by 0.717;
+  - the Range Rover's second panel (72°F, 12:00; 40,445 texels);
+  - the km labels shared by the Porsches, Audis and others (500 to 3,000 texels);
+  - `DASH_MFD_CARROT` on the race MFDs (10 to 50 texels).
+- **2 are unchanged** (F50, Zonda R: the textures aren't in their displays' window).
+- **3 weren't measured**: the ARX-02a pair and the AMR One have their only display on
+  the steering wheel, which the survey doesn't move.
+
+Offline (5 cars built at master and with the fix, `out/pr2/before`, `out/pr2/after`):
+`render_compare` draws the Omni differently. The pod is gone and the cluster needles
+are drawn: score 1.979 -> 1.714, "fixed: cockpit: 5% covered by something Forza's
+hasn't". The other four render alike, since render_compare doesn't draw digital
+displays (`render-compare.md`). `cockpit gauges` at 0/800, 30/2000 and 60/4000 (mph/rpm)
+puts the Omni's needles on 8, 20 and 40 (x100 rpm) and on 0, 30 and 60 mph.
+
+In game (VM, confirmed-runtime; `run-series.ps1 -Vm -HoldMph '40,90'`, the Omni at ID 1;
+runs `vm1-20261119-140127` master and `vm1-20261119-140356` the fix): master shows the
+cluster's faces without needles and the pod beside it; with the fix the pod is gone and the
+cluster's needles turn. At 90.0 mph (the probe's sample) the speedometer sits just past its
+85 mark and the tachometer near 5000 rpm. The run's 40 mph shot came as the cockpit view
+opened, before the hold, so it holds no reading. The car spooled and drove without a crash.
+
 ## Fitted-rule audit (2026-11-05)
 
 Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
