@@ -149,6 +149,28 @@ def test_side_glass_behind_the_eye_takes_none():
     assert took == {"glasslr": None, "glasslm": 2}
 
 
+def test_side_glass_behind_the_eye_is_on_its_exterior_slot():
+    """Quarter glass behind the driver's eye draws on its window's exterior slot (side
+    rear for glassLR), mapped as the exterior glass and filling the slot, on its own
+    panel record: its crack bands then show from the cockpit, as on vanilla interiors
+    (#627); the door beside the eye keeps the smear rows."""
+    g = glass.InteriorGlass(host=glass.Donors(windows=[], eye_z=-0.1))
+    _add_side(g, "glassLR", 0.8, -0.8, -0.45)
+    _add_side(g, "glassLM", 0.8, -0.3, 0.3)
+    tris = g.triangles()
+    quarter = [c for c, r in tris if r == "slot:side_rear"]
+    door = [c for c, r in tris if r == "surface"]
+    assert len(quarter) == 2 and len(door) == 2
+    u0, u1, v0, v1 = glass.SLOTS["side_rear"]
+    uvs = [c[1] for t in quarter for c in t]
+    assert all(u0 - 1e-9 <= u <= u1 + 1e-9 and v0 - 1e-9 <= v <= v1 + 1e-9 for u, v in uvs)
+    assert {round(u, 6) for u, _ in uvs} == {u0, u1} and {round(v, 6) for _, v in uvs} == {v0, v1}
+    assert all(c[4] == bytes((10, 13, 0, 1)) for t in quarter for c in t)
+    assert all(glass._interior_region([c[1] for c in t]) == "slot:side_rear" for t in quarter)
+    assert all(glass.interior_block([c[1] for c in t]) == "surface" for t in door)
+    assert g.report["glasslr/side_rear"]["surface"] == "slot:side_rear"
+
+
 def test_fresh_donors_forget_what_was_taken():
     """Each conversion attempt starts with every vanilla window free."""
     crack = (((0.8, 0.5, 0.5), (0.8, 0.5, 0.55), (0.8, 0.505, 0.55)), CRACK_UV, (0.5,) * 3)
