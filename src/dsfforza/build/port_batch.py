@@ -29,16 +29,14 @@ that still fails is left out and listed with its cause (the innermost
 tools module and exception), and the rest still ship. Extractions are cached
 in out/cache/<game>/<media>/ (port_car), and --resume reuses every car an
 earlier run in the same --out built with the same ID and options.
---reuse DIR copies each car an earlier build made from the same job, input files
-and code (work/<media>.fp.json, src/dsfforza/build/fingerprint.py) and converts
-only the rest (repeat it for several builds; the first match wins); --verify-reuse N (default 2) converts N of the reused cars again and
-stops the build if any differs; --rebuild-where EXPR and --trust-code let a fix
-name the cars it affects (research/batch.md, "Selective rebuild").
-Every build also takes cars from the car store all worktrees share and puts its own in
-(src/dsfforza/build/carstore.py; --no-store: neither). `port_batch affected` lists the
-cars a change since --base touches, from the store's fingerprints; build --affected builds
-only those, build --before takes them from the store as --base made them, and --roster is
-dsff install's selection and IDs (research/batch.md, "Which cars a change affects").
+--reuse DIR copies each car an earlier build made under the same builder version, with
+the same options, build ID and own source (its disc or DLC pack by identity;
+src/dsfforza/build/builder_version.py, work/<media>.job.json) and converts only the rest
+(repeat it for several builds; the first match wins); --verify-reuse N (default 2)
+converts N of the reused cars again and stops the build if any differs (research/batch.md,
+"Reuse"). Every build also takes cars from the car store all worktrees share and puts its
+own in, by the same rule (src/dsfforza/build/carstore.py; --no-store: neither). --roster
+is dsff install's selection and IDs.
 
 ID policy (research/batch.md): the garage lists model IDs 0..303 only
 (research/gui-assets.md) and vanilla cars use 62..303, so the first cars of a
@@ -92,7 +90,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from dsfforza import REPO, safe_stdio
-from dsfforza.build import forza_roster, gentle
+from dsfforza.build import builder_version, forza_roster, gentle
 from dsfforza.formats.chnk import ENTRY_LIMIT
 from dsfforza.game import game_paths
 
@@ -108,7 +106,7 @@ LINT_RAM = 3100 << 20  # an upvh lint-many process: 3036 MiB merging the 721-car
 DIFF_RAM = 2900 << 20  # a render_compare diff process, one car each: 2805 MiB over 80 cars (one drawing 20: 3381)
 COMPARE_RAM = 1200 << 20  # a render_compare run process: 1123 MiB on the roster build (4 large cars)
 RESCORE_RAM = 800 << 20  # a render_compare rescore process: 736 MiB
-MEMO_RAM = 1200 << 20  # a door-count memo process (fingerprint.Memo.fill): 1153 MiB, the roster's 716 cars
+MEMO_RAM = 1200 << 20  # a door-count memo process (builder_version.Memo.fill): 1153 MiB, the roster's 716 cars
 COCKPIT_SURVEY_RAM = 800 << 20  # a cockpit_survey process: 711 MiB (the six largest cars and 8 others)
 PLATES_SURVEY_RAM = 1200 << 20  # a plates_survey process: 1172 MiB (12 cars, the largest among them)
 BELOW_NORMAL = 0x00004000
@@ -330,7 +328,7 @@ DOOR_FILL_MIN = 16  # door counts to measure before they are worth a process poo
 def _fill_doors(cars: dict, requests, dbs: dict[str, Path], cache: Path | None, memo) -> None:
     """Measure the door counts _describe will ask the memo for and it doesn't hold (a
     full roster's take minutes one after the other: after any change to the carbin
-    reader or the door rule) in a process pool first (fingerprint.Memo.fill), so the
+    reader or the door rule) in a process pool first (builder_version.Memo.fill), so the
     loop finds them. The keys and bodies are forza_info's."""
     from dsfforza.build import host_select as hs
     from dsfforza.build.port_car import CarRequest, car_folder, pick_source
@@ -425,7 +423,7 @@ def read_list(path: Path) -> list[tuple[str, str | None]]:
 
 
 def select(args, cars: dict, dsf: Path, dbs: dict[str, Path]) -> list[Pick]:
-    """The cars a plan/affected/build selection names, described (describe_cars): the
+    """The cars a plan/build selection names, described (describe_cars): the
     named ones in their order, else the roster cars the filters keep; then --exclude,
     --diverse and --max, each car once."""
     requests, named = selection_requests(args, cars)
@@ -618,8 +616,8 @@ def assign_ids(
     A car with notes (not on the discs given, its DLC pack not there, no usable host) gets
     no ID but uses up the one it would take without a garage group, so the cars after it
     keep theirs when it can be built later: with the FM4 discs added, the FH1 cars of a list
-    keep their IDs, and with them their converted copies (the ID is part of a car's
-    fingerprint, fingerprint.JOB_FIELDS). Under asi that is the ID it would take anyway."""
+    keep their IDs, and with them their converted copies (the build ID is part of the reuse
+    rule, builder_version.car_key). Under asi that is the ID it would take anyway."""
     low = [i for i in GARAGE_IDS if i not in taken] if policy == "garage" else []
     asi = [i for i in ASI_LOW_IDS if i not in taken and i not in RESERVED_IDS] if policy == "asi" else []
     counts, group_of = garage_groups() if (low or policy == "asi") else ({}, {})
@@ -734,12 +732,6 @@ def worker(job_path: Path) -> int:
     job = json.loads(job_path.read_text(encoding="utf-8"))
     os.environ["DSF_GAME_DIR"] = job["game_dir"]
     out_chunk, out_report = Path(job["chunk"]), Path(job["report"])
-    recorder = None
-    if job.get("fingerprint", True):  # what the car read and ran, for a later --reuse
-        from dsfforza.build import fingerprint
-
-        outputs = [out_chunk.parent] + ([Path(job["sound_dir"])] if job.get("sound_dir") else [])
-        recorder = fingerprint.Recorder(outputs, queries=True).start()
     started = time.time()
     lines: list[str] = []
 
@@ -826,14 +818,6 @@ def worker(job_path: Path) -> int:
     temp = out_report.with_suffix(".json.tmp")
     temp.write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
     Path(temp).replace(out_report)
-    if recorder is not None:
-        try:
-            fp = recorder.finish(job)
-            temp = out_chunk.with_suffix(".fp.json.tmp")
-            temp.write_text(json.dumps(fp, indent=1) + "\n", encoding="utf-8")
-            temp.replace(out_chunk.with_suffix(".fp.json"))
-        except Exception as error:  # noqa: BLE001 - logged; no fingerprint: a later --reuse builds the car again
-            log(f"fingerprint: {type(error).__name__}: {error}")
     return 0 if report["ok"] else 1
 
 
@@ -865,11 +849,12 @@ def worker_report(work: Path, media: str, code: int | None) -> dict:
     }
 
 
-def _fingerprint_worker_env() -> dict[str, str]:
-    """fingerprint.WORKER_ENV: one BLAS thread per worker, so a conversion is repeatable."""
-    from dsfforza.build import fingerprint
-
-    return fingerprint.WORKER_ENV
+# The environment port_batch starts its workers with (run_workers). numpy's OpenBLAS
+# splits work over its threads and adds the parts up in an order that can vary from run
+# to run, so a car converted twice could come out a few hundred bytes different (vertex
+# positions, a texture; BMW_Z4_11: three runs, three different chunks; one thread: the
+# same chunk). One thread each: the workers are the parallelism.
+WORKER_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
 
 def run_workers(jobs: list[dict], work: Path, parallel: int, log=print, progress=None) -> dict[str, dict]:
@@ -977,7 +962,7 @@ def start_worker(job: dict, work: Path, flags: int) -> tuple[subprocess.Popen, o
             stderr=subprocess.STDOUT,
             creationflags=flags,
             cwd=str(REPO),
-            env={**os.environ, "PYTHONUNBUFFERED": "1", **_fingerprint_worker_env()},
+            env={**os.environ, "PYTHONUNBUFFERED": "1", **WORKER_ENV},
         )
     except OSError:
         log_file.close()
@@ -1025,7 +1010,7 @@ def retry_job(job: dict, report: dict, work: Path) -> dict | None:
         return None
     options, why = retry
     media = job["media"]
-    for ext in ("json", "log", "fp.json"):  # a crashed worker leaves no report
+    for ext in ("json", "log"):  # a crashed worker leaves no report
         if (work / f"{media}.{ext}").exists():
             (work / f"{media}.{ext}").replace(work / f"{media}.first-try.{ext}")
     return {
@@ -1474,17 +1459,13 @@ def lint_all(
     *,
     facts: bool = False,
     defined: set[int] | frozenset = frozenset(),
-    records: list | None = None,
-    record_dir: Path | None = None,
 ) -> dict[str, dict]:
     """upvh lint for every car: up to `parallel` processes of `upvh lint-many`, each over
     a run of the cars (LINT_GROUP or more), so the archive and its cross-vehicle tables
     are read once per process instead of once per car (at hundreds of cars a single lint
     reads the whole archive for seconds). c["lint"] is "ok" or what `upvh lint --id`
     prints for the car. With `facts`: returns {media: upvh.lint_vehicle's facts} (with
-    the defined UIDs of the `defined` spool IDs); with `records` (a list) and
-    `record_dir`: each process records what it read and ran (lint-many --record) and
-    the records are appended (src/dsfforza/build/pack_reuse.py). `out`: the merged archive,
+    the defined UIDs of the `defined` spool IDs; src/dsfforza/build/pack_reuse.py). `out`: the merged archive,
     or its merge plan (MERGE_PLAN, a .json: lint-many --plan merges the cars in memory)."""
 
     from dsfforza.build import jobpool
@@ -1511,32 +1492,25 @@ def lint_all(
                     command += ["--defined", str(c["spool_id"])]
             if facts:
                 command += ["--facts"]
-            record = None
-            if records is not None and record_dir is not None:
-                record_dir.mkdir(parents=True, exist_ok=True)
-                record = record_dir / f"lint-record-{n}.json"
-                record.unlink(missing_ok=True)
-                command += ["--record", str(record)]
             procs.append(
                 (
                     group,
-                    record,
                     subprocess.Popen(
                         command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags
                     ),
                 )
             )
-            jobpool.adopt(slots[n], procs[-1][2])  # it ends with this process, its memory counts against its slot
-        return _lint_results(procs, records, log)
+            jobpool.adopt(slots[n], procs[-1][1])  # it ends with this process, its memory counts against its slot
+        return _lint_results(procs, log)
     finally:
         for slot in slots:
             slot.release()
 
 
-def _lint_results(procs: list, records: list | None, log) -> dict[str, dict]:
+def _lint_results(procs: list, log) -> dict[str, dict]:
     """lint_all's results: c["lint"] for each car of each process, and the facts."""
     found: dict[str, dict] = {}
-    for group, record, proc in procs:
+    for group, proc in procs:
         text, _ = proc.communicate()
         rows = {}
         for line in text.splitlines():
@@ -1555,12 +1529,6 @@ def _lint_results(procs: list, records: list | None, log) -> dict[str, dict]:
                 if "facts" in row:
                     found[c["media"]] = row["facts"]
             log(f"  lint {c['spool_id']} {c['media']}: {'ok' if c['lint'] == 'ok' else 'FAILED'}")
-        if record is not None:
-            try:
-                records.append(json.loads(record.read_text(encoding="utf-8")))
-            except (OSError, ValueError):
-                records.append({"complete": False})  # the pack record won't be reused
-            record.unlink(missing_ok=True)
     return found
 
 
@@ -1682,89 +1650,26 @@ def cmd_plan(args) -> None:
         print(f"wrote {args.tsv}")
 
 
-def base_rev(args) -> str:
-    """--base REV as a commit, default the merge base of HEAD and origin/master."""
-    from dsfforza.build import carstore
-
-    rev = getattr(args, "base", None)
-    if not rev:
-        return carstore.merge_base("origin/master")
-    out = subprocess.run(
-        ["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], cwd=REPO, capture_output=True, text=True, check=False
-    )
-    if out.returncode != 0:
-        raise SystemExit(f"--base {rev}: not a commit here")
-    return out.stdout.strip()
-
-
-def affected_cars(args, picks: list[Pick], log=print) -> dict[str, dict]:
-    """carstore.affected for the picks, from the car store, against --base; printed."""
-    from dsfforza.build import carstore
-
-    store = carstore.Store.default()
-    if store is None:
-        raise SystemExit("--affected needs the car store (carstore.py; DSFFORZA_STORE is off)")
-    base = base_rev(args)
-    found = carstore.affected(store, [(p.media, p.spool_id) for p in picks], base)
-    by = {k: [m for m, f in found.items() if f["status"] == k] for k in ("affected", "same", "unknown")}
-    log(
-        f"since {base[:10]}: {len(by['affected'])} cars affected, {len(by['same'])} the same, "
-        f"{len(by['unknown'])} unknown (no car in the store made by {base[:10]}'s code)"
-    )
-    reasons: dict[str, list[str]] = {}
-    for media in by["affected"]:
-        for why in found[media]["why"]:
-            reasons.setdefault(why, []).append(media)
-    for why, cars in sorted(reasons.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        log(f"  {why}: {len(cars)} ({name_list(cars, 6)})")
-    if by["unknown"]:
-        log(f"  unknown: {name_list(by['unknown'], 12)}")
-    return found
-
-
 def name_list(names: list[str], limit: int) -> str:
     """The first `limit` names, comma-separated, and ", ..." when there are more."""
     return ", ".join(names[:limit]) + (", ..." if len(names) > limit else "")
 
 
-def cmd_affected(args) -> None:
-    """Which of the selected cars a change since --base affects, from the car store's
-    fingerprints (carstore.affected), without building anything."""
-    dsf, isos, cars, dbs = common(args)
-    picks = select(args, cars, dsf, dbs)
-    _, taken = vanilla_ids(dsf)
-    assign_ids(picks, taken, args.id_policy, args.first_id, isos)  # as build gives them
-    picks = [p for p in picks if not p.notes]
-    found = affected_cars(args, picks)
-    if args.write_list:
-        todo = [p for p in picks if found[p.media]["status"] != "same"]
-        args.write_list.write_text(
-            "".join(f"{p.media}@{p.game.lower()}\n" for p in todo), encoding="utf-8", newline="\n"
-        )
-        print(f"wrote {args.write_list}: {len(todo)} cars (affected and unknown)")
-    if args.json:
-        args.json.write_text(json.dumps(found, indent=1), encoding="utf-8")
-
-
-WORK_FILES = ("chnk", "json", "job.json", "log", "fp.json", "first-try.json", "first-try.log", "first-try.fp.json")
+WORK_FILES = ("chnk", "json", "job.json", "log", "first-try.json", "first-try.log")
 STORE = "car store"  # Reuse.taken_from for a car taken from the car store
 
 
 class Reuse:
-    """build --reuse DIR: a car whose earlier output in DIR/work was made from the same
-    job, the same input files and the same code (src/dsfforza/build/fingerprint.py) is
-    copied instead of converted. --rebuild-where builds the cars an expression over their
-    earlier report picks again anyway; --trust-code leaves the code out of the comparison
-    (the expression then names the cars a change affects). --verify-reuse N converts N
-    of the reused cars again and stops the build if any comes out different.
-    --reuse may be given more than once: each car is taken from the first build that
-    has a matching copy of it (src/dsfforza/build/install.py passes the last finished
-    build and an interrupted one). After them, the car store every worktree shares
-    (`store`, src/dsfforza/build/carstore.py), checked the same way."""
+    """build --reuse DIR: a car an earlier build in DIR made is copied instead of converted
+    when the reuse rule holds (src/dsfforza/build/builder_version.py: the same builder
+    version, media and options, build ID and own source; its work/<media>.job.json records
+    them). --verify-reuse N converts N of the reused cars again and stops the build if any
+    comes out different. --reuse may be given more than once: each car is taken from the
+    first build that has a matching copy of it (src/dsfforza/build/install.py passes the
+    last finished build and an interrupted one). After them, the car store every worktree
+    shares (`store`, src/dsfforza/build/carstore.py), by the same rule."""
 
     def __init__(self, args, work: Path, store=None):
-        from dsfforza.build import fingerprint
-
         given = args.reuse if isinstance(args.reuse, list | tuple) else [args.reuse] if args.reuse else []
         self.sources = [Path(s) for s in given]
         self.store = store
@@ -1775,53 +1680,21 @@ class Reuse:
                 raise SystemExit("--reuse names this build's own --out (use --resume for that)")
         self.source = self.sources[0] if self.sources else None
         self.work = work
-        self.where = getattr(args, "rebuild_where", None)
-        self.trust_code = getattr(args, "trust_code", False)
         # --verify-reuse: default 2 with --reuse, none for store hits alone (a store hit is
         # an earlier build of the same commit, on this PC; --verify-reuse N asks for N).
         count = getattr(args, "verify_reuse", None)
         self.verify_count = count if count is not None else (2 if self.sources else 0)
         self.seed = getattr(args, "verify_seed", None)
-        self.checker = fingerprint.Checker()
         self.taken: dict[str, dict] = {}
         self.taken_from: dict[str, str] = {}  # media -> the build it was taken from
         self.rebuilt: dict[str, str] = {}
         self.verified: dict[str, str] = {}
         self.mismatch: dict = {}  # --verify-mismatch rebuild: what a mismatch replaced (record())
 
-    def _predicate(self, report: dict, job: dict) -> bool:
-        names = {
-            "r": report,
-            "report": report,
-            "entry": report.get("entry") or {},
-            "media": job["media"],
-            "game": job["game"],
-            "host": report.get("host"),
-        }
-        safe = {
-            "any": any,
-            "all": all,
-            "len": len,
-            "str": str,
-            "int": int,
-            "float": float,
-            "set": set,
-            "sorted": sorted,
-            "min": min,
-            "max": max,
-            "abs": abs,
-            "bool": bool,
-        }
-        try:
-            return bool(eval(self.where, {"__builtins__": safe}, names))
-        except Exception as error:
-            raise SystemExit(
-                f"--rebuild-where {self.where!r} on {job['media']}: {type(error).__name__}: {error}"
-            ) from error
-
     def decide_from(self, job: dict) -> tuple[dict | None, Path | None, str]:
         """(the earlier report, the build it is in, "") for the first --reuse build that
-        has a matching copy of the car, else (None, None, why the first build's doesn't)."""
+        has a matching copy of the car, (None, the store entry, "") for the car store's,
+        else (None, None, why the first build's doesn't)."""
         first_why = None
         for source in self.sources:
             report, why = self._decide_in(source / "work", job)
@@ -1829,34 +1702,18 @@ class Reuse:
                 return report, source, ""
             first_why = first_why or why
         if self.store is not None:
-            entry, why = self.store.find(job, self.checker, code=not self.trust_code)
-            if entry is not None and self.where:
-                report = entry.report() or {}
-                if self._predicate(report, job):
-                    entry, why = None, "--rebuild-where"
+            entry, why = self.store.find(job)
             if entry is not None:
                 return None, entry, ""
             first_why = first_why or why
         return None, None, first_why or "not built there"
 
     def _decide_in(self, old: Path, job: dict) -> tuple[dict | None, str]:
-        from dsfforza.build import fingerprint
-
         media = job["media"]
-        report = fingerprint.read(old / f"{media}.json")
+        report = _read_json(old / f"{media}.json")
         if not report or not report.get("ok") or not (old / f"{media}.chnk").exists():
             return None, "not built there"
-        fp = fingerprint.read(old / f"{media}.fp.json")
-        if fp is None:
-            return None, "no fingerprint"
-        current = {**job, "requested_options": job["port_options"]}
-        why = self.checker.check(fp, current, code=not self.trust_code)
-        first = old / f"{media}.first-try.fp.json"
-        if why is None and first.exists():  # a fallback build: the first try must be unchanged too
-            why = self.checker.check(fingerprint.read(first) or {}, current, code=not self.trust_code, first_try=True)
-            why = why and f"first try: {why}"
-        if why is None and self.where and self._predicate(report, job):
-            why = "--rebuild-where"
+        why = builder_version.why_not(_read_json(old / f"{media}.job.json"), job)
         return (report, "") if why is None else (None, why)
 
     def take(self, job: dict) -> dict | None:
@@ -1971,9 +1828,8 @@ class Reuse:
         if bad and on_mismatch != "rebuild":
             raise SystemExit(
                 f"--verify-reuse (seed {seed}): {len(bad)} of {len(sample)} reused cars came out different when built "
-                f"again: {'; '.join(bad)}. Either their fingerprints missed a change or the conversion isn't "
-                f"repeatable (research/batch.md, 'Selective rebuild'); build without --reuse, or with "
-                f"--rebuild-where covering them."
+                f"again: {'; '.join(bad)}. Either an input outside the reuse rule changed or the conversion isn't "
+                f"repeatable (research/batch.md, 'Reuse'); build without --reuse."
             )
         if not bad:
             print(f"--verify-reuse: {len(sample)} of {len(sample)} identical")
@@ -2035,8 +1891,7 @@ class Reuse:
             "rebuilt": self.rebuilt,
             "verified": self.verified,
             **({"verify_mismatch": self.mismatch} if self.mismatch else {}),
-            "trust_code": self.trust_code,
-            "rebuild_where": self.where,
+            "builder": builder_version.current(),
         }
 
 
@@ -2047,8 +1902,8 @@ def refresh_entry(report: dict, job: dict) -> dict:
     """A reused car's report with the manifest fields port_car.car_entry takes from the job
     and not from the conversion (ENTRY_FROM_JOB: its year and display name, the games it is
     on, its disc image's file name, the cache folder) set from this job: those aren't part
-    of a car's fingerprint (fingerprint.JOB_FIELDS), so they may differ from the build it
-    was made in (the FM4 discs added, a disc renamed)."""
+    of the reuse rule (builder_version.car_key), so they may differ from the build it was
+    made in (the FM4 discs added, a disc renamed)."""
     from dsfforza.build import port_car
     from dsfforza.build.forza_roster import Source
 
@@ -2067,6 +1922,13 @@ def refresh_entry(report: dict, job: dict) -> dict:
         {},
     )
     return {**report, "entry": {**entry, **{k: fresh[k] for k in ENTRY_FROM_JOB}}}
+
+
+def _read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def _link_or_copy(src, dst) -> None:
@@ -2103,7 +1965,8 @@ def cmd_build(args) -> None:
     timings["plan"] = round(time.time() - started, 1)
 
     jobs = build_jobs(picks, dsf, isos, args.cache, port_options, out_dir)
-    store, reuse, before = open_reuse(args, work)
+    print_version()
+    store, reuse = open_reuse(args, work)
     t = time.time()
     reused = take_earlier(jobs, work, resume=args.resume, reuse=reuse)
     if reuse is not None:
@@ -2112,7 +1975,7 @@ def cmd_build(args) -> None:
         job["requested_options"] = list(job["port_options"])
     t = time.time()
     args.jobs = gentle.jobs(args.jobs)
-    converted = convert_cars(jobs, reused, work, args.jobs, reuse, before=before, progress=progress)
+    converted = convert_cars(jobs, reused, work, args.jobs, reuse, progress=progress)
     results = {**reused, **converted}
     timings["convert"] = round(time.time() - t, 1)
     if reuse is not None:
@@ -2123,17 +1986,24 @@ def cmd_build(args) -> None:
         timings["store"] = round(time.time() - t, 1)
     ok, failed = split_results(picks, skipped, results)
     pack = open_pack_reuse(args, dsf, out_dir, root_limit, reuse, store)
-    try:
-        finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
-    finally:
-        if pack is not None and pack.recorder is not None:
-            pack.recorder.stop()
+    finish(args, dsf, out_dir, work, ok, failed, port_args, port_options, timings, started, results, pack)
+
+
+def print_version() -> None:
+    """The builder version cars are reused by (builder_version), and when there is no reuse."""
+    version = builder_version.current()
+    if builder_version.reusable(version):
+        print(f"builder version: {version}")
+    else:
+        print(
+            f"builder version: {version or 'unknown'}: no car is reused or kept "
+            "(uncommitted changes to the converter, or neither a release nor a git checkout)"
+        )
 
 
 def plan_build(args, dsf: Path, isos: list[Path], cars: dict, dbs: dict[str, Path]) -> tuple[list, list, int]:
     """build's plan: (the selected cars with their IDs, the ones left out with their notes,
-    the root limit). IDs are given over the whole selection; with --affected only the cars
-    a change since --base affects stay. The plan is printed and sent as the plan event."""
+    the root limit). The plan is printed and sent as the plan event."""
     picks = select(args, cars, dsf, dbs)
     vanilla_entries, taken = vanilla_ids(dsf)
     assign_ids(picks, taken, args.id_policy, args.first_id, isos)
@@ -2145,13 +2015,6 @@ def plan_build(args, dsf: Path, isos: list[Path], cars: dict, dbs: dict[str, Pat
         raise SystemExit(
             f"{len(picks)} cars: the archive root holds at most {room} new ones (--root-limit {root_limit})"
         )
-    if getattr(args, "affected", False):
-        # Only the cars a change since --base affects (and those the store can't tell),
-        # with the IDs of the whole selection.
-        found = affected_cars(args, picks)
-        picks = [p for p in picks if found[p.media]["status"] != "same"]
-        if not picks:
-            raise SystemExit("no car of the selection is affected")
     print_plan(picks + skipped)
     emit(
         getattr(args, "progress", None),
@@ -2181,11 +2044,14 @@ def warm_caches(dsf: Path, port_args) -> None:
 def build_jobs(
     picks: list[Pick], dsf: Path, isos: list[Path], cache: Path, port_options: list[str], out_dir: Path
 ) -> list[dict]:
-    """A worker job per car: the car and its ID, the inputs and port_car options
-    (fingerprint.job_key reads them), and where its outputs go (out_dir/work, out_dir/sound)."""
+    """A worker job per car: the car and its ID, the inputs and port_car options, the
+    builder version (builder_version.car_key reads them: the reuse rule), and where its
+    outputs go (out_dir/work, out_dir/sound)."""
     work = out_dir / "work"
+    version = builder_version.current()
     return [
         {
+            "builder": version,
             "media": p.media,
             "game": p.game,
             "year": p.year,
@@ -2205,33 +2071,21 @@ def build_jobs(
     ]
 
 
-def open_reuse(args, work: Path) -> tuple[object, Reuse | None, bool]:
+def open_reuse(args, work: Path) -> tuple[object, Reuse | None]:
     """(the car store every worktree on the PC shares, the Reuse that takes cars from it and
-    from the --reuse builds, --before). The store is None with --no-store (or
-    DSFFORZA_STORE=off), the Reuse None without a store and --reuse. With --before the
-    Reuse checks the store's cars against --base's code, not this checkout's."""
+    from the --reuse builds). The store is None with --no-store (or DSFFORZA_STORE=off), the
+    Reuse None without a store and --reuse."""
     from dsfforza.build import carstore
 
-    # Cars converted anywhere from the same job, inputs and code are taken, not converted again.
+    # Cars converted anywhere by the same rule are taken, not converted again.
     store = None if getattr(args, "no_store", False) else carstore.Store.default()
-    before = getattr(args, "before", False)
-    if before and (store is None or getattr(args, "reuse", None)):
-        raise SystemExit("--before takes the cars from the car store only (no --reuse, no --no-store)")
     reuse = Reuse(args, work, store) if getattr(args, "reuse", None) or store is not None else None
-    if before:
-        # The cars as --base's code made them: the store's entries checked against that
-        # revision's code units; none is converted (this checkout's code isn't that).
-        from dsfforza.build import fingerprint
-
-        base = base_rev(args)
-        reuse.checker = fingerprint.Checker(units=fingerprint.GitUnits(base))
-        print(f"--before: every car from the car store as {base[:10]}'s code made it")
-    return store, reuse, before
+    return store, reuse
 
 
 def resumed_report(job: dict, work: Path) -> dict | None:
-    """--resume: the report of the car when an earlier run in this folder built it with the
-    same ID, game, vanilla archive and options, else None."""
+    """--resume: the report of the car when an earlier run in this folder built it by the
+    reuse rule (builder_version.why_not) from the same vanilla archive, else None."""
     old_job, old_report = work / f"{job['media']}.job.json", Path(job["report"])
     if not (old_job.exists() and old_report.exists() and Path(job["chunk"]).exists()):
         return None
@@ -2240,17 +2094,14 @@ def resumed_report(job: dict, work: Path) -> dict | None:
         report = json.loads(old_report.read_text(encoding="utf-8"))
     except ValueError:  # cut short by an earlier crash: build the car again
         return None
-    same = (
-        all(earlier.get(k) == job[k] for k in ("spool_id", "game", "dsf"))
-        and earlier.get("requested_options", earlier.get("port_options")) == job["port_options"]
-    )
+    same = builder_version.why_not(earlier, job) is None and earlier.get("dsf") == job["dsf"]
     return report if same and report.get("ok") else None
 
 
 def clear_work(work: Path, media: str) -> None:
     """Remove everything an earlier run left in work/ for a car (its work files and
     half-written temporaries), so nothing stale is read as this run's."""
-    for name in WORK_FILES + ("tmp", "json.tmp", "fp.json.tmp"):
+    for name in WORK_FILES + ("tmp", "json.tmp"):
         (work / f"{media}.{name}").unlink(missing_ok=True)
 
 
@@ -2286,16 +2137,11 @@ def convert_message(todo: int, jobs: int, reused: dict, reuse: Reuse | None) -> 
 
 
 def convert_cars(
-    jobs: list[dict], reused: dict, work: Path, parallel: int, reuse: Reuse | None, *, before: bool, progress
+    jobs: list[dict], reused: dict, work: Path, parallel: int, reuse: Reuse | None, *, progress
 ) -> dict[str, dict]:
     """Convert every car not taken from an earlier build (run_workers, the longest first),
-    and remember their times and attempts for later builds. With --before none is
-    converted: each is a failure, "not in the car store". Returns {media: report}."""
+    and remember their times and attempts for later builds. Returns {media: report}."""
     todo = [j for j in jobs if j["media"] not in reused]
-    missing = {}
-    if before:
-        missing = {j["media"]: reuse.rebuilt.get(j["media"], "not in the store") for j in todo}
-        todo = []
     print(convert_message(len(todo), parallel, reused, reuse))
     if reuse is not None:
         reuse.summary()
@@ -2311,8 +2157,6 @@ def convert_cars(
     for job in todo:
         job["probe_attempts"] = remembered_attempts(job)
     converted = run_workers(longest_first(todo), work, parallel, progress=progress)
-    for media, why in missing.items():  # --before: no car in the store made by --base's code
-        converted[media] = {"media": media, "ok": False, "cause": "not in the car store", "error": why}
     remember_seconds(converted.values())
     remember_attempts(converted.values())
     return converted
@@ -2346,8 +2190,9 @@ def verify_reused(args, reuse: Reuse, jobs: list[dict], work: Path, results: dic
 
 def store_cars(store, reuse: Reuse | None, jobs: list[dict], work: Path, results: dict) -> None:
     """Put the cars this build converted, and those it took from elsewhere (--reuse,
-    --resume), into the car store for every other build (the same car is kept once); not
-    the ones it took from the store. Then let the store evict what it doesn't keep."""
+    --resume), into the car store for every other build (the same car is kept once; only
+    under a reusable builder version, carstore.Store.put); not the ones it took from the
+    store. Then let the store evict what it doesn't keep."""
     for job in jobs:
         if results.get(job["media"], {}).get("ok") and (reuse is None or reuse.taken_from.get(job["media"]) != STORE):
             store.put(work, job["media"], Path(job["sound_dir"]))
@@ -2371,9 +2216,7 @@ def open_pack_reuse(args, dsf: Path, out_dir: Path, root_limit: int, reuse: Reus
     from dsfforza.build import pack_reuse
 
     settings = pack_reuse.settings_of(args, dsf, root_limit, gui_isos(args))
-    return pack_reuse.PackReuse(
-        out_dir, reuse.sources if reuse is not None else [], settings, game_dir=game_from_dsf(dsf), store=store
-    )
+    return pack_reuse.PackReuse(out_dir, reuse.sources if reuse is not None else [], settings, store=store)
 
 
 def finish(
@@ -2443,8 +2286,7 @@ def finish(
 
 def take_whole_pack(pack, ok: list[dict], work: Path, timings: dict, progress) -> tuple[list, list] | None:
     """(the manifest's cars, the merge's failures) of an earlier pack of the same cars,
-    settings, inputs and code, taken whole (pack_reuse.PackReuse.take_whole); else None,
-    and `pack` (when there is one) starts recording this pack for later builds."""
+    settings and builder version, taken whole (pack_reuse.PackReuse.take_whole); else None."""
     if pack is None:
         return None
     t = time.time()
@@ -2452,9 +2294,8 @@ def take_whole_pack(pack, ok: list[dict], work: Path, timings: dict, progress) -
     earlier = pack.whole()
     timings["pack_check"] = round(time.time() - t, 1)
     if earlier is None:
-        pack.start_recording()
         return None
-    print(f"pack: the same cars, settings, inputs and code as {earlier.folder}'s pack; reusing it")
+    print(f"pack: the same cars, settings and builder version as {earlier.folder}'s pack; reusing it")
     emit(progress, "pack_reused", source=str(earlier.folder), cars=len(ok))
     t = time.time()
     reused = pack.take_whole(earlier)
@@ -2495,8 +2336,6 @@ def lint_merged(
     """upvh lint for the merged cars (lint_all sets each car's "lint"): from the archive, or
     from its merge plan (MERGE_PLAN) when it wasn't written; with `pack` only the cars
     whose lint can't be taken from an earlier pack (pack_reuse.PackReuse.lint)."""
-    from dsfforza.build import pack_reuse
-
     progress = getattr(args, "progress", None)
     plan = out_dir / MERGE_PLAN
     if merged.get("written", True):
@@ -2514,16 +2353,7 @@ def lint_merged(
         def run(some: list[dict], defined: set[int]) -> dict:
             print(f"lint: {len(some)} of {len(cars)} cars")
             emit(progress, "lint", cars=len(some), total=len(cars))
-            return lint_all(
-                lint_source,
-                dsf,
-                some,
-                parallel,
-                facts=True,
-                defined=defined,
-                records=pack.records,
-                record_dir=out_dir / pack_reuse.FOLDER,
-            )
+            return lint_all(lint_source, dsf, some, parallel, facts=True, defined=defined)
 
         pack.lint(cars, run)
     timings["lint"] = round(time.time() - t, 1)
@@ -2603,7 +2433,6 @@ def build_gui(
             # The disc images by title (logos, names): any file names, FH1 not needed.
             isos=gui_isos(args),
             cache=pack.picture_cache() if pack is not None else None,
-            record=pack.records if pack is not None else None,
         )
     except Exception as error:  # noqa: BLE001 - reported; the archive is still usable without pictures
         print(f"gui assets failed: {type(error).__name__}: {error}")
@@ -2883,8 +2712,8 @@ ROSTER_ROOT_LIMIT = 3003  # install.ASI_ROOT_LIMIT: every base ID below 1000 plu
 
 def roster_selection(args) -> None:
     """--roster: the cars and IDs of dsff install's build (tools/batches/all.txt, then the FM4
-    DLC packs' cars; --id-policy asi, --root-limit 3003), so a subset (--affected) gets the
-    IDs a full build gave its cars, and the car store's full builds match it."""
+    DLC packs' cars; --id-policy asi, --root-limit 3003), so its cars get the IDs dsff
+    install's build gives them, and the car store's full builds match it."""
     if getattr(args, "roster", False):
         args.list = [*(args.list or []), ROSTER]
         args.fm4_dlc_cars = True
@@ -2892,36 +2721,12 @@ def roster_selection(args) -> None:
         args.root_limit = ROSTER_ROOT_LIMIT
 
 
-def _change_arguments(p: argparse.ArgumentParser, name: str) -> None:
-    """affected's and build's options for a change since --base (car store)."""
+def _roster_argument(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--roster",
         action="store_true",
         help="the cars and IDs of dsff install's build: --list tools/batches/all.txt --fm4-dlc-cars "
         "--id-policy asi --root-limit 3003",
-    )
-    if name not in ("affected", "build"):
-        return
-    p.add_argument(
-        "--base",
-        metavar="REV",
-        help="the revision a change is measured from (default: the merge base of HEAD and origin/master)",
-    )
-    if name == "affected":
-        p.add_argument("--write-list", type=Path, help="write the affected and unknown cars as a --list file")
-        p.add_argument("--json", type=Path, help="write {media: status, why, entry}")
-        return
-    p.add_argument(
-        "--affected",
-        action="store_true",
-        help="build only the cars a change since --base affects (port_batch affected), with the "
-        "IDs of the whole selection",
-    )
-    p.add_argument(
-        "--before",
-        action="store_true",
-        help="every car from the car store as --base's code made it, none converted (the 'before' "
-        "of a change; with --affected, of the cars it affects)",
     )
 
 
@@ -2932,7 +2737,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "affected", "build"):
+    for name in ("plan", "build"):
         p = sub.add_parser(name)
         p.add_argument(
             "--dsf",
@@ -2982,7 +2787,7 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"root entries allowed (default {ENTRY_LIMIT}, the vanilla reader); "
             "more needs dsfcars.asi [archive], e.g. 3003 for every base ID below 1000",
         )
-        _change_arguments(p, name)
+        _roster_argument(p)
         if name == "plan":
             p.add_argument("--tsv", type=Path)
         elif name == "build":
@@ -3027,22 +2832,9 @@ def build_parser() -> argparse.ArgumentParser:
                 type=Path,
                 action="append",
                 metavar="DIR",
-                help="copy each car an earlier build in DIR made from the same job, input files and code "
-                "(work/<media>.fp.json) instead of converting it again (research/batch.md, 'Selective rebuild'); "
-                "repeat to reuse from several builds (the first with a match wins)",
-            )
-            p.add_argument(
-                "--rebuild-where",
-                metavar="EXPR",
-                help="with --reuse: also build the cars whose earlier report matches this Python expression "
-                "(names: r = the work/<media>.json report, entry, media, game, host), e.g. "
-                '"\'cockpit\' in entry" or "host == 198"',
-            )
-            p.add_argument(
-                "--trust-code",
-                action="store_true",
-                help="with --reuse: ignore code changes (only inputs and --rebuild-where decide); for a fix "
-                "whose affected cars --rebuild-where names",
+                help="copy each car an earlier build in DIR made under the same builder version, with the "
+                "same options, build ID and own source (work/<media>.job.json) instead of converting it again "
+                "(research/batch.md, 'Reuse'); repeat to reuse from several builds (the first with a match wins)",
             )
             p.add_argument(
                 "--verify-reuse",
@@ -3112,7 +2904,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     roster_selection(args)
     args.dsf = game_paths.vanilla(args.dsf)  # the original when a dsfforza install replaced it
-    {"plan": cmd_plan, "affected": cmd_affected, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
+    {"plan": cmd_plan, "build": cmd_build, "remerge": cmd_remerge}[args.cmd](args)
 
 
 if __name__ == "__main__":

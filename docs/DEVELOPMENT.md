@@ -69,8 +69,9 @@ over a merged install of v0.1.8 or earlier (the cars in copies of the game's
 archive and GUI files) it records that install's IDs in the car manager's map
 (`car_manager seed`), restores the game's files and installs the packages on
 the same IDs. Each car is reused from `out/build`, an
-interrupted `out/build.partial` or `--reuse DIR` when its inputs and code are
-unchanged (`research/batch.md`, "Selective rebuild"); a first run on a machine
+interrupted `out/build.partial` or `--reuse DIR` when it was built by the same
+release or commit, with the same options, ID and disc or DLC pack
+(`research/batch.md`, "Reuse"); a first run on a machine
 that built by hand reuses the earlier build under `out/` with the most cars.
 Tool output goes to `out/logs/install-<time>.log`. `out/gentle` (Idle priority,
 at most two workers) is honoured. `uv run dsff install --help` lists every option.

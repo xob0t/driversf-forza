@@ -27,9 +27,8 @@ How to work:
    held-out validation.
 3. Measure the roster (`--roster`: `tools/batches/all.txt` and the FM4 DLC cars) before and
    after: how many cars change, and the numbers that show it. Survey offline where you can.
-   `uv run dsff port_batch affected --roster` lists the cars your change touches without
-   building; build those with `--affected`, and take the before from the car store with
-   `--affected --before` rather than building master. Every build and
+   Build about five chosen cars before (a worktree of master) and after, with the same
+   `port_batch build --car ...` command, and render-compare those. Every build and
    survey on the PC shares one job pool, so `--jobs` only caps your own (AGENTS.md, Machine
    rules).
 4. Verify in game with `tools\wsb\run-series.ps1 -Vm` (never `-OnHost`), before and after,

@@ -7,8 +7,17 @@ import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
-from dsfforza.build import port_batch
+from dsfforza.build import builder_version, port_batch
+
+VERSION = "git 0123456789abcdef"  # a reusable builder version, whatever this checkout's is
+
+
+def _jobs(*args) -> list[dict]:
+    """port_batch.build_jobs under VERSION."""
+    with mock.patch.object(builder_version, "current", lambda: VERSION):
+        return port_batch.build_jobs(*args)
 
 
 def _picks() -> list[port_batch.Pick]:
@@ -28,6 +37,7 @@ def test_build_jobs():
         jobs = port_batch.build_jobs(_picks(), dsf, [Path("a.iso")], Path("cache"), ["--damage"], out)
         assert [j["media"] for j in jobs] == ["AAA_ONE_01", "BBB_TWO_02"]
         assert jobs[1] == {
+            "builder": builder_version.current(),
             "media": "BBB_TWO_02",
             "game": "FH1",
             "year": 2002,
@@ -57,7 +67,7 @@ def test_resume_takes_a_car_built_the_same_way():
         out = Path(tmp)
         (out / "work").mkdir()
         work = out / "work"
-        first, second = port_batch.build_jobs(_picks(), Path("v.sp"), [], Path("c"), ["--damage"], out)
+        first, second = _jobs(_picks(), Path("v.sp"), [], Path("c"), ["--damage"], out)
         ok = {"media": "AAA_ONE_01", "ok": True}
         _earlier(work, first, ok)
         assert port_batch.resumed_report(first, work) == ok
@@ -65,7 +75,13 @@ def test_resume_takes_a_car_built_the_same_way():
         # The options it was asked for count, not those of a fallback.
         _earlier(work, first, ok, port_options=[], requested_options=["--damage"])
         assert port_batch.resumed_report(first, work) == ok
-        for changed in ({"spool_id": 1}, {"game": "FH1"}, {"dsf": "other.sp"}, {"port_options": []}):
+        for changed in (
+            {"spool_id": 1},
+            {"source": {"game": "FH1"}},
+            {"dsf": "other.sp"},
+            {"port_options": []},
+            {"builder": "git another"},
+        ):
             _earlier(work, first, ok, **changed)
             assert port_batch.resumed_report(first, work) is None, changed
         _earlier(work, first, {**ok, "ok": False})
@@ -79,7 +95,7 @@ def test_take_earlier_resumes_and_clears_the_rest():
         out = Path(tmp)
         work = out / "work"
         work.mkdir()
-        first, second = port_batch.build_jobs(_picks(), Path("v.sp"), [], Path("c"), ["--damage"], out)
+        first, second = _jobs(_picks(), Path("v.sp"), [], Path("c"), ["--damage"], out)
         ok = {"media": "AAA_ONE_01", "ok": True}
         _earlier(work, first, ok)
         _earlier(work, second, {"media": "BBB_TWO_02", "ok": True}, spool_id=1)  # another ID then
@@ -128,18 +144,15 @@ def test_a_failed_gui_step_moves_the_old_gui_aside():
         assert (stale / "hud.lua").read_text(encoding="utf-8") == "other cars"
 
 
-def test_build_resume_keeps_the_before_flag():
+def test_build_resume_takes_the_earlier_car_and_converts_the_other():
     """cmd_build --resume with an earlier car in work/: the earlier car is taken, the other
-    one converted. On master before #599, the earlier job's JSON overwrote the --before flag
-    (a shadowed local), so a resume that found a car converted nothing."""
-    from unittest import mock
-
+    one converted (#599)."""
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp)
         work = out / "work"
         work.mkdir()
         picks = _picks()
-        first, _ = port_batch.build_jobs(picks, Path("v.sp"), [], Path("c"), ["--damage"], out)
+        first, _ = _jobs(picks, Path("v.sp"), [], Path("c"), ["--damage"], out)
         ok = {"media": "AAA_ONE_01", "ok": True}
         _earlier(work, first, ok)
         converted, finished = [], []
@@ -152,22 +165,24 @@ def test_build_resume_keeps_the_before_flag():
             ok, failed = args[4], args[5]
             finished.append(([r["media"] for r in ok], failed))
 
-        args = SimpleNamespace(
-            out=out, port="--damage", progress=None, cache=Path("c"), resume=True, jobs=1, before=False
-        )
-        with mock.patch.multiple(
-            port_batch,
-            common=lambda *_a: (Path("v.sp"), [], {}, {}),
-            port_car_args=lambda argv: argv,
-            plan_build=lambda *_a: (picks, [], 0),
-            warm_caches=lambda *_a: None,
-            open_reuse=lambda *_a: (None, None, False),
-            remembered_attempts=lambda *_a: None,
-            remember_seconds=lambda *_a: None,
-            remember_attempts=lambda *_a: None,
-            run_workers=run_workers,
-            open_pack_reuse=lambda *_a: None,
-            finish=finish,
+        args = SimpleNamespace(out=out, port="--damage", progress=None, cache=Path("c"), resume=True, jobs=1)
+        with (
+            mock.patch.multiple(
+                port_batch,
+                common=lambda *_a: (Path("v.sp"), [], {}, {}),
+                port_car_args=lambda argv: argv,
+                plan_build=lambda *_a: (picks, [], 0),
+                warm_caches=lambda *_a: None,
+                open_reuse=lambda *_a: (None, None),
+                print_version=lambda: None,
+                remembered_attempts=lambda *_a: None,
+                remember_seconds=lambda *_a: None,
+                remember_attempts=lambda *_a: None,
+                run_workers=run_workers,
+                open_pack_reuse=lambda *_a: None,
+                finish=finish,
+            ),
+            mock.patch.object(builder_version, "current", lambda: VERSION),
         ):
             port_batch.cmd_build(args)
         assert converted == ["BBB_TWO_02"]

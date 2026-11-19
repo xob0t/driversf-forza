@@ -1,25 +1,23 @@
-"""The shared car store: every converted car, kept by its fingerprint in one folder all
-worktrees use, so a build anywhere on the PC takes a car someone already converted from
-the same job, inputs and code instead of converting it again (research/batch.md, "Car
+"""The shared car store: converted cars kept in one folder all worktrees use, by the reuse
+rule (src/dsfforza/build/builder_version.py: the builder version, the media and options,
+the build ID and the car's own source), so a build anywhere on the PC at a commit someone
+already built takes those cars instead of converting them again (research/batch.md, "Car
 store").
 
-    <store>/cars/<media>/<id>/      a car: work/<media>.chnk, .json, .job.json, .log,
-                                    .fp.json (and .first-try.*), sound/<media>/, meta.json
-    <store>/pictures/<key>.dds|png|json   a garage picture by its pack_reuse picture key
-    <store>/images/<name>.bin|json        a nameplate or logo (pack_reuse.PictureCache.images)
-    <store>/packs/<digest>.json           the pack fingerprint the pictures and images were
-                                          made under (a picture is used only while it holds)
+    <store>/cars/<media>/<key>/      a car: work/<media>.chnk, .json, .job.json, .log
+                                     (and .first-try.*), sound/<media>/, meta.json
+    <store>/pictures/<key>-<version>.dds|png|json   a garage picture by its pack_reuse
+                                                    picture key and builder version
+    <store>/images/<name>-<version>.bin|json        a nameplate or logo (pack_reuse.PictureCache.images)
+
+A car's <key> is the digest of builder_version.car_key of its job. Only cars built under a
+reusable version (a commit with no uncommitted converter changes) are kept or taken.
 
 The store is STORE_ENV, else %LOCALAPPDATA%\\dsfforza\\store. It is on in a git checkout
 (developers' worktrees) and off in a player's copy, unless STORE_ENV names a folder;
 "off" turns it off, and so does port_batch build --no-store. Files are hard-linked where
 the volume allows (the work files are never written in place: port_batch replaces them),
 the small ones copied.
-
-A car's id is the digest of its fingerprints with the checkout's own folder written as
-"<repo>": the same car built in two worktrees is one entry. Its fingerprint is checked as
-port_batch --reuse checks one (fingerprint.Checker), after fingerprint.relocate moves the
-paths under the checkout it was built in (out/db, each worktree's own) to this one.
 
 The store holds at most CAP_ENV GiB (DEFAULT_CAP_GB); past it, the entries used longest
 ago go first (evict), down to 90% of the cap.
@@ -41,15 +39,14 @@ import time
 from pathlib import Path
 
 import dsfforza
-from dsfforza.build import fingerprint
+from dsfforza.build import builder_version
 
 STORE_ENV = "DSFFORZA_STORE"
 CAP_ENV = "DSFFORZA_STORE_GB"
 DEFAULT_CAP_GB = 25  # a full build's cars are about 4.4 GiB (721 cars, 2026-11-04): five or so builds
-FORMAT = 1
-WORK_FILES = ("chnk", "json", "job.json", "log", "fp.json", "first-try.json", "first-try.log", "first-try.fp.json")
+FORMAT = 2  # 2: keyed by the builder version (#634); format-1 entries (fingerprints) are not read
+WORK_FILES = ("chnk", "json", "job.json", "log", "first-try.json", "first-try.log")
 LINK_FROM = 1 << 20  # files from 1 MiB are hard-linked, smaller ones copied
-REPO_MARK = "<repo>"
 
 
 def default_root() -> Path | None:
@@ -83,16 +80,16 @@ def link_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def _portable(value, repo: str):
-    """`value` (a fingerprint or part) with the checkout's folder written as REPO_MARK."""
-    text = json.dumps(value, sort_keys=True)
-    folder = json.dumps(repo + os.sep)[1:-1]
-    text = text.replace(folder, REPO_MARK + json.dumps(os.sep)[1:-1])
-    return text.replace(json.dumps(repo), json.dumps(REPO_MARK))  # its "repo" field
+def read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
-def entry_id(fp: dict, first: dict | None, repo: str) -> str:
-    return hashlib.sha256(_portable([fp, first], repo).encode()).hexdigest()[:24]
+def version_tag(version: str) -> str:
+    """A builder version as a file name part."""
+    return hashlib.sha256(version.encode()).hexdigest()[:16]
 
 
 def _tree_size(folder: Path) -> int:
@@ -102,15 +99,6 @@ def _tree_size(folder: Path) -> int:
             with contextlib.suppress(OSError):
                 total += (Path(dirpath) / name).stat().st_size
     return total
-
-
-def repo_of(folder: Path) -> str:
-    """The checkout a build folder is in (the nearest folder with .git), as recorded (norm)."""
-    here = Path(fingerprint.norm(folder))
-    for parent in [here, *here.parents]:
-        if (parent / ".git").exists():
-            return fingerprint.norm(parent)
-    return fingerprint.norm(dsfforza.REPO)
 
 
 class Entry:
@@ -126,19 +114,8 @@ class Entry:
     def work(self, name: str) -> Path:
         return self.folder / "work" / f"{self.media}.{name}"
 
-    def fingerprints(self) -> tuple[dict | None, dict | None]:
-        """(the car's fingerprint, its first try's for a fallback build), relocated to this
-        checkout."""
-        repo = self.meta.get("repo")
-        fp = fingerprint.read(self.work("fp.json"))
-        first = fingerprint.read(self.work("first-try.fp.json")) if self.work("first-try.fp.json").exists() else None
-        return (
-            fingerprint.relocate(fp, repo) if fp else None,
-            fingerprint.relocate(first, repo) if first else None,
-        )
-
     def report(self) -> dict | None:
-        return fingerprint.read(self.work("json"))
+        return read_json(self.work("json"))
 
     def touch(self) -> None:
         with contextlib.suppress(OSError):
@@ -156,7 +133,6 @@ class Store:
         self.root = Path(root)
         self.cap = cap_bytes() if cap is None else cap
         self.log = log
-        self._packs: dict[str, str | None] = {}  # pack fingerprint digest -> why it doesn't hold now
         self.stats = {"hits": 0, "put": 0, "pictures_hit": 0, "pictures_put": 0, "images_hit": 0, "images_put": 0}
 
     @classmethod
@@ -166,41 +142,21 @@ class Store:
 
     # --- cars -------------------------------------------------------------------------------------
 
-    def entries(self, media: str) -> list[Entry]:
-        out = []
-        folder = self.root / "cars" / media.lower()
-        try:
-            subs = sorted(folder.iterdir())
-        except OSError:
-            return []
-        for sub in subs:
-            meta = fingerprint.read(sub / "meta.json")
-            if meta and meta.get("format") == FORMAT and meta.get("media") == media:
-                out.append(Entry(sub, meta))
-        return sorted(out, key=lambda e: -e.used())  # the most recently used first
+    def folder(self, job: dict) -> Path:
+        """Where the car of `job` is kept: by the digest of its reuse key."""
+        return self.root / "cars" / job["media"].lower() / builder_version.digest(builder_version.car_key(job))
 
-    def find(self, job: dict, checker: fingerprint.Checker, *, code: bool = True) -> tuple[Entry | None, str | None]:
-        """(the entry the job's car can be taken from, None) or (None, why the most recently
-        used one can't: the first difference)."""
-        current = {**job, "requested_options": job["port_options"]}
-        first_why = None
-        for e in self.entries(job["media"]):
-            if e.meta.get("spool_id") != job["spool_id"] or e.meta.get("options") != list(job["port_options"]):
-                first_why = first_why or "store: job: " + (
-                    "spool_id" if e.meta.get("spool_id") != job["spool_id"] else "options"
-                )
-                continue
-            fp, first = e.fingerprints()
-            if fp is None:
-                continue
-            why = checker.check(fp, current, code=code)
-            if why is None and first is not None:
-                why = checker.check(first, current, code=code, first_try=True)
-                why = why and f"first try: {why}"
-            if why is None:
-                return e, None
-            first_why = first_why or f"store: {why}"
-        return None, first_why or "not in the store"
+    def find(self, job: dict) -> tuple[Entry | None, str | None]:
+        """(the entry the job's car can be taken from, None) or (None, why not)."""
+        if not builder_version.reusable(job.get("builder")):
+            return None, builder_version.why_not(None, job)
+        folder = self.folder(job)
+        meta = read_json(folder / "meta.json")
+        if not meta or meta.get("format") != FORMAT or meta.get("media") != job["media"]:
+            return None, "not in the store"
+        e = Entry(folder, meta)
+        why = builder_version.why_not(read_json(e.work("job.json")), job)
+        return (e, None) if why is None else (None, f"store: {why}")
 
     def take(self, e: Entry, work: Path, sound_dir: Path | None) -> dict | None:
         """The entry's files into a build's work/ (and sound/); its report, or None when
@@ -227,23 +183,20 @@ class Store:
         return report
 
     def put(self, work: Path, media: str, sound_dir: Path | None, source: str = "") -> Entry | None:
-        """Keep a built car (its work files and sound folder) in the store, unless its
-        fingerprint is incomplete or the same car is there already (then it is marked used)."""
-        report = fingerprint.read(work / f"{media}.json")
-        fp = fingerprint.read(work / f"{media}.fp.json")
-        if not (report and report.get("ok") and fp and fp.get("complete")) or not (work / f"{media}.chnk").exists():
+        """Keep a built car (its work files and sound folder) in the store, unless its job's
+        builder version isn't reusable or isn't this checkout's now (the code changed while
+        it was built), or the same car is there already (then it is marked used)."""
+        report = read_json(work / f"{media}.json")
+        job = read_json(work / f"{media}.job.json")
+        if not (report and report.get("ok") and job) or not (work / f"{media}.chnk").exists():
             return None
-        first_path = work / f"{media}.first-try.fp.json"
-        first = fingerprint.read(first_path) if first_path.exists() else None
-        if first_path.exists() and not (first and first.get("complete")):
+        if not builder_version.reusable(job.get("builder")) or job.get("builder") != builder_version.read():
             return None
-        repo = fp.get("repo") or repo_of(work)
-        key = entry_id(fp, first, repo)
-        final = self.root / "cars" / media.lower() / key
+        final = self.folder(job)
         if (final / "meta.json").exists():
             Entry(final, {}).touch()
-            return Entry(final, fingerprint.read(final / "meta.json") or {})
-        temp = self.root / "tmp" / f"{key}-{os.getpid()}"
+            return Entry(final, read_json(final / "meta.json") or {})
+        temp = self.root / "tmp" / f"{final.name}-{os.getpid()}"
         try:
             shutil.rmtree(temp, ignore_errors=True)
             for name in WORK_FILES:
@@ -252,15 +205,13 @@ class Store:
             sound = Path(sound_dir) / media if sound_dir is not None else None
             if sound is not None and sound.is_dir():
                 shutil.copytree(sound, temp / "sound" / media, copy_function=link_or_copy)
-            job = fp.get("job") or {}
             meta = {
                 "format": FORMAT,
                 "media": media,
                 "game": report.get("game"),
                 "spool_id": job.get("spool_id"),
-                "options": job.get("options"),
-                "repo": repo,
-                "source": source or fingerprint.norm(work.parent),
+                "builder": job.get("builder"),
+                "source": source or os.path.normcase(os.path.realpath(work.parent)),
                 "stored": round(time.time()),
                 "size": _tree_size(temp),
             }
@@ -270,7 +221,7 @@ class Store:
                 temp.rename(final)
             except OSError:  # another build put the same car meanwhile
                 shutil.rmtree(temp, ignore_errors=True)
-                return Entry(final, fingerprint.read(final / "meta.json") or {})
+                return Entry(final, read_json(final / "meta.json") or {})
         except OSError as error:
             self.log(f"car store: {media} not kept: {error}")
             shutil.rmtree(temp, ignore_errors=True)
@@ -280,88 +231,62 @@ class Store:
 
     # --- pack pictures and images ------------------------------------------------------------------
 
-    def put_pack(self, fp: dict) -> str:
-        """Keep a pack fingerprint; its digest."""
-        repo = fp.get("repo") or fingerprint.norm(dsfforza.REPO)
-        fp = {**fp, "repo": repo}
-        digest = hashlib.sha256(_portable(fp, repo).encode()).hexdigest()[:24]
-        path = self.root / "packs" / f"{digest}.json"
-        if not path.exists():
-            _write(path, json.dumps(fp).encode())
-        return digest
-
-    def pack_holds(self, digest: str, checker: fingerprint.Checker, moved=None) -> dict | None:
-        """The pack fingerprint `digest` (relocated) when it holds now, else None."""
-        fp = fingerprint.read(self.root / "packs" / f"{digest}.json")
-        if fp is None:
+    def picture(self, key: str, version: str | None) -> tuple[Path, Path, str] | None:
+        """(DDS, preview PNG, its source) of a garage picture kept under `key` by a pack of
+        builder version `version`, or None."""
+        if not builder_version.reusable(version):
             return None
-        fp = fingerprint.relocate(fp, fp.get("repo"))
-        if digest not in self._packs:
-            extra = moved(fp) if moved is not None else {}
-            self._packs[digest] = checker.check(fp, None, moved=extra)
-        return fp if self._packs[digest] is None else None
-
-    def picture(self, key: str, checker, moved=None) -> tuple[Path, Path, str, dict] | None:
-        """(DDS, preview PNG, its source, the pack fingerprint it was made under) of a
-        stored garage picture whose pack fingerprint holds, or None. A picture is kept once
-        per pack fingerprint (pictures/<key>-<pack>.*): the same picture made by other code
-        is another copy."""
-        try:
-            infos = sorted((self.root / "pictures").glob(f"{key}-*.json"), key=_mtime, reverse=True)
-        except OSError:
+        base = self.root / "pictures" / f"{key}-{version_tag(version)}"
+        info = read_json(base.with_suffix(".json"))
+        dds, png = base.with_suffix(".dds"), base.with_suffix(".png")
+        if not info or not dds.exists() or not png.exists():
             return None
-        for path in infos:
-            info = fingerprint.read(path)
-            if not info:
-                continue
-            fp = self.pack_holds(info.get("pack", ""), checker, moved)
-            dds, png = path.with_suffix(".dds"), path.with_suffix(".png")
-            if fp is None or not dds.exists() or not png.exists():
-                continue
-            with contextlib.suppress(OSError):
-                path.touch()
-            self.stats["pictures_hit"] += 1
-            return dds, png, info.get("source", "render"), fp
-        return None
+        with contextlib.suppress(OSError):
+            base.with_suffix(".json").touch()
+        self.stats["pictures_hit"] += 1
+        return dds, png, info.get("source", "render")
 
-    def put_picture(self, key: str, dds: Path, png: Path, source: str, pack: str) -> None:
-        base = self.root / "pictures" / f"{key}-{pack}"
+    def put_picture(self, key: str, dds: Path, png: Path, source: str, version: str | None) -> None:
+        if not builder_version.reusable(version):
+            return
+        base = self.root / "pictures" / f"{key}-{version_tag(version)}"
         if base.with_suffix(".json").exists():
             return
         try:
             link_or_copy(dds, base.with_suffix(".dds"))
             link_or_copy(png, base.with_suffix(".png"))
-            _write(base.with_suffix(".json"), json.dumps({"key": key, "source": source, "pack": pack}).encode())
+            _write(base.with_suffix(".json"), json.dumps({"key": key, "source": source, "builder": version}).encode())
             self.stats["pictures_put"] += 1
         except OSError as error:
             self.log(f"car store: picture {key} not kept: {error}")
 
-    def images(self, checker, moved=None) -> dict[str, tuple[Path, dict]]:
-        """{image key: (its file, the pack fingerprint)} of the stored images whose pack
-        fingerprint holds (images/<name>-<pack>.*, as pictures)."""
+    def images(self, version: str | None) -> dict[str, Path]:
+        """{image key: its file} of the images kept by a pack of builder version `version`."""
+        if not builder_version.reusable(version):
+            return {}
         out = {}
         try:
-            infos = sorted((self.root / "images").glob("*.json"), key=_mtime, reverse=True)
+            infos = sorted((self.root / "images").glob(f"*-{version_tag(version)}.json"))
         except OSError:
             return {}
         for path in infos:
-            info = fingerprint.read(path)
-            if not info or info.get("key") in out:
+            info = read_json(path)
+            if not info or info.get("key") in out or not path.with_suffix(".bin").exists():
                 continue
-            fp = self.pack_holds(info.get("pack", ""), checker, moved)
-            if fp is not None and path.with_suffix(".bin").exists():
-                out[info["key"]] = (path.with_suffix(".bin"), fp)
-                with contextlib.suppress(OSError):
-                    path.touch()
+            out[info["key"]] = path.with_suffix(".bin")
+            with contextlib.suppress(OSError):
+                path.touch()
         return out
 
-    def put_image(self, key: str, file: Path, pack: str) -> None:
-        base = self.root / "images" / f"{image_name(key)}-{pack}"
+    def put_image(self, key: str, file: Path, version: str | None) -> None:
+        if not builder_version.reusable(version):
+            return
+        base = self.root / "images" / f"{image_name(key)}-{version_tag(version)}"
         if base.with_suffix(".json").exists():
             return
         try:
             link_or_copy(file, base.with_suffix(".bin"))
-            _write(base.with_suffix(".json"), json.dumps({"key": key, "pack": pack}).encode())
+            _write(base.with_suffix(".json"), json.dumps({"key": key, "builder": version}).encode())
             self.stats["images_put"] += 1
         except OSError as error:
             self.log(f"car store: image not kept: {error}")
@@ -373,7 +298,7 @@ class Store:
         out = []
         for media in _dirs(self.root / "cars"):
             for sub in _dirs(media):
-                meta = fingerprint.read(sub / "meta.json") or {}
+                meta = read_json(sub / "meta.json") or {}
                 size = meta.get("size") if isinstance(meta.get("size"), int) else _tree_size(sub)
                 out.append((Entry(sub, meta).used(), size, sub))
         for folder, suffixes in (("pictures", (".dds", ".png", ".json")), ("images", (".bin", ".json"))):
@@ -407,11 +332,6 @@ class Store:
                     path.with_suffix(suffix).unlink(missing_ok=True)
             removed += 1
             freed += size
-        # The pack fingerprints no picture or image names any more.
-        used = {p.stem.rsplit("-", 1)[-1] for f in ("pictures", "images") for p in (self.root / f).glob("*.json")}
-        for pack in (self.root / "packs").glob("*.json"):
-            if pack.stem not in used:
-                pack.unlink(missing_ok=True)
         self.log(
             f"car store: {removed} entries removed ({freed / (1 << 30):.1f} GiB), over the cap of {cap / (1 << 30):.0f} GiB"
         )
@@ -451,96 +371,40 @@ def _write(path: Path, data: bytes) -> None:
     temp.replace(path)
 
 
-def merge_base(rev: str = "origin/master") -> str:
-    """The commit this checkout's branch left `rev` at (git merge-base HEAD rev)."""
-    import subprocess
-
-    out = subprocess.run(
-        ["git", "merge-base", "HEAD", rev], cwd=dsfforza.REPO, capture_output=True, text=True, check=False
-    )
-    if out.returncode != 0:
-        raise SystemExit(f"git merge-base HEAD {rev}: {out.stderr.strip() or out.stdout.strip()}")
-    return out.stdout.strip()
-
-
-def made_by(e: Entry, checker: fingerprint.Checker) -> tuple[dict, dict | None] | None:
-    """The entry's fingerprints when its code is the code `checker` compares with (a
-    revision's: fingerprint.GitUnits), else None."""
-    fp, first = e.fingerprints()
-    if not fp or not fp.get("complete") or checker.code_changed(fp) is not None:
-        return None
-    if first is not None and checker.code_changed(first) is not None:
-        return None
-    return fp, first
-
-
-def affected(store: Store, cars: list[tuple[str, int | None]], base: str, base_units=None) -> dict[str, dict]:
-    """Which of `cars` ((media, spool ID)) a change since revision `base` affects, from the
-    store's fingerprints and without building: {media: {"status", "why", "entry"}}.
-
-    A car's base entry is one the store has that `base`'s code made (its recorded code
-    units are base's; an entry with the car's spool ID first). The car is "affected" when
-    a unit it recorded differs in this checkout or an input it read changed since, with
-    every such unit and the first input listed in "why"; "same" when none did (this
-    checkout would make the same car); "unknown" when the store has no base entry (build
-    base's code for it once: a build of the base commit anywhere on the PC puts it in).
-    `base_units`: base's code units (default fingerprint.GitUnits(base))."""
-    base_check = fingerprint.Checker(units=base_units or fingerprint.GitUnits(base))
-    now = fingerprint.Checker()
-    out = {}
-    for media, sid in cars:
-        entries = sorted(store.entries(media), key=lambda e: e.meta.get("spool_id") != sid)
-        found = None
-        for e in entries:
-            fps = made_by(e, base_check)
-            if fps is not None:
-                found = e, fps
-                break
-        if found is None:
-            out[media] = {"status": "unknown", "why": [f"no car in the store made by {base[:10]}'s code"]}
-            continue
-        e, (fp, first) = found
-        why = now.code_changed(fp, every=True) + (now.code_changed(first, every=True) if first else [])
-        changed = now.inputs_changed(fp) or (now.inputs_changed(first) if first else None)
-        why = sorted(set(why)) + ([changed] if changed else [])
-        out[media] = {"status": "affected" if why else "same", "why": why, "entry": str(e.folder)}
-    return out
-
-
 def seed(store: Store, build: Path) -> int:
-    """Put every car of an earlier build (its work/ and sound/) in the store; the count."""
+    """Put every car of an earlier build (its work/ and sound/) in the store, those built
+    under this checkout's builder version; the count."""
     work = Path(build) / "work"
     n = 0
     for report in sorted(work.glob("*.json")):
         media = report.name[: -len(".json")]
-        if "." in media:  # <media>.job.json, .fp.json, .first-try.json
+        if "." in media:  # <media>.job.json, .first-try.json
             continue
-        if store.put(work, media, Path(build) / "sound", source=fingerprint.norm(build)) is not None:
+        if store.put(work, media, Path(build) / "sound", source=os.path.normcase(os.path.realpath(build))) is not None:
             n += 1
     seed_pack(store, Path(build))
     return n
 
 
 def seed_pack(store: Store, build: Path) -> None:
-    """The garage pictures and images of a build's pack record (pack_reuse), under its
-    fingerprint, when the record is complete."""
+    """The garage pictures and images of a build's pack record (pack_reuse), when it was made
+    under this checkout's builder version."""
     from dsfforza.build import pack_reuse
 
-    record = fingerprint.read(build / pack_reuse.FOLDER / pack_reuse.RECORD)
-    fp = (record or {}).get("fingerprint") or {}
-    if not record or record.get("gui_error") or not fp.get("complete"):
+    record = read_json(build / pack_reuse.FOLDER / pack_reuse.RECORD)
+    version = (record or {}).get("builder")
+    if not record or record.get("gui_error") or version != builder_version.read():
         return
-    digest = store.put_pack({**fp, "repo": fp.get("repo") or repo_of(build)})
     for media, entry in record.get("pictures", {}).items():
         name = f"dsfforza_{media.lower()}"
         dds = build / pack_reuse.FOLDER / pack_reuse.PICTURES / f"{name}.dds"
         png = build / "gui" / f"{name}.png"
         if entry.get("key") and dds.is_file() and png.is_file():
-            store.put_picture(entry["key"], dds, png, entry.get("source", "render"), digest)
+            store.put_picture(entry["key"], dds, png, entry.get("source", "render"), version)
     for key, name in record.get("images", {}).items():
         path = build / pack_reuse.FOLDER / pack_reuse.IMAGES / name
         if path.is_file():
-            store.put_image(key, path, digest)
+            store.put_image(key, path, version)
 
 
 def main(argv: list[str] | None = None) -> None:

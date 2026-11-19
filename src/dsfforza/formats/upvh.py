@@ -759,29 +759,11 @@ def main(argv: list[str] | None = None) -> None:
         help="also print each car's ties to other vehicles (lint_vehicle's facts; pack_reuse.py)",
     )
     many.add_argument("--defined", type=int, action="append", metavar="ID", help="with --facts: and its defined UIDs")
-    many.add_argument(
-        "--record",
-        type=Path,
-        help="write the files read and the code run to this JSON file (a pack fingerprint's share: "
-        "src/dsfforza/build/pack_reuse.py)",
-    )
     args = parser.parse_args(argv)
     if args.command == "lint-many" and (args.archive is None) == (args.plan is None):
         parser.error("lint-many: give the archive or --plan")
     if args.command == "lint-many":
-        if args.record is None:
-            cmd_lint_many(args)
-            return
-        import json
-
-        from dsfforza.build import fingerprint
-
-        recorder = fingerprint.Recorder().start()
-        try:
-            cmd_lint_many(args)
-        finally:
-            recorder.stop()
-            args.record.write_text(json.dumps(recorder.drain()), encoding="utf-8")
+        cmd_lint_many(args)
         return
     if args.id is None and args.vehc is None:
         parser.error("give a VEHC index or --id")

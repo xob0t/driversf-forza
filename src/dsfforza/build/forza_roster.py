@@ -34,7 +34,6 @@ With no ISOs given, every *.iso in assets/ is used.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import dataclasses
 import fnmatch
 import os
@@ -579,46 +578,27 @@ def identify_all(isos: list[Path] | None = None) -> list[Disc]:
     return out
 
 
-DISCOVERY_EVENT = "dsfforza.discovery"  # fingerprint.QUERY_EVENT
-
-
-@contextlib.contextmanager
-def discovery(kind: str, what: str = ""):
-    """Around a lookup of which discs or packs there are ("discs", a game or "*"; "dlc"): a
-    car's fingerprint records the question and answers it itself, and leaves out the reads
-    the lookup makes (every image's header, the folders listed; fingerprint.Recorder)."""
-    sys.audit(DISCOVERY_EVENT, kind, what, True)
-    try:
-        yield
-    finally:
-        sys.audit(DISCOVERY_EVENT, kind, what, False)
-
-
 def game_discs(isos: list[Path] | None = None) -> dict[str, Path]:
     """{"FH1": image, "FM4": disc 1, "FM4 disc 2": ...} of the given disc images (default:
     assets/*.iso), by default.xex's title and disc number, whatever the files are called.
     Of two images of one disc, the first; images that aren't Forza discs are left out."""
     out: dict[str, Path] = {}
-    with discovery("discs", "*"):
-        for d in identify_all(isos):
-            if d.game:
-                out.setdefault(d.game if d.disc <= 1 else f"{d.game} disc {d.disc}", d.path)
+    for d in identify_all(isos):
+        if d.game:
+            out.setdefault(d.game if d.disc <= 1 else f"{d.game} disc {d.disc}", d.path)
     return out
 
 
 def first_disc(isos: list[Path] | None, game: str) -> Path | None:
-    """game_discs(isos).get(game): `game`'s disc 1 (or its only disc), asking for that game's
-    discs alone (discovery)."""
+    """game_discs(isos).get(game): `game`'s disc 1 (or its only disc)."""
     game = game.upper()
-    with discovery("discs", game):
-        return next((d.path for d in identify_all(isos) if d.game == game and d.disc <= 1), None)
+    return next((d.path for d in identify_all(isos) if d.game == game and d.disc <= 1), None)
 
 
 def discs_of(isos: list[Path] | None, game: str) -> list[Path]:
     """Every disc image of `game` ("FH1"/"fm4"), disc 1 first."""
     game = game.upper()
-    with discovery("discs", game):
-        found = [(d.disc, d.path) for d in identify_all(isos) if d.game == game]
+    found = [(d.disc, d.path) for d in identify_all(isos) if d.game == game]
     by_disc: dict[int, Path] = {}
     for n, path in found:
         by_disc.setdefault(n, path)

@@ -118,7 +118,7 @@ Native programs and process calls on the build path:
 | `upvh lint-many` processes | `port_batch` after the merge | can run in-process (`dsfforza.formats.upvh` is pure Python) |
 | garage-picture render processes | `gui_assets` `Renders` with `jobs > 1` | `jobs=1` runs in-process; ran in the prototype |
 | job pool, job objects, priority (`ctypes`, `msvcrt`) | `build/jobpool.py`, `gentle.py`, `port_batch.lower_priority` | not needed; `lower_priority` is shimmed (no `os.nice` in Emscripten) |
-| `git` (`carstore`, `fingerprint`, `package`) | the car store and fingerprints | not needed by a player's build (the store is off outside a checkout) |
+| `git` (`carstore`, `builder_version`, `package`) | the car store and the builder version | not needed by a player's build (the store is off outside a checkout; a release's version is its `VERSION` file) |
 | renderers | `game/car_render.py` is numpy only | runs |
 | the C++ plugin `dsfcars.asi` | built by MSVC (`tools/asi/build.ps1`) | not built in the browser; the page ships the release's binary |
 | DriverNGHook 0.7.2 (.7z), Ultimate ASI Loader | downloaded from GitHub releases (`build/thirdparty.py`), the .7z unpacked by `formats/sevenzip.py` (pure Python) | download and unpack can run in Pyodide; whether GitHub release downloads allow cross-origin fetches is unverified |
@@ -194,7 +194,8 @@ Scripts (`tools/web-builder/`):
   `port_batch.worker(job)` and puts the worker's log where the native parent puts it.
 - `pool_run.py`: runs any command in a job-pool slot and reports its peak commit
   (`PeakProcessMemoryUsed` of jobpool's job object, the measure `port_batch.WORKER_RAM` uses).
-- `seed_cache.py`: copies the `out/cache` files a native car read (its fingerprint) into a
+- `seed_cache.py`: copies the `out/cache` files a native car read (its fingerprint, which
+  builds no longer write since #634: it needs a `work/<media>.fp.json` of an older build) into a
   new folder (warm run), or only the decoded WAVs (`--only-wav`, cold run).
 - `chnk_diff.py`: the CHNK leaves of two files that differ.
 
@@ -295,7 +296,8 @@ from wasm, not from the package versions: libm (musl versus the MSVC runtime), n
 missing SIMD dispatch, or 32-bit integers. The source isn't isolated, and neither is how
 large the texture and vertex differences are. To start: the atlas before DXT compression,
 and the packed attribute's encoder. Until they match, a web build is a different platform
-for the car store (fingerprints already record `platform` and the numpy version).
+for the car store (its builder version would have to say so; fingerprints recorded `platform`
+and the numpy version until #634).
 
 ## 6. Estimate
 
