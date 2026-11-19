@@ -410,9 +410,10 @@ def convert_interior(
     def gloss_filter(section, sub) -> bool:  # chrome takes the shared chrome (CockpitBinding)
         return outside(section) and fm.classify(sub.material)[0] != fm.CHROME
 
-    # The host interior's own windows, before its geometry is replaced: their crack lines
-    # and rim shards go onto the converted windows (glass.InteriorGlass, #459).
-    host_glass = glass.host_windows(stream, interior)
+    # Every vanilla interior window with crack lines and rim shards (stream is the vanilla
+    # archive): each converted window takes the set of the one it matches best
+    # (glass.InteriorGlass, glass.donor_library, #459).
+    host_glass = glass.donor_library(stream)
     shell_lod = opts.shell_lod
     # Step to finer shell LODs while the shell closes the windscreen or the cockpit.
     while shell and shell_lod > 1:
@@ -467,7 +468,9 @@ def convert_interior(
             layout.update(dict.fromkeys(gloss.values(), dm.STRIDES[dm.LIGHTS_MAT]))
         binding = CockpitBinding(t, mats, paint_uv, gloss, outside)
         builder = forza2dsf.Builder(seed[:3] + bytes([seed[3] ^ 0x55]), layout=layout)
-        host_left = list(host_glass)  # each host window to one converted window, cockpit sections first
+        # Each vanilla window to one converted window, cockpit sections first; side glass
+        # behind the driver's eye takes none (glass.InteriorGlass._kind).
+        host_left = host_glass.fresh(place.point(cf.eye)[2])
         cabin = forza2dsf.add_geometry(
             builder,
             current,
@@ -596,7 +599,8 @@ def convert_interior(
         + ", ".join(
             f"{g} s9 {w['s9']} {w['surface_m2']} m2"
             + (
-                f", host window {w['host_window']}: {w['crack_triangles']} crack, {w['shard_triangles']} shard triangles"
+                f", set of vanilla {w.get('donor_car')} window {w['host_window']} (moved {w.get('donor_rms_mm')} mm RMS): "
+                f"{w['crack_triangles']} crack, {w['shard_triangles']} shard triangles"
                 if "host_window" in w
                 else ""
             )

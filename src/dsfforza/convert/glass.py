@@ -33,6 +33,7 @@ hole slots fell).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import itertools
 import math
 import re
@@ -228,8 +229,8 @@ class SlotMapper:
 # windscreen keeps a few irregular clusters of slivers at its corners and edges,
 # 354 and 659 shard triangles, 3 mm wide at the median). InteriorGlass builds the
 # surface from the converted window's shape and takes the cracks and shards of the
-# host interior's matching window (host_windows), placed on the converted window's
-# rim where the host has them on its own. The crack lines and bright shards are fins
+# vanilla interior window that matches it best (donor_library, mismatch), placed on
+# the converted window's rim where the vanilla window has them on its own. The crack lines and bright shards are fins
 # and slab walls standing 3 to 5 mm across the glass, not flat slivers, and
 # their vertex normals are their own triangles' facing; both come along with them
 # (research/vehicle-model.md, "Crack and shard fins", "Crack and shard normals").
@@ -248,6 +249,7 @@ CELL = 0.01  # occupancy grid of a window in its own plane (m)
 LIFT = 0.002  # cracks and shards sit this far inside the glass (m)
 MIN_WINDOW_AREA = 0.02  # smaller panes (and lamp covers) get the surface only
 RIM_BINS = 180  # directions round a window's centre in which its rim is measured (2 degrees each)
+SIDE_SPLIT = 0.2  # m: a vanilla side-glass record with triangles this far out on both sides holds two panes
 # Host crack and shard triangles that share a vertex move as one piece. Interior
 # positions are int16 x, y, z in steps of 1/4096 m (vehicle_mesh.POSITION_SCALE). Two
 # corners are one vertex when no coordinate differs by more than one step: on vanilla
@@ -452,20 +454,45 @@ class _Rim:
         """Metres per unit of reach in direction theta."""
         return (math.cos(theta) * self.half[0], math.sin(theta) * self.half[1])
 
+    @classmethod
+    def of(cls, centre, half, reach) -> _Rim:
+        """A rim from its stored centre, half extents and reach (DonorSet)."""
+        rim = cls.__new__(cls)
+        rim.centre, rim.half, rim.reach = tuple(centre), tuple(half), list(reach)
+        return rim
 
-@dataclass
+
+def _carry(hrim: _Rim, rim: _Rim, g) -> tuple:
+    """Where a host piece with centroid g (host plane metres) goes on a window with
+    rim `rim`: the same direction from the box centre (in units of the box's half
+    extents, so corners go to corners) and the same depth inside the rim, in
+    metres. (along, centroid on the window, turn): along < 0 is past the window's
+    centre; turn is the change of the direction's angle in metres, by which the
+    piece turns as one body."""
+    theta, rho = hrim.polar(g)
+    k = _Rim.bin(theta)
+    ray_h, ray_p = hrim.ray(theta), rim.ray(theta)
+    depth = (hrim.reach[k] - rho) * math.hypot(*ray_h)  # metres inside the host's rim
+    along = rim.reach[k] - depth / (math.hypot(*ray_p) or 1.0)
+    gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
+    turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
+    return along, gp, turn
+
+
+@dataclass(eq=False)
 class HostWindow:
-    """One window of the host's vanilla interior (an s9 group of its glass):
-    every triangle as (points, UVs, sky terms, normals), which of them are its
-    crack and shard layers (interior_block crack, shard_dull, shard_bright), and
-    its kind (host_kinds: "front", "rear" or "side"). Normals may be left out
-    (three-element triangles): the triangle's own facing stands in, as vanilla
-    stores it (_own_normals)."""
+    """One window of a vanilla interior (an s9 group of its glass): every
+    triangle as (points, UVs, sky terms, normals), which of them are its crack
+    and shard layers (interior_block crack, shard_dull, shard_bright), its kind
+    (host_kinds: "front", "rear" or "side") and the vanilla car (spool ID) whose
+    interior it is. Normals may be left out (three-element triangles): the
+    triangle's own facing stands in, as vanilla stores it (_own_normals)."""
 
     s9: tuple[int, int]
     tris: list
     overlay: list
     kind: str = ""
+    car: int | None = None
 
     @cached_property
     def centre(self) -> tuple:
@@ -475,6 +502,45 @@ class HostWindow:
     @cached_property
     def sideways(self) -> bool:
         return _sideways([t[0] for t in self.tris])
+
+    @cached_property
+    def side(self) -> int | None:
+        """+1 on the car's left (+x), -1 on its right, for side glass; 0 for the
+        others; None for one record holding panes on both sides (quarter lights
+        on the chassis record): its pieces would land on one window from two."""
+        if not self.sideways:
+            return 0
+        xs = [sum(p[0] for p in t[0]) / 3 for t in self.tris]
+        if min(xs) < -SIDE_SPLIT and max(xs) > SIDE_SPLIT:
+            return None
+        return 1 if self.centre[0] > 0 else -1
+
+    @cached_property
+    def frame(self) -> tuple:
+        """(u axis, v axis, outward normal, _Pane) of the window, framed like a
+        converted window of its kind (SlotMapper: u along x for windscreens and
+        rear windows, along -z for side glass; v down the glass)."""
+        frames = SlotMapper()
+        section = "glasslf" if self.sideways else "glassf"
+        for tri in self.tris:
+            group = frames.add(section, tri[0])
+        _, a_axis, b_axis, *_ = frames._frame(group)
+        outward = frames.normal(group)
+        items = [(tri[0], (outward,) * 3, tri[2], b"") for tri in self.tris]
+        return a_axis, b_axis, outward, _Pane(items, a_axis, b_axis, outward)
+
+    @cached_property
+    def rim(self):
+        pane = self.frame[3]
+        return _Rim(pane) if pane.filled else None
+
+    @cached_property
+    def pieces(self) -> list[list[int]]:
+        return _pieces([tri[0] for tri in self.overlay])
+
+    @cached_property
+    def fin_heights(self) -> list[list[float]]:
+        return _fin_heights([tri[0] for tri in self.overlay], self.frame[2])
 
 
 def _sideways(tris) -> bool:
@@ -501,7 +567,7 @@ def host_kinds(windows: list[HostWindow]) -> list[HostWindow]:
     return windows
 
 
-def host_windows(stream, vehc) -> list[HostWindow]:
+def host_windows(stream, vehc, car: int | None = None) -> list[HostWindow]:
     """The vanilla interior's glass (GLOBAL_Glass_LOD5 in part 0, mask 64) as
     windows, one per s9 group: vanilla binds each window to its own panel
     record (windscreen (0, 5) on the Desanne, rear (0, 20), doors)."""
@@ -529,10 +595,212 @@ def host_windows(stream, vehc) -> list[HostWindow]:
             groups[tuple(vb.read(e9, idx[0])[:2])].append((pts, uvs, skies, normals))
     return host_kinds(
         [
-            HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")])
+            HostWindow(s9, tris, [t for t in tris if interior_block(t[1]) not in (None, "surface")], car=car)
             for s9, tris in sorted(groups.items())
         ]
     )
+
+
+# --- donors: the vanilla windows whose crack and shard sets ports take (#459) ---------
+#
+# DSF's crack and shard sets are hand-made, one per window, and DSF reused them between
+# windows by moving them as pieces (research/vehicle-model.md, "Broken glass moves in
+# pieces"). A converted window takes the set of the vanilla window, of all vanilla
+# interiors' windows of its kind, that the move changes least (mismatch; research/
+# vehicle-model.md, "Which vanilla window a converted window takes its set from").
+
+DONOR_CACHE_ENV = "DSFF_GLASS_DONOR_CACHE"  # a folder, or "off"; default out/cache/glass-donors
+DONOR_CACHE_VERSION = 1  # raise when what donor_set makes changes through code outside this file
+
+
+@dataclass(frozen=True)
+class DonorSet:
+    """What choosing a donor needs of a vanilla window with a crack and shard set,
+    in the window's own frame (HostWindow.frame): its rim (centre and half extents
+    of its box, reach per direction) and per piece (_pieces) the centroid (s, t
+    metres), the number of corners and their mean squared distance from it."""
+
+    car: int | None
+    s9: tuple
+    kind: str
+    side: int
+    centre: tuple
+    half: tuple
+    reach: tuple
+    pieces: tuple
+
+    @cached_property
+    def rim(self) -> _Rim:
+        return _Rim.of(self.centre, self.half, self.reach)
+
+
+def donor_set(host: HostWindow) -> DonorSet | None:
+    """The DonorSet of a vanilla window, None when it has no crack and shard set,
+    no area, or holds panes on both sides of the car."""
+    if not host.overlay or host.side is None or host.rim is None:
+        return None
+    ha, hb = host.frame[:2]
+    flat = [[(_dot(p, ha), _dot(p, hb)) for p in tri[0]] for tri in host.overlay]
+    pieces = []
+    for piece in host.pieces:
+        corners = [c for n in piece for c in flat[n]]
+        gs, gt = sum(x for x, _ in corners) / len(corners), sum(y for _, y in corners) / len(corners)
+        r2 = sum((x - gs) ** 2 + (y - gt) ** 2 for x, y in corners) / len(corners)
+        pieces.append((gs, gt, len(corners), r2))
+    rim = host.rim
+    return DonorSet(
+        host.car, tuple(host.s9), host.kind, host.side, rim.centre, rim.half, tuple(rim.reach), tuple(pieces)
+    )
+
+
+def mismatch(donor: DonorSet, rim: _Rim) -> tuple[float, float]:
+    """(RMS distance, metres, by which moving the donor's set onto a window with rim
+    `rim` moves its crack and shard corners; share of the corners whose piece goes
+    past the window's centre and is left out).
+
+    The move is _overlay's: each piece goes rigidly to the same direction and depth
+    inside the rim (_carry). A corner at r from its piece's centroid moves by the
+    centroid's shift d (relative to the windows' box centres) plus the turn phi of
+    r, so over a piece's corners, whose r average 0, the mean squared move is
+    |d|^2 + 2 (1 - cos phi) mean |r|^2. A window of the donor's own shape moves
+    nothing (0); a larger, smaller or differently shaped one moves the pieces with
+    its rim and turns them with its aspect. Left-out pieces count with the move
+    that takes them past the centre."""
+    hrim = donor.rim
+    total = squared = dropped = 0.0
+    for gs, gt, n, r2 in donor.pieces:
+        along, gp, turn = _carry(hrim, rim, (gs, gt))
+        ds = (gp[0] - rim.centre[0]) - (gs - hrim.centre[0])
+        dt = (gp[1] - rim.centre[1]) - (gt - hrim.centre[1])
+        squared += n * (ds * ds + dt * dt + 2.0 * (1.0 - math.cos(turn)) * r2)
+        total += n
+        dropped += n * (along < 0)
+    return math.sqrt(squared / total), dropped / total
+
+
+class Donors:
+    """The vanilla windows a port's converted windows choose their crack and shard sets
+    from (DonorSet), and which of them this port has taken: a set goes to one window of
+    the port only, as no vanilla interior carries one set on two windows. One Donors per
+    port, shared by its InteriorGlass (the cockpit's sections, then the shell's).
+    `windows`: HostWindows to choose from (tests; host_kinds is applied per car);
+    `sets` and `load` ((car, s9) -> HostWindow): donor_library's. `eye_z`: the
+    driver's eye (InteriorGlass._kind); None puts no side glass behind it."""
+
+    def __init__(
+        self,
+        windows: list[HostWindow] | None = None,
+        sets: list[DonorSet] | None = None,
+        load=None,
+        eye_z: float | None = None,
+    ):
+        self.eye_z = eye_z
+        self.taken: set[tuple] = set()
+        self._windows: dict[tuple, HostWindow] = {}
+        if windows is not None:
+            by_car: dict = defaultdict(list)
+            for w in windows:
+                by_car[w.car].append(w)
+            for ws in by_car.values():
+                if any(not w.kind for w in ws):
+                    host_kinds(ws)
+            sets = []
+            for w in windows:
+                d = donor_set(w)
+                if d is not None:
+                    sets.append(d)
+                    self._windows[(d.car, d.s9)] = w
+        self.sets = sets or []
+        self._load = load
+
+    def fresh(self, eye_z: float | None = None) -> Donors:
+        """The same windows, none taken, for one conversion attempt whose driver's eye
+        is at z = eye_z (DSF model space, as the converted glass)."""
+        out = Donors(sets=self.sets, load=self._load, eye_z=eye_z)
+        out._windows = self._windows
+        return out
+
+    def candidates(self, kind: str, side: int) -> list[DonorSet]:
+        return [d for d in self.sets if d.kind == kind and d.side == side and (d.car, d.s9) not in self.taken]
+
+    def window(self, donor: DonorSet) -> HostWindow:
+        key = (donor.car, donor.s9)
+        if key not in self._windows:
+            self._windows[key] = self._load(*key)
+        return self._windows[key]
+
+
+_LIBRARY: dict = {}  # cache key -> (DonorSets, {car: interior entry})
+
+
+def _donor_cache_dir() -> Path | None:
+    import os
+
+    value = os.environ.get(DONOR_CACHE_ENV, "")
+    if value.lower() == "off":
+        return None
+    return Path(value) if value else REPO / "out" / "cache" / "glass-donors"
+
+
+def donor_library(stream) -> Donors:
+    """Every vanilla interior window with a crack and shard set (DonorSet), from the
+    vanilla archive `stream` (dngvehicles.sp). The sets take about a minute to make
+    and depend only on the archive and this file, so they are kept in
+    out/cache/glass-donors under a key of both (the archive by size and modification
+    time), and in memory for the process. Files are written under a temporary name and
+    renamed: parallel workers may write the same key but never read half a file."""
+    import hashlib
+    import os
+    import pickle
+
+    from dsfforza.formats.chnk import read_chunk
+    from dsfforza.formats.vehicle_mesh import payload
+    from dsfforza.formats.vehicles import find, parse_sslp
+
+    st = os.fstat(stream.fileno())
+    h = hashlib.blake2b(digest_size=12)
+    h.update(f"{DONOR_CACHE_VERSION} {sys.version_info[:2]} {st.st_size} {st.st_mtime_ns}".encode())
+    h.update(Path(__file__).read_bytes())
+    key = h.hexdigest()
+    if key not in _LIBRARY:
+        root = read_chunk(stream, 0)
+        ssic = find(root.entries, "SSIC")
+        records = parse_sslp(payload(stream, find(find(ssic.children, "NONR").children, "SSLP")))
+        interiors = {sid - 1000: root.entries[i] for sid, i, kind in records if kind == 1}
+        folder = _donor_cache_dir()
+        path = folder / f"{key}.pkl" if folder else None
+        sets = None
+        if path is not None and path.exists():
+            with contextlib.suppress(OSError, pickle.UnpicklingError, EOFError):
+                sets = pickle.loads(path.read_bytes())
+        if sets is None:
+            sets = [
+                d
+                for car in sorted(interiors)
+                for w in host_windows(stream, interiors[car], car)
+                if (d := donor_set(w)) is not None
+            ]
+            if path is not None:
+                # The cache only saves time: a folder that can't be written leaves
+                # the sets in memory and the conversion goes on.
+                tmp = path.with_suffix(f".{os.getpid()}.tmp")
+                try:
+                    folder.mkdir(parents=True, exist_ok=True)
+                    tmp.write_bytes(pickle.dumps(sets))
+                    tmp.replace(path)
+                except OSError:
+                    with contextlib.suppress(OSError):
+                        tmp.unlink(missing_ok=True)
+        _LIBRARY[key] = (sets, interiors)
+    sets, interiors = _LIBRARY[key]
+    loaded: dict = {}
+
+    def load(car, s9):
+        if car not in loaded:
+            loaded[car] = {tuple(w.s9): w for w in host_windows(stream, interiors[car], car)}
+        return loaded[car][s9]
+
+    return Donors(sets=list(sets), load=load)
 
 
 class InteriorGlass:
@@ -541,45 +809,46 @@ class InteriorGlass:
     Feed every glass triangle of the entry with `add` (DSF positions, normals,
     sky terms, s9 bytes); `triangles()` then gives, per window (SlotMapper
     group): the surface (smear rows, planar per window; the windscreen's
-    centre cut out), and the crack and shard layers of the host window it
-    matches (`host`: host_windows of the host's interior), all bound to the
-    window's own s9 so they follow its panel's crack state. Host windows a
-    window takes are removed from `host`, so a list shared by several
-    InteriorGlass (the cockpit's sections, then the shell's) gives each host
-    window to one window. Every host triangle that lands on its window is
-    kept, seen from the driver's eye or not: the host draws all its own
-    window layers."""
+    centre cut out), and the crack and shard layers of the vanilla window it
+    takes them from (`host`: a Donors, donor_library's, or a list of
+    HostWindows to choose from), all bound to the window's own s9 so they
+    follow its panel's crack state. A Donors shared by several InteriorGlass
+    (the cockpit's sections, then the shell's) gives each vanilla window to one
+    window. Every donor triangle that lands on its window is kept, seen from
+    the driver's eye or not: the donor draws all its own window layers."""
 
-    def __init__(self, host: list[HostWindow] | None = None):
+    def __init__(self, host: Donors | list[HostWindow] | None = None):
         self.frames = SlotMapper()
         self.items: dict[str, list] = defaultdict(list)
-        self.host = host if host is not None else []
-        if any(not h.kind for h in self.host):
-            host_kinds(self.host)
+        self.donors = host if isinstance(host, Donors) else Donors(windows=list(host or []))
         self.report: dict[str, dict] = {}
-        self._host_panes: dict[tuple, tuple] = {}
 
     def add(self, section: str, pts, normals, skies, s9: bytes, material: str | None = None) -> str:
         group = self.frames.add(section, pts, material)
         self.items[group].append((tuple(pts), tuple(normals), tuple(skies), s9))
         return group
 
-    def triangles(self) -> list[tuple[list, str]]:
-        """[(three (position, uv, normal, sky, s9) vertices, region)], region a
-        key of INTERIOR_BLOCKS."""
+    def panes(self) -> dict[str, _Pane]:
+        """Each window (group) in its own plane."""
         panes = {}
         for group in sorted(self.items):
             _, a_axis, b_axis, *_ = self.frames._frame(group)
             panes[group] = _Pane(self.items[group], a_axis, b_axis, self.frames.normal(group))
-        hosts = self._match(
-            [g for g, pane in panes.items() if "/lamp/" not in g and pane.area >= MIN_WINDOW_AREA and pane.rim]
+        return panes
+
+    def triangles(self) -> list[tuple[list, str]]:
+        """[(three (position, uv, normal, sky, s9) vertices, region)], region a
+        key of INTERIOR_BLOCKS."""
+        panes = self.panes()
+        donors = self._match(
+            {g: pane for g, pane in panes.items() if "/lamp/" not in g and pane.area >= MIN_WINDOW_AREA and pane.rim}
         )
         out = []
         for group in sorted(self.items):
-            out += self._window(group, panes[group], hosts.get(group))
+            out += self._window(group, panes[group], donors.get(group))
         return out
 
-    def _window(self, group: str, pane: _Pane, host: HostWindow | None) -> list:
+    def _window(self, group: str, pane: _Pane, donor: tuple | None) -> list:
         from collections import Counter
 
         items = self.items[group]
@@ -629,76 +898,67 @@ class InteriorGlass:
             "triangles_in": len(items),
         }
         self.report[group] = info
-        if host is None:
+        if donor is None:
             return out
-        overlay = self._overlay(pane, host, s9)
+        chosen, rms = donor
+        overlay = self._overlay(pane, self.donors.window(chosen), s9)
         if not overlay:
             return out
         regions = Counter(region for _, region in overlay)
         info.update(
             {
-                "host_window": list(host.s9),
+                "host_window": list(chosen.s9),
+                "donor_car": chosen.car,
+                "donor_rms_mm": round(rms * 1000, 1),
                 "crack_triangles": regions["crack"],
                 "shard_triangles": regions["shard_dull"] + regions["shard_bright"],
             }
         )
         return out + overlay
 
-    def _match(self, groups: list[str]) -> dict[str, HostWindow]:
-        """Window group -> the host window whose cracks and shards it takes. A
-        pair is of one kind: side glass on the same side of the car, the
-        windscreen (the converted windscreen slot) with the host's, the rear
-        window with the host's rear glass; roof glass takes none. Nearest centres
-        pair first, and each host window goes to one window only, as vanilla
-        windows carry their own (a converted quarter light next to a door doesn't
-        get the host door's too: the vanilla Gallardo 212's quarter lights have
-        none). A window whose kind the host has no cracks and shards for keeps
-        its surface only, as on the host. Both are in the host's car space."""
+    def _kind(self, group: str) -> tuple[str, int] | None:
+        """(kind, side) of the vanilla windows a converted window takes its set from:
+        ("side", +1 left or -1 right) for side glass, ("front", 0) for the windscreen,
+        ("rear", 0) for the rear window; None for roof glass and for side glass whose
+        front edge is behind the driver's eye (Donors.eye_z), which takes none.
+        Vanilla gives a set to 267 of the 286 side windows that reach the eye or lie
+        ahead of it (the 19 others are mostly passenger doors of vans and buses whose
+        driver's door has one) and to 2 of the 74 wholly behind it, which mostly
+        sample the exterior glass's side-rear slot instead; 141 of 144 windscreens and
+        117 of 138 rear windows have one (research/vehicle-model.md, "Which vanilla
+        window a converted window takes its set from"). Forza's section names don't
+        say it: a vent window is glassLF and the door beside the driver glassLM."""
+        tris = [it[0] for it in self.items[group]]
+        if "/roof" in group:
+            return None
+        if _sideways(tris):
+            eye = self.donors.eye_z
+            if eye is not None and max(p[2] for t in tris for p in t) < eye:
+                return None
+            x = sum(p[0] for t in tris for p in t)
+            return "side", 1 if x > 0 else -1
+        kind = {"windscreen": "front", "rear": "rear"}.get(self.frames.slot(group))
+        return (kind, 0) if kind else None
+
+    def _match(self, panes: dict[str, _Pane]) -> dict[str, tuple[DonorSet, float]]:
+        """Window group -> (the vanilla window whose cracks and shards it takes, the
+        RMS move in metres): of the vanilla windows of its kind and side not yet
+        taken (_kind, Donors), the one whose set the move onto this window changes
+        least (mismatch). Pairs go best first, and each vanilla window to one window."""
         pairs = []
-        for group in groups:
-            tris = [it[0] for it in self.items[group]]
-            slot = self.frames.slot(group)
-            kind = (
-                "side"
-                if _sideways(tris)
-                else {"windscreen": "front", "rear": "rear"}.get(slot)
-                if "/roof" not in group
-                else None
-            )
+        for group, pane in panes.items():
+            kind = self._kind(group)
             if kind is None:
                 continue
-            pts = [p for t in tris for p in t]
-            centre = tuple(sum(p[a] for p in pts) / len(pts) for a in range(3))
-            for n, h in enumerate(self.host):
-                hc = h.centre
-                if h.overlay and h.kind == kind and (kind != "side" or (hc[0] > 0) == (centre[0] > 0)):
-                    pairs.append((math.dist(hc, centre), group, n))
-        out, taken = {}, set()
-        for _, group, n in sorted(pairs):
-            if group not in out and n not in taken:
-                out[group] = self.host[n]
-                taken.add(n)
-        self.host[:] = [h for n, h in enumerate(self.host) if n not in taken]
+            rim = _Rim(pane)
+            for d in self.donors.candidates(*kind):
+                pairs.append((mismatch(d, rim)[0], group, -1 if d.car is None else d.car, d.s9, d))
+        out = {}
+        for rms, group, _, _, d in sorted(pairs, key=lambda t: t[:4]):
+            if group not in out and (d.car, d.s9) not in self.donors.taken:
+                out[group] = (d, rms)
+                self.donors.taken.add((d.car, d.s9))
         return out
-
-    def _host_pane(self, host: HostWindow):
-        """(u axis, v axis, outward normal, rim, fin heights per overlay triangle)
-        of a host window, framed like a converted window of its kind (SlotMapper:
-        u along x for windscreens and rear windows, along -z for side glass; v
-        down the glass)."""
-        if host.s9 not in self._host_panes:
-            frames = SlotMapper()
-            section = "glasslf" if host.sideways else "glassf"
-            for tri in host.tris:
-                group = frames.add(section, tri[0])
-            _, a_axis, b_axis, *_ = frames._frame(group)
-            outward = frames.normal(group)
-            items = [(tri[0], (outward,) * 3, tri[2], b"") for tri in host.tris]
-            pane = _Pane(items, a_axis, b_axis, outward)
-            heights = _fin_heights([tri[0] for tri in host.overlay], outward)
-            rim = _Rim(pane) if pane.filled else None
-            self._host_panes[host.s9] = (a_axis, b_axis, outward, rim, heights)
-        return self._host_panes[host.s9]
 
     def _overlay(self, pane: _Pane, host: HostWindow, s9) -> list:
         """The host window's crack and shard triangles on this window. They move
@@ -721,7 +981,8 @@ class InteriorGlass:
         walls standing 3 to 5 mm across the glass, which lifting every corner
         onto the glass flattened to lines (research/vehicle-model.md, "Crack and
         shard fins")."""
-        ha, hb, hn, hrim, fin_heights = self._host_pane(host)
+        ha, hb, hn, _ = host.frame
+        hrim, fin_heights = host.rim, host.fin_heights
         if hrim is None:
             return []
         rim = _Rim(pane)
@@ -731,18 +992,12 @@ class InteriorGlass:
         host_frame, frame = (ha, hb, hn), (pane.a, pane.b, pane.out)
         out = []
         flat_tris = [[(_dot(p, ha), _dot(p, hb)) for p in tri[0]] for tri in host.overlay]
-        for piece in _pieces([tri[0] for tri in host.overlay]):
+        for piece in host.pieces:
             corners_h = [c for n in piece for c in flat_tris[n]]
             g = (sum(x for x, _ in corners_h) / len(corners_h), sum(y for _, y in corners_h) / len(corners_h))
-            theta, rho = hrim.polar(g)
-            k = _Rim.bin(theta)
-            ray_h, ray_p = hrim.ray(theta), rim.ray(theta)
-            depth = (hrim.reach[k] - rho) * math.hypot(*ray_h)  # metres inside the host's rim
-            along = rim.reach[k] - depth / (math.hypot(*ray_p) or 1.0)
+            along, gp, turn = _carry(hrim, rim, g)
             if along < 0:
                 continue  # past the centre of this window: it would cross to the far side
-            gp = (rim.centre[0] + along * ray_p[0], rim.centre[1] + along * ray_p[1])
-            turn = math.atan2(ray_p[1], ray_p[0]) - math.atan2(ray_h[1], ray_h[0])
             for n in piece:
                 tri = host.overlay[n]
                 normals = [
@@ -927,7 +1182,7 @@ def check(stream, kinds: dict, host: tuple | None = None, window_cracks: bool | 
     follow it either: the GMC Savana's straddles 448 of 1678 triangles).
     window_cracks: False when the cockpit report says no window took cracks and
     shards (only lamp covers and panes under MIN_WINDOW_AREA, as in open race
-    cars and roadsters, or a host interior without them); then glass without
+    cars and roadsters, or side glass behind the driver's eye); then glass without
     them is expected."""
     rows = []
     for kind, masks in ((0, (4,)), (2, (2,))):
