@@ -653,6 +653,17 @@ FM4 cars interleaved):
 - FH1's image renamed (`my horizon copy.iso`, a hard link), `--reuse` the second: 6 of 6
   reused; `--verify-reuse 3` on the FH1 cars: 3 of 3 identical.
 
+Measured 2026-11-19 for #634 (`--jobs 2`, `--id-policy asi`, `--no-store`; 3 FH1 cars, 3 FM4
+disc cars, HYU_Veloster_12 and DOD_Challenger392_12; `assets\` with only the Veloster pack,
+then the Viper pack added):
+
+- with the Veloster pack: 7 cars, 225 s. The FH1 cars ask only `discs FH1`, the FM4 disc cars
+  only `discs FM4`; neither reads the merged gamedb. HYU_Veloster_12 asks `dlc` and reads
+  it. DOD_Challenger392_12 (its pack missing) holds ID 8;
+- the Viper pack added, `--reuse` the first: the 6 disc cars reused; HYU_Veloster_12 built
+  again (`dlc` answer changed), DOD_Challenger392_12 built; `--verify-reuse 3` (ACU_NSX_05,
+  AUD_TT_07, MAZ_RX7_97): 3 of 3 identical. Before #634 all 8 were converted.
+
 **What it can't see.** A file whose absence matters but that sits in a
 folder nobody listed. A `stat()` without an open. Code run in the parent
 before the workers start, except what reaches the job (spool IDs, options)
