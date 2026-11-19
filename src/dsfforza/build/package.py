@@ -106,6 +106,7 @@ def build_zip(asi: Path, version: str, out_dir: Path, repo: Path = REPO, files: 
         z.write(repo / "tools" / "asi" / "dsfcars.ini", f"{name}/plugin/dsfcars.ini")
         z.writestr(f"{name}/plugin/dsfcars.build.json", json.dumps(stamp, indent=1) + "\n")
         z.writestr(f"{name}/assets/PUT-YOUR-FORZA-ISOS-HERE.txt", ASSETS_NOTE.replace("\n", "\r\n"))
+        # The builder version a player's builds reuse cars by (builder_version.read: its first word).
         z.writestr(f"{name}/VERSION", f"{version} {stamp['commit']}\n")
     return target
 

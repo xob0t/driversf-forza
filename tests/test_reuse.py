@@ -1,5 +1,7 @@
-"""port_batch build --reuse: fingerprints (src/dsfforza/build/fingerprint.py) and the
-reuse decision, without converting a car (a fraction of a second).
+"""port_batch build --reuse by the builder version (src/dsfforza/build/builder_version.py):
+a car is reused when the builder version, its media and options, its build ID and its own
+source (disc or DLC pack by identity) match. Without converting a car (a fraction of a
+second, a few git calls).
 
 uv run python tests/test_reuse.py     # or every test: uv run python -m tests reuse
 """
@@ -8,288 +10,214 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import subprocess
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
-from dsfforza.build import fingerprint, port_batch
+from dsfforza.build import builder_version, port_batch
 
-SOURCE = '''"""Module docstring."""
-import os
-from pathlib import Path
-
-LIMIT = 4
-SCALE: float = 0.5
+VERSION = "git 0123456789abcdef"
 
 
-def area(w, h):
-    """Docstring."""
-    return w * h * SCALE
-
-
-class Box:
-    size = 3
-
-    def volume(self):
-        return self.size**3
-
-
-if os.name == "nt":
-    def windows_only():
-        return 1
-'''
-
-
-def units(source: str) -> dict:
-    return fingerprint.module_units(source)
-
-
-def test_units_ignore_comments_docstrings_and_formatting():
-    base = units(SOURCE)
-    edited = SOURCE.replace('"""Docstring."""', '"""Another docstring."""').replace(
-        "return w * h * SCALE", "return (w * h  *  SCALE)  # a comment"
-    )
-    assert units(edited) == base
-    assert {"area", "Box", "Box.volume", "=LIMIT", "=SCALE", "=os", "=Path", "<module>"} <= set(base)
-
-
-def test_a_change_moves_only_its_unit():
-    base = units(SOURCE)
-    for old, new, unit in (
-        ("return w * h * SCALE", "return w * h * SCALE + 1", "area"),
-        ("LIMIT = 4", "LIMIT = 5", "=LIMIT"),
-        ("size = 3", "size = 4", "Box"),
-        ("return self.size**3", "return self.size**2", "Box.volume"),
-        ("return 1", "return 2", "<module>"),  # a def inside a top-level if
-    ):
-        changed = {k for k, v in units(SOURCE.replace(old, new)).items() if base.get(k) != v}
-        assert changed == {unit}, (old, changed)
-    added = units(SOURCE.replace("import os\n", "import os\nimport json\n"))
-    assert {k for k, v in added.items() if base.get(k) != v} == {"=json"}
-
-
-def test_unit_of_code_objects():
-    assert fingerprint.unit_of("area") == "area"
-    assert fingerprint.unit_of("Box.volume") == "Box.volume"
-    assert fingerprint.unit_of("area.<locals>.inner") == "area"
-    assert fingerprint.unit_of("Box.volume.<locals>.<lambda>") == "Box.volume"
-    assert fingerprint.unit_of("<lambda>") == fingerprint.MODULE_UNIT
-    assert fingerprint.unit_of("<genexpr>") == fingerprint.MODULE_UNIT
-    assert fingerprint.module_name(str(fingerprint.PACKAGE / "formats" / "xds.py")) == "dsfforza.formats.xds"
-    assert fingerprint.module_name(__file__) is None
-
-
-def _job(folder: Path) -> dict:
+def _fh1(folder: Path, image: str = "fh1.iso") -> dict:
+    """A car's source on FH1's disc (forza_roster.Source as a job holds it)."""
     return {
-        "media": "TEST_Car_10",
         "game": "FH1",
-        "year": 2010,
-        "games": "FH1",
-        "source": {"iso": str(folder / "disc.iso"), "path": "media/cars/x.zip"},
-        "spool_id": 7,
-        "dsf": str(folder / "vanilla.sp"),
-        "game_dir": str(folder),
-        "cache": str(folder),
-        "isos": [],
-        "port_options": ["--damage"],
-        "sound_dir": str(folder / "out" / "sound"),
-        "chunk": str(folder / "out" / "work" / "TEST_Car_10.chnk"),
-        "report": str(folder / "out" / "work" / "TEST_Car_10.json"),
+        "where": "FH1",
+        "path": "Media/Cars/TEST_Car_10.zip",
+        "size": 1000,
+        "files": 12,
+        "kind": "car",
+        "iso": str(folder / image),
+        "package": "",
     }
 
 
-def _record(folder: Path, job: dict) -> dict:
-    """A fingerprint of reading an input file and running a little package code."""
-    from dsfforza.formats import xds
-
-    data = folder / "car" / "input.bin"
-    recorder = fingerprint.Recorder([folder / "out"]).start()
-    try:
-        xds.parse_header(data.read_bytes())
-        (folder / "out").mkdir(exist_ok=True)
-        (folder / "out" / "written.txt").write_text("output")
-        sorted(p.name for p in (folder / "car").iterdir())
-    finally:
-        fp = recorder.finish(job)
-    return fp
+def _dlc(folder: Path, pack: str = "Porsche Expansion Pack", file: str = "pack1") -> dict:
+    """A car's source in an FM4 DLC pack file."""
+    return {
+        "game": "FM4",
+        "where": f"FM4 DLC / {pack}",
+        "path": "Media/DLCZips/1_pri_65.zip::media/cars/TEST_Dlc_11/",
+        "size": 2000,
+        "files": 30,
+        "kind": "car",
+        "iso": "",
+        "package": str(folder / "assets" / file),
+    }
 
 
-def test_module_units_are_kept_by_source_and_not_recorded():
-    with tempfile.TemporaryDirectory() as tmp:
-        saved = fingerprint.UNITS_CACHE
-        fingerprint.UNITS_CACHE = Path(tmp) / "code-units"
-        try:
-            assert fingerprint.cached_module_units(SOURCE) == fingerprint.module_units(SOURCE)  # made and kept
-            assert len(list(fingerprint.UNITS_CACHE.iterdir())) == 1
-            assert fingerprint.cached_module_units(SOURCE) == units(SOURCE)  # read back
-            changed = SOURCE.replace("LIMIT = 4", "LIMIT = 5")
-            assert fingerprint.cached_module_units(changed) == units(changed) != units(SOURCE)
-            assert len(list(fingerprint.UNITS_CACHE.iterdir())) == 2
-        finally:
-            fingerprint.UNITS_CACHE = saved
-    real = fingerprint.UNITS_CACHE / "x.json"
-    recorder = fingerprint.Recorder()
-    recorder.opened.append((str(real), "r", 0))
-    assert fingerprint.norm(real) not in recorder._inputs()[0]  # never an input
+def _job(folder: Path, media: str = "TEST_Car_10", spool_id: int = 7, source: dict | None = None, **kw) -> dict:
+    return {
+        "builder": VERSION,
+        "media": media,
+        "game": (source or {}).get("game", "FH1"),
+        "year": 2010,
+        "games": "FH1",
+        "source": source or _fh1(folder),
+        "spool_id": spool_id,
+        "dsf": str(folder / "vanilla.sp"),
+        "game_dir": str(folder),
+        "cache": str(folder / "cache"),
+        "isos": [str(folder / "fh1.iso")],
+        "port_options": ["--damage"],
+        "sound_dir": str(folder / "out" / "sound"),
+        "chunk": str(folder / "out" / "work" / f"{media}.chnk"),
+        "report": str(folder / "out" / "work" / f"{media}.json"),
+        **kw,
+    }
 
 
-def test_fingerprint_records_inputs_and_code():
+# --- the rule --------------------------------------------------------------------------------------
+
+
+def test_same_version_is_reused_another_converts():
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        (folder / "car").mkdir()
-        (folder / "car" / "input.bin").write_bytes(bytes(64))
         job = _job(folder)
-        fp = _record(folder, job)
-        files = set(fp["files"])
-        assert fingerprint.norm(folder / "car" / "input.bin") in files
-        assert not any("written.txt" in p for p in files)  # an output
-        assert fingerprint.norm(folder / "car") in fp["dirs"]
-        assert "parse_header" in fp["code"]["dsfforza.formats.xds"]
-        assert "dsfforza.build.fingerprint" not in fp["code"]
-        assert fp["complete"]
-        checker = fingerprint.Checker()
-        assert checker.check(fp, job) is None
-        assert checker.check(fp, {**job, "spool_id": 8}) == "job: spool_id"
-        assert checker.check(fp, {**job, "chunk": "elsewhere.chnk"}) is None  # where it goes doesn't count
-        (folder / "car" / "input.bin").write_bytes(bytes(65))
-        assert fingerprint.Checker().check(fp, job).startswith("input ")
-        changed = json.loads(json.dumps(fp))
-        changed["code"]["dsfforza.formats.xds"]["parse_header"] = "0" * 24
-        assert fingerprint.Checker().check(changed, job, code=False).startswith("input ")
-        (folder / "car" / "input.bin").write_bytes(bytes(64))
-        assert fingerprint.Checker().check(changed, job) == "code dsfforza.formats.xds.parse_header"
-        assert fingerprint.Checker().check(changed, job, code=False) is None
+        assert builder_version.why_not(job, dict(job)) is None
+        assert builder_version.why_not(job, {**job, "builder": "git fedcba9876543210"}) == "builder version"
+        assert builder_version.why_not(job, {**job, "builder": "release v0.3.0"}) == "builder version"
+        assert builder_version.why_not(job, {**job, "port_options": []}) == "options"
+        assert builder_version.why_not(job, {**job, "spool_id": 8}) == "build ID"
+        assert builder_version.why_not(job, {**job, "media": "TEST_Other_10"}) == "media"
+        assert builder_version.why_not(None, job) == "no job record"
+        # A build from before the builder version (no "builder" in its job) converts.
+        assert builder_version.why_not({k: v for k, v in job.items() if k != "builder"}, job) == "builder version"
 
 
-def test_memo_keeps_a_result_until_what_it_read_or_ran_changes():
-    from dsfforza.formats import xds
+def test_a_dirty_tree_reuses_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        job = _job(Path(tmp), builder=VERSION + builder_version.DIRTY)
+        assert not builder_version.reusable(job["builder"])
+        assert builder_version.why_not(job, dict(job)).endswith("(no reuse)")  # not even its own cars
+        assert builder_version.why_not(_job(Path(tmp), builder=None), _job(Path(tmp), builder=None))
 
+
+def test_a_fallback_build_is_reused_by_the_options_asked_for():
+    """A car built again without --damage after its first try failed: its job keeps the
+    options it was asked for (requested_options), which a later build asks for again."""
+    with tempfile.TemporaryDirectory() as tmp:
+        job = _job(Path(tmp))
+        retried = {**job, "requested_options": ["--damage"], "port_options": [], "fallback": "without --damage"}
+        assert builder_version.why_not(retried, job) is None
+
+
+def test_a_disc_renamed_or_moved_or_another_added_is_reused():
+    """The disc counts by identity (its "where", from default.xex), not its image's path: the
+    FM4 discs added, or FH1's image renamed or moved, converts no FH1 car."""
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        data, path = folder / "input.bin", folder / "memo.json"
-        data.write_bytes(bytes(64))
-        calls = []
-
-        def compute():
-            calls.append(1)
-            return list(xds.parse_header(data.read_bytes()))
-
-        def get(key: str = "car"):
-            memo = fingerprint.Memo(path)
-            try:
-                return memo.get(key, compute)
-            finally:
-                memo.save()
-
-        first = get()
-        assert get() == first and len(calls) == 1  # kept
-        stored = json.loads(path.read_text())
-        assert fingerprint.norm(data) in stored["entries"]["car"]["files"]
-        assert any("parse_header" in c.get("dsfforza.formats.xds", {}) for c in stored["codes"].values())
-        data.write_bytes(bytes(65))  # an input changed
-        get()
-        assert len(calls) == 2
-        stored = json.loads(path.read_text())
-        for code in stored["codes"].values():  # the code it ran changed
-            code["dsfforza.formats.xds"]["parse_header"] = "0" * 24
-        path.write_text(json.dumps(stored))
-        get()
-        assert len(calls) == 3 and get() and len(calls) == 3
-        recorder = fingerprint.Recorder().start()  # another recording in the process: compute only
-        try:
-            get("other")
-        finally:
-            recorder.stop()
-        assert len(calls) == 4 and "other" not in json.loads(path.read_text())["entries"]
+        job = _job(folder)
+        renamed = _job(folder, source=_fh1(folder / "elsewhere", "Forza Horizon (renamed).iso"))
+        renamed["isos"] = [str(folder / "elsewhere" / "Forza Horizon (renamed).iso")]
+        assert builder_version.why_not(job, renamed) is None
+        added = {**job, "isos": [str(folder / "fm4a.iso"), str(folder / "fh1.iso"), str(folder / "fm4b.iso")]}
+        assert builder_version.why_not(job, added) is None
+        # Another disc: an FM4 disc-2 pack car of the same name is another source.
+        other = {**job["source"], "game": "FM4", "where": "FM4 disc 2 / Car Pack", "package": "content/0/x"}
+        assert builder_version.why_not(job, {**job, "source": other}) == "source"
 
 
-def test_memo_fill_computes_in_processes_what_get_would():
+def test_a_dlc_pack_counts_by_name_not_by_file():
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        data, path = folder / "input.bin", folder / "memo.json"
-        data.write_bytes(bytes(64))
-        from dsfforza.build import pack_reuse
-
-        task = ("car", "dsfforza.build.pack_reuse:sha256_file", (data,))
-        memo = fingerprint.Memo(path)
-        memo.fill([task], 2)
-        assert fingerprint.norm(data) in memo.new["car"]["files"] and memo.valid("car")
-        assert memo.get("car", lambda: "computed again") == pack_reuse.sha256_file(data)
-        assert "sha256_file" in memo.code["dsfforza.build.pack_reuse"]
-        memo.save()
-        kept = fingerprint.Memo(path)
-        assert kept.get("car", lambda: "computed again") == pack_reuse.sha256_file(data)
-        data.write_bytes(bytes(65))  # an input changed: computed again
-        assert not kept.valid("car") and kept.get("car", lambda: "computed again") == "computed again"
+        job = _job(folder, "TEST_Dlc_11", source=_dlc(folder))
+        moved = _job(folder, "TEST_Dlc_11", source=_dlc(folder / "moved", file="Porsche (renamed).bin"))
+        assert builder_version.why_not(job, moved) is None
+        other = _job(folder, "TEST_Dlc_11", source=_dlc(folder, pack="Another Pack"))
+        assert builder_version.why_not(job, other) == "source"
+        # A pack on a disc keeps its path in the image (it is part of where the car is).
+        on_disc = {**_fh1(folder), "game": "FM4", "where": "FM4 disc 2 / Pack", "package": "content/0/a"}
+        assert builder_version.source_identity(on_disc)["package"] == "content/0/a"
+        assert "iso" not in builder_version.source_identity(on_disc)
 
 
-def test_a_moved_vanilla_archive_with_the_same_digest_is_the_same_input():
-    """dsff install builds from the game's dngvehicles.sp the first time and from the install's
-    backup of it after that (issue #95: every car was converted again on each later run)."""
+# --- the builder version --------------------------------------------------------------------------
+
+
+def _git(repo: Path, *argv: str) -> None:
+    subprocess.run(["git", *argv], cwd=repo, check=True, capture_output=True)
+
+
+def test_the_version_is_the_commit_or_dirty_or_the_release():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "repo"
+        (repo / "src" / "dsfforza").mkdir(parents=True)
+        (repo / "src" / "dsfforza" / "a.py").write_text("A = 1\n")
+        (repo / "README.md").write_text("readme\n")
+        _git(repo, "init", "-q")
+        _git(repo, "add", ".")
+        _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one")
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert builder_version.read(repo) == f"git {head}"
+        (repo / "README.md").write_text("docs only\n")  # not what the converter reads
+        assert builder_version.read(repo) == f"git {head}"
+        (repo / "src" / "dsfforza" / "a.py").write_text("A = 2\n")
+        assert builder_version.read(repo) == f"git {head}{builder_version.DIRTY}"
+        _git(repo, "checkout", "-q", "--", "src")
+        (repo / "src" / "dsfforza" / "new.py").write_text("B = 1\n")  # untracked: dirty too
+        assert builder_version.read(repo) == f"git {head}{builder_version.DIRTY}"
+        (repo / "src" / "dsfforza" / "new.py").unlink()
+        _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "two")
+        assert builder_version.read(repo) not in (f"git {head}", None)  # a new commit: another version
+        # A release: the VERSION file package.build_zip writes, no git.
+        release = Path(tmp) / "release"
+        release.mkdir()
+        (release / "VERSION").write_text("v0.3.0 0123abc\n")
+        assert builder_version.read(release) == "release v0.3.0"
+        assert builder_version.read(Path(tmp) / "nothing") is None
+
+
+# --- port_batch --reuse -----------------------------------------------------------------------------
+
+
+def _built(build: Path, job: dict, chunk: bytes | None = None) -> None:
+    """A car `build` converted from `job`: its work files and sound folder."""
+    media = job["media"]
+    work = build / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    (work / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198, "entry": {}}))
+    (work / f"{media}.chnk").write_bytes(chunk or b"CHNK" + media.encode())
+    (work / f"{media}.job.json").write_text(json.dumps(job))
+    (work / f"{media}.log").write_text("log")
+    (build / "sound" / media).mkdir(parents=True, exist_ok=True)
+    (build / "sound" / media / "sweep_new.wav").write_bytes(b"wav")
+
+
+def _args(reuse, **kw):
+    return argparse.Namespace(reuse=reuse, verify_reuse=0, **kw)
+
+
+def test_reuse_copies_a_car_of_the_same_version():
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        game = folder / "game"
-        vanilla = game / "Install" / "dngvehicles.sp"
-        vanilla.parent.mkdir(parents=True)
-        vanilla.write_bytes(b"vanilla archive")
-        job = {**_job(folder), "dsf": str(vanilla), "game_dir": str(game)}
-        recorder = fingerprint.Recorder([folder / "out"]).start()
-        try:
-            vanilla.read_bytes()
-        finally:
-            fp = recorder.finish(job)
-        assert fingerprint.norm(vanilla) in fp["files"]
-        # The install backs the archive up (time stamp kept, as Copy-Item does) and replaces it.
-        backup = game / "dsfcars-backup" / "Install" / "dngvehicles.sp"
-        backup.parent.mkdir(parents=True)
-        shutil.copy2(vanilla, backup)
-        vanilla.write_bytes(b"the installed build")
-        after = {**job, "dsf": str(backup)}
-        assert fingerprint.Checker().check(fp, after) is None
-        assert fingerprint.Checker().moved(fp, after) == {fingerprint.norm(vanilla): fingerprint.norm(backup)}
-        assert fingerprint.Checker().check(fp, job).startswith("input ")  # the game's file is the build now
-        backup.write_bytes(b"another archive")
-        assert fingerprint.Checker().check(fp, after) == "job: dsf"
-
-
-def test_reuse_copies_unchanged_cars_and_honours_the_predicate():
-    with tempfile.TemporaryDirectory() as tmp:
-        folder = Path(tmp)
-        (folder / "car").mkdir()
-        (folder / "car" / "input.bin").write_bytes(bytes(64))
         old = folder / "old"
-        (old / "work").mkdir(parents=True)
-        (old / "sound" / "TEST_Car_10").mkdir(parents=True)
-        (old / "sound" / "TEST_Car_10" / "sweep_new.wav").write_bytes(b"wav")
         job = _job(folder)
-        job["sound_dir"] = str(folder / "new" / "sound")
-        fp = _record(folder, job)
+        _built(old, job)
         media = job["media"]
-        (old / "work" / f"{media}.fp.json").write_text(json.dumps(fp))
-        (old / "work" / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198, "entry": {}}))
-        (old / "work" / f"{media}.chnk").write_bytes(b"CHNK...")
-        (old / "work" / f"{media}.job.json").write_text(json.dumps(job))
         work = folder / "new" / "work"
         work.mkdir(parents=True)
-
-        def args(**kw):
-            return argparse.Namespace(reuse=old, rebuild_where=None, trust_code=False, verify_reuse=0, **kw)
-
-        reuse = port_batch.Reuse(args(), work)
-        report = reuse.take(job)
+        now = {**job, "sound_dir": str(folder / "new" / "sound")}
+        reuse = port_batch.Reuse(_args(old), work)
+        report = reuse.take(now)
         assert report is not None and report["reused_from"] == str(old)
-        assert (work / f"{media}.chnk").read_bytes() == b"CHNK..."
+        assert (work / f"{media}.chnk").read_bytes() == b"CHNK" + media.encode()
         assert (folder / "new" / "sound" / media / "sweep_new.wav").read_bytes() == b"wav"
         # The refreshed report is this build's own file (remerge reads it), not written
         # through the hard link into the earlier build's.
         assert not (work / f"{media}.json").samefile(old / "work" / f"{media}.json")
         assert json.loads((work / f"{media}.json").read_text())["host"] == 198
-        again = port_batch.Reuse(argparse.Namespace(**{**vars(args()), "rebuild_where": "host == 198"}), work)
-        assert again.take(job) is None and again.rebuilt[media] == "--rebuild-where"
-        other = port_batch.Reuse(args(), work)
-        assert other.take({**job, "port_options": ["--damage", "--no-cockpit"]}) is None
-        assert other.rebuilt[media] == "job: options"
+        other = port_batch.Reuse(_args(old), work)
+        assert other.take({**now, "builder": "git fedcba9876543210"}) is None
+        assert other.rebuilt[media] == "builder version"
+        dirty = port_batch.Reuse(_args(old), work)
+        assert dirty.take({**now, "builder": VERSION + builder_version.DIRTY}) is None
+        assert dirty.rebuilt[media].endswith("(no reuse)")
+        assert other.take({**now, "port_options": ["--damage", "--no-cockpit"]}) is None
+        assert other.rebuilt[media] == "options"
 
 
 def test_reuse_takes_each_car_from_the_first_build_that_has_it():
@@ -297,42 +225,64 @@ def test_reuse_takes_each_car_from_the_first_build_that_has_it():
     missing from the first is taken from the second; a car in neither is built."""
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        (folder / "car").mkdir()
-        (folder / "car" / "input.bin").write_bytes(bytes(64))
         first, second = folder / "first", folder / "second"
         (first / "work").mkdir(parents=True)
-        (second / "work").mkdir(parents=True)
-        job = _job(folder)
-        job["sound_dir"] = str(folder / "new" / "sound")
-        fp = _record(folder, job)
-        media = job["media"]
-        (second / "work" / f"{media}.fp.json").write_text(json.dumps(fp))
-        (second / "work" / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198}))
-        (second / "work" / f"{media}.chnk").write_bytes(b"CHNK2")
+        job = {**_job(folder), "sound_dir": str(folder / "new" / "sound")}
+        _built(second, job, b"CHNK2")
         work = folder / "new" / "work"
         work.mkdir(parents=True)
-        args = argparse.Namespace(reuse=[first, second], rebuild_where=None, trust_code=False, verify_reuse=0)
-        reuse = port_batch.Reuse(args, work)
+        reuse = port_batch.Reuse(_args([first, second]), work)
         report = reuse.take(job)
         assert report is not None and report["reused_from"] == str(second)
-        assert (work / f"{media}.chnk").read_bytes() == b"CHNK2"
+        assert (work / f"{job['media']}.chnk").read_bytes() == b"CHNK2"
         assert reuse.record()["sources"] == [str(first), str(second)]
-        other = port_batch.Reuse(args, work)
+        other = port_batch.Reuse(_args([first, second]), work)
         assert other.take({**job, "media": "TEST_Other_11"}) is None
         assert other.rebuilt["TEST_Other_11"] == "not built there"
 
 
+def test_discs_or_a_dlc_pack_added_convert_only_their_cars():
+    """FH1's cars built alone; then the FM4 discs and a DLC pack added (more images, FH1's
+    renamed, the jobs' disc lists longer): the FH1 car and the first pack's car are taken,
+    the new FM4 and second pack's cars are converted."""
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        old = folder / "old"
+        fh1 = _job(folder, "TEST_Fh1_10", 7)
+        dlc1 = _job(folder, "TEST_Dlc_11", 8, source=_dlc(folder))
+        for job in (fh1, dlc1):
+            _built(old, job)
+        isos = [str(folder / "renamed" / "Forza Horizon.iso"), str(folder / "fm4a.iso"), str(folder / "fm4b.iso")]
+        new_fh1 = {**_job(folder, "TEST_Fh1_10", 7, source=_fh1(folder / "renamed", "Forza Horizon.iso")), "isos": isos}
+        new_dlc1 = {**_job(folder, "TEST_Dlc_11", 8, source=_dlc(folder / "moved")), "isos": isos}
+        fm4 = {**_fh1(folder, "fm4a.iso"), "game": "FM4", "where": "FM4 disc 1"}
+        new_fm4 = {**_job(folder, "TEST_Fm4_11", 9, source=fm4), "isos": isos}
+        new_dlc2 = {**_job(folder, "TEST_Dlc2_12", 10, source=_dlc(folder, "Another Pack", "pack2")), "isos": isos}
+        work = folder / "new" / "work"
+        work.mkdir(parents=True)
+        reuse = port_batch.Reuse(_args(old), work)
+        taken = {j["media"] for j in (new_fh1, new_dlc1, new_fm4, new_dlc2) if reuse.take(j) is not None}
+        assert taken == {"TEST_Fh1_10", "TEST_Dlc_11"}
+        assert reuse.rebuilt == {"TEST_Fm4_11": "not built there", "TEST_Dlc2_12": "not built there"}
+
+
+def test_resume_takes_only_cars_of_the_same_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        job = _job(folder)
+        _built(folder / "out", job)
+        work = folder / "out" / "work"
+        assert port_batch.resumed_report(job, work)["ok"]
+        assert port_batch.resumed_report({**job, "builder": "git another"}, work) is None
+        assert port_batch.resumed_report({**job, "builder": VERSION + builder_version.DIRTY}, work) is None
+
+
 def _old_build(folder: Path, old: Path, cars: list[str], sound_dir: Path) -> list[dict]:
-    """An earlier build in `old` with each of `cars` converted (fingerprints that hold)."""
-    (old / "work").mkdir(parents=True)
+    """An earlier build in `old` with each of `cars` converted."""
     jobs = []
     for n, media in enumerate(cars):
-        job = {**_job(folder), "media": media, "spool_id": 7 + n, "sound_dir": str(sound_dir)}
-        fp = _record(folder, job)
-        (old / "work" / f"{media}.fp.json").write_text(json.dumps(fp))
-        (old / "work" / f"{media}.json").write_text(json.dumps({"media": media, "ok": True, "host": 198}))
-        (old / "work" / f"{media}.chnk").write_bytes(b"CHNK" + media.encode())
-        (old / "work" / f"{media}.job.json").write_text(json.dumps(job))
+        job = {**_job(folder, media, 7 + n), "sound_dir": str(sound_dir)}
+        _built(old, job)
         jobs.append(job)
     return jobs
 
@@ -344,8 +294,6 @@ def test_verify_mismatch_stops_port_batch_and_rebuilds_for_dsff_install():
     cars = ["TEST_A_10", "TEST_B_10", "TEST_C_10"]
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        (folder / "car").mkdir()
-        (folder / "car" / "input.bin").write_bytes(bytes(64))
         old = folder / "old"
         jobs = _old_build(folder, old, cars, folder / "new" / "sound")
         work = folder / "new" / "work"
@@ -362,7 +310,7 @@ def test_verify_mismatch_stops_port_batch_and_rebuilds_for_dsff_install():
                 out[check["media"]] = report
             return out
 
-        args = argparse.Namespace(reuse=old, rebuild_where=None, trust_code=False, verify_reuse=1, verify_seed=5)
+        args = argparse.Namespace(reuse=old, verify_reuse=1, verify_seed=5)
         real = port_batch.run_workers
         port_batch.run_workers = fake_run_workers
         try:
@@ -391,173 +339,10 @@ def test_verify_mismatch_stops_port_batch_and_rebuilds_for_dsff_install():
         assert record["reused"] == [] and record["verify_mismatch"]["converted_again"] == redo
 
 
-class FakeDiscs:
-    """forza_roster.identify by file name (fh1*: FH1; fm4a*: FM4 disc 1; fm4b*: FM4 disc 2;
-    else not a Forza disc), so a test needs no real disc image."""
-
-    def __enter__(self):
-        from dsfforza.build import forza_roster
-
-        def identify(path):
-            name = Path(path).name.lower()
-            for prefix, game, disc, discs in (("fh1", "FH1", 1, 1), ("fm4a", "FM4", 1, 2), ("fm4b", "FM4", 2, 2)):
-                if name.startswith(prefix):
-                    return forza_roster.Disc(Path(path), game, disc, discs)
-            return forza_roster.Disc(Path(path), error="another game")
-
-        self.real = forza_roster.identify
-        forza_roster.identify = identify
-        fingerprint._identified.cache_clear()
-        return self
-
-    def __exit__(self, *exc):
-        from dsfforza.build import forza_roster
-
-        forza_roster.identify = self.real
-        fingerprint._identified.cache_clear()
-
-
-def _disc_car(folder: Path, isos: list[Path], asks: str) -> tuple[dict, dict]:
-    """(job, fingerprint) of a car worker that asks which discs `asks` ("FH1", "FM4") has
-    (every image's header read, as forza_roster.identify_all reads them), then reads its zip
-    from FH1's disc and an input file."""
-    from dsfforza.build import forza_roster
-
-    data = folder / "car" / "input.bin"
-    data.parent.mkdir(parents=True, exist_ok=True)
-    data.write_bytes(bytes(64))
-    job = {**_job(folder), "isos": [str(i) for i in isos]}
-    job["source"] = {**job["source"], "iso": str(isos[0])}
-    recorder = fingerprint.Recorder([folder / "out"], queries=True).start()
-    try:
-        with forza_roster.discovery("discs", asks):
-            for iso in isos:
-                iso.read_bytes()  # the header reads of identify_all: not inputs
-        found = forza_roster.discs_of(isos, asks)
-        isos[0].read_bytes()  # the car's zip on FH1's disc
-        data.read_bytes()
-    finally:
-        fp = recorder.finish(job)
-    assert found == [i for i in isos if i.name.lower().startswith("fh1" if asks == "FH1" else "fm4")]
-    return job, fp
-
-
-def test_discs_count_by_what_the_car_asked_for_not_by_file_name():
-    """A disc image added for other cars, or one renamed or moved, leaves a car that didn't
-    ask for that game's discs as it was; one whose disc is gone or differs is built again."""
-    with tempfile.TemporaryDirectory() as tmp, FakeDiscs():
-        folder = Path(tmp)
-        fh1, other = folder / "fh1.iso", folder / "unrelated.iso"
-        fh1.write_bytes(b"FH1 disc" * 100)
-        other.write_bytes(b"another game")
-        job, fp = _disc_car(folder, [fh1, other], "FH1")
-        assert fp["queries"] == {"discs FH1": ["disc:FH1:1"]}
-        assert "disc:FH1:1" in fp["files"] and fingerprint.norm(fh1) not in fp["files"]
-        assert not any("unrelated" in p for p in fp["files"])  # read only to tell what it is
-        assert fp["job"]["source"]["iso"] == "disc:FH1:1" and "isos" not in fp["job"]
-        assert fingerprint.Checker().check(fp, job) is None
-        # The FM4 discs added: the FH1 car didn't ask for FM4's.
-        fm4a, fm4b = folder / "fm4a.iso", folder / "fm4b.iso"
-        fm4a.write_bytes(b"FM4 disc 1")
-        fm4b.write_bytes(b"FM4 disc 2")
-        assert fingerprint.Checker().check(fp, {**job, "isos": [str(fm4a), str(fh1), str(fm4b)]}) is None
-        # FH1's disc renamed and moved (time stamp kept, as a move or Copy-Item keeps it).
-        moved = folder / "elsewhere" / "fh1 (renamed).iso"
-        moved.parent.mkdir()
-        fh1.replace(moved)
-        again = {**job, "isos": [str(moved)], "source": {**job["source"], "iso": str(moved)}}
-        assert fingerprint.Checker().check(fp, again) is None
-        # Another image of FH1's disc with other bytes: its content is an input.
-        moved.write_bytes(b"FH1 disc, another dump" * 100)
-        assert fingerprint.Checker().check(fp, again) == "input disc:FH1:1"
-        # FH1's disc gone: the answer to the car's question changed.
-        without = {**job, "isos": [str(fm4a)], "source": {**job["source"], "iso": str(fm4a)}}
-        assert fingerprint.Checker().check(fp, without, first_try=True).startswith("discs FH1: none now")
-
-
-def test_a_car_that_asked_for_another_games_discs_is_built_again_when_they_come():
-    """An FH1 car whose engine tuning isn't on FH1's disc looks on FM4's (engine_sound
-    _engine_tuning): with no FM4 disc the answer was none; with one it is built again."""
-    with tempfile.TemporaryDirectory() as tmp, FakeDiscs():
-        folder = Path(tmp)
-        fh1 = folder / "fh1.iso"
-        fh1.write_bytes(b"FH1 disc" * 100)
-        job, fp = _disc_car(folder, [fh1], "FM4")
-        assert fp["queries"] == {"discs FM4": []}
-        assert fingerprint.Checker().check(fp, job) is None
-        fm4a = folder / "fm4a.iso"
-        fm4a.write_bytes(b"FM4 disc 1")
-        why = fingerprint.Checker().check(fp, {**job, "isos": [str(fh1), str(fm4a)]})
-        assert why == "discs FM4: disc:FM4:1 now (none before)"
-
-
-def test_the_dlc_packs_found_are_an_answer_not_folder_listings():
-    """fm4_dlc.packages lists assets/ and reads each pack's header: a disc image added
-    beside the packs changes no car; a pack added does (its gamedb rows may count)."""
-    from dsfforza.build import fm4_dlc, forza_roster
-
-    with tempfile.TemporaryDirectory() as tmp, FakeDiscs():
-        folder = Path(tmp)
-        fh1 = folder / "fh1.iso"
-        fh1.write_bytes(b"FH1 disc" * 100)
-        packs = [SimpleNamespace(path=folder / "pack1")]
-        real = fm4_dlc.packages
-
-        def packages(_root=None):
-            with forza_roster.discovery("dlc"):
-                sorted(folder.iterdir())  # the listing of assets/: not an input
-                return list(packs)
-
-        fm4_dlc.packages = packages
-        try:
-            job = {**_job(folder), "isos": [str(fh1)]}
-            recorder = fingerprint.Recorder([folder / "out"], queries=True).start()
-            try:
-                fm4_dlc.packages()
-            finally:
-                fp = recorder.finish(job)
-            assert fp["queries"] == {"dlc": [fingerprint.norm(folder / "pack1")]} and not fp["dirs"]
-            (folder / "fm4a.iso").write_bytes(b"FM4 disc 1")
-            assert fingerprint.Checker().check(fp, job) is None
-            packs.append(SimpleNamespace(path=folder / "pack2"))
-            assert fingerprint.Checker().check(fp, job).startswith("dlc: ")
-        finally:
-            fm4_dlc.packages = real
-
-
-def test_the_cache_and_the_game_folder_may_move():
-    """The extraction cache and the game folder are where the inputs are, not inputs: a
-    build with them elsewhere (another drive, the game installed again) holding the same
-    files reuses the car; a file that differs there doesn't."""
-    with tempfile.TemporaryDirectory() as tmp:
-        folder = Path(tmp)
-        for root in ("cache1", "game1"):
-            (folder / root / "sub").mkdir(parents=True)
-            (folder / root / "sub" / "x.bin").write_bytes(root[:-1].encode())
-        (folder / "game1" / "vanilla.sp").write_bytes(b"vanilla")
-        job = {**_job(folder), "cache": str(folder / "cache1"), "game_dir": str(folder / "game1")}
-        job["dsf"] = str(folder / "game1" / "vanilla.sp")
-        recorder = fingerprint.Recorder([folder / "out"]).start()
-        try:
-            for path in ("cache1/sub/x.bin", "game1/sub/x.bin", "game1/vanilla.sp"):
-                (folder / path).read_bytes()
-            sorted((folder / "cache1" / "sub").iterdir())
-        finally:
-            fp = recorder.finish(job)
-        for old, new in (("cache1", "cache2"), ("game1", "game2")):
-            shutil.copytree(folder / old, folder / new)
-            shutil.rmtree(folder / old)
-        moved = {**job, "cache": str(folder / "cache2"), "game_dir": str(folder / "game2")}
-        moved["dsf"] = str(folder / "game2" / "vanilla.sp")
-        assert fingerprint.Checker().check(fp, moved) is None
-        (folder / "cache2" / "sub" / "x.bin").write_bytes(b"another")
-        assert fingerprint.Checker().check(fp, moved).startswith("input ")
-
-
 def test_workers_run_with_one_blas_thread():
     """Issues #84, #133: numpy's threaded BLAS made a car convert a few hundred bytes
     differently each time (BMW_Z4_11: 3 runs, 3 different chunks; 3 runs with one thread:
-    identical). Workers get fingerprint.WORKER_ENV."""
+    identical). Workers get port_batch.WORKER_ENV."""
     seen = []
 
     class FakeProc:
@@ -582,25 +367,16 @@ def test_workers_run_with_one_blas_thread():
         finally:
             port_batch.subprocess.Popen = real
         assert results["TEST_Car_10"]["ok"]
-        assert seen and all(seen[0].get(k) == v for k, v in fingerprint.WORKER_ENV.items())
+        assert seen and all(seen[0].get(k) == v for k, v in port_batch.WORKER_ENV.items())
 
 
 def test_a_reused_cars_manifest_entry_follows_this_job():
-    """The roster's games and the disc image's name are no input of the conversion (the
-    worker puts them in its report alone): a car built with only FH1's disc, reused once the
-    FM4 discs are there, says it is on both games, and names the disc as it is called now."""
+    """The roster's games and the disc image's name are not in the reuse rule (the worker
+    puts them in its report alone): a car built with only FH1's disc, reused once the FM4
+    discs are there, says it is on both games, and names the disc as it is called now."""
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         job = _job(folder)
-        job["source"] = {
-            "game": "FH1",
-            "where": "FH1",
-            "path": "media/cars/x.zip",
-            "size": 1,
-            "files": 1,
-            "kind": "car",
-        }
-        job["source"]["iso"] = str(folder / "fh1.iso")
         report = {
             "media": job["media"],
             "ok": True,
@@ -614,9 +390,35 @@ def test_a_reused_cars_manifest_entry_follows_this_job():
         assert entry["games_available"] == "FM4,FH1" and entry["source"]["iso"] == "renamed.iso"
         assert entry["batch_fallback"] == "x" and entry["spool_id"] == 7  # the rest is the build's
         assert report["entry"]["games_available"] == "FH1"  # the earlier report stays as it was
-        (folder / "car").mkdir()
-        (folder / "car" / "input.bin").write_bytes(bytes(64))
-        assert fingerprint.Checker().check(_record(folder, job), {**job, "games": "FM4,FH1"}) is None
+        assert builder_version.why_not(job, now) is None
+
+
+# --- results kept per version --------------------------------------------------------------------
+
+
+def test_memo_keeps_a_result_per_builder_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "memo.json"
+        calls = []
+
+        def compute():
+            calls.append(1)
+            return 4
+
+        real = builder_version.read
+        builder_version.read = lambda _repo=None: VERSION
+        try:
+            memo = builder_version.Memo(path, VERSION)
+            assert memo.get("car", compute) == 4 and len(calls) == 1
+            memo.save()
+            assert builder_version.Memo(path, VERSION).get("car", compute) == 4 and len(calls) == 1
+            assert builder_version.Memo(path, "git another").get("car", compute) == 4 and len(calls) == 2
+            dirty = builder_version.Memo(path, VERSION + builder_version.DIRTY)
+            assert dirty.get("car", compute) == 4 and len(calls) == 3
+            dirty.save()  # not kept
+            assert set(json.loads(path.read_text())["versions"]) == {VERSION}
+        finally:
+            builder_version.read = real
 
 
 if __name__ == "__main__":

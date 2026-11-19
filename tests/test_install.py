@@ -160,7 +160,8 @@ def _build(folder: Path, cars: int) -> Path:
     _touch(folder / "batch-report.json", b"{}")
     (folder / "work").mkdir(parents=True, exist_ok=True)
     for n in range(cars):
-        _touch(folder / "work" / f"CAR_{n}.fp.json", b"{}")
+        _touch(folder / "work" / f"CAR_{n}.job.json", b"{}")
+        _touch(folder / "work" / f"CAR_{n}.chnk", b"CHNK")
     return folder
 
 
@@ -198,7 +199,7 @@ def test_an_interrupted_build_becomes_partial_and_a_finished_one_replaces_the_la
         assert install.start_staging(dirs) is None
         _build(dirs.staging, 2)  # left by a run that was stopped
         note = install.start_staging(dirs)
-        assert "interrupted" in note and (dirs.partial / "work" / "CAR_1.fp.json").exists()
+        assert "interrupted" in note and (dirs.partial / "work" / "CAR_1.job.json").exists()
         assert not dirs.staging.exists()
         _touch(dirs.staging / "nothing.txt")  # no work/: just removed
         assert install.start_staging(dirs) is None and not dirs.staging.exists()

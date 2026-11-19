@@ -39,6 +39,7 @@ The survey of the vanilla archive is cached in out/cache/host-survey.json.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import json
@@ -849,17 +850,27 @@ DOORS_MEMO = REPO / "out" / "cache" / "carbin-doors.json"
 
 
 def door_key(folder: Path, media: str, body: str) -> str:
-    """The door memo's key for a car's door count."""
-    return f"{os.path.normcase(os.path.realpath(folder))}|{media}|{body}"
+    """The door memo's key for a car's door count: the car's folder with the name, size and
+    time stamp of each carbin in it (what _carbin_doors reads, forza2dsf.load_car: the
+    extraction cache is shared by every worktree, and one may extract the car again), its
+    media name and body class."""
+    stamps = []
+    with contextlib.suppress(OSError):
+        for entry in os.scandir(folder):
+            if entry.name.lower().endswith(".carbin"):
+                st = entry.stat()
+                stamps.append(f"{entry.name}:{st.st_size}:{st.st_mtime_ns}")
+    stamp = hashlib.sha256("|".join(sorted(stamps)).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    return f"{os.path.normcase(os.path.realpath(folder))}|{media}|{body}|{stamp}"
 
 
 def door_memo():
-    """The door counts port_batch's plan keeps between runs (fingerprint.Memo; a full
-    roster's take minutes to measure). Call save() on it when done. Workers don't use it:
-    they measure the car anyway, and the memo file would be an input of their fingerprint."""
-    from dsfforza.build import fingerprint
+    """The door counts port_batch's plan keeps between runs under the builder version
+    (builder_version.Memo; a full roster's take minutes to measure). Call save() on it when
+    done. Workers don't use it: they measure the car anyway."""
+    from dsfforza.build import builder_version
 
-    return fingerprint.Memo(DOORS_MEMO)
+    return builder_version.Memo(DOORS_MEMO)
 
 
 @functools.lru_cache(maxsize=32)  # forza_info asks up to three times per car (host, sound, same vehicle)

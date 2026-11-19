@@ -26,9 +26,10 @@ Stages, each skipped when there is nothing to do:
    asi --root-limit 3003 --packages (tools/batches/all.txt by default, then the cars of the FM4
    DLC packs under assets/: --fm4-dlc-cars; --no-fm4-dlc leaves them out) into out/build.new, reusing
    every car the last build (out/build), an interrupted one (out/build.partial) or
-   --reuse DIR made from the same inputs and code, so a re-run only converts what
-   changed. Without any of those, the earlier build under out/ with the most cars is
-   used. When the build finishes, out/build.new becomes out/build.
+   --reuse DIR made under the same builder version (the release, or the git commit), with
+   the same options, ID and own source (its disc or DLC pack by identity;
+   src/dsfforza/build/builder_version.py), so a re-run only converts new or changed cars.
+   Without any of those, the earlier build under out/ with the most cars is used. When the build finishes, out/build.new becomes out/build.
 5. pack: the merge into one archive (the in-game tests run it; the install doesn't), lint,
    garage pictures and HUD badges, and one car package per car (<build>/packages/*.dsfcar).
 6. install: the save folder (Documents/Ubisoft/Driver San Francisco/reloaded/savegames)
@@ -409,17 +410,19 @@ def count_cars(lists: list[Path], cars: list[str]) -> int:
     return len(names)
 
 
-def fingerprinted_cars(build: Path) -> int:
-    """How many cars of a build have a fingerprint (work/*.fp.json), so --reuse can take
-    them."""
+def built_cars(build: Path) -> int:
+    """How many cars a build has with their job (work/*.job.json and the chunk), which
+    --reuse can take when the reuse rule holds (builder_version)."""
     work = Path(build) / "work"
-    return sum(1 for _ in work.glob("*.fp.json")) if work.is_dir() else 0
+    if not work.is_dir():
+        return 0
+    return sum(1 for job in work.glob("*.job.json") if job.with_name(job.name[: -len(".job.json")] + ".chnk").exists())
 
 
 def earlier_build(out_root: Path, exclude: list[Path]) -> Path | None:
-    """The build under out/ (a folder with work/*.fp.json and a batch-report.json) with
-    the most fingerprinted cars, the newest of those, for a first `dsff install` on a
-    machine that built by hand."""
+    """The build under out/ (a folder with work/*.job.json and a batch-report.json) with
+    the most built cars, the newest of those, for a first `dsff install` on a machine
+    that built by hand."""
     skip = {Path(p).resolve() for p in exclude}
     best, best_key = None, (0, 0.0)
     if not Path(out_root).is_dir():
@@ -428,7 +431,7 @@ def earlier_build(out_root: Path, exclude: list[Path]) -> Path | None:
         report = folder / "batch-report.json"
         if not folder.is_dir() or folder.resolve() in skip or not report.is_file():
             continue
-        key = (fingerprinted_cars(folder), report.stat().st_mtime)
+        key = (built_cars(folder), report.stat().st_mtime)
         if key[0] and key > best_key:
             best, best_key = folder, key
     return best
@@ -476,7 +479,7 @@ def start_staging(dirs: BuildDirs) -> str | None:
     if dirs.partial.exists():
         shutil.rmtree(dirs.partial)
     dirs.staging.rename(dirs.partial)
-    return f"continuing an interrupted build ({fingerprinted_cars(dirs.partial)} cars kept in {dirs.partial.name})"
+    return f"continuing an interrupted build ({built_cars(dirs.partial)} cars kept in {dirs.partial.name})"
 
 
 def promote(dirs: BuildDirs) -> Path:

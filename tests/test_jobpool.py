@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from dsfforza.build import fingerprint, jobpool
+from dsfforza.build import jobpool
 
 HOLDER = """
 import sys, time
@@ -503,26 +503,6 @@ def test_one_task_processes_take_slots_per_task_and_shut_down_under_a_hold():
         pass
     else:
         raise AssertionError("jobpool.executor took max_tasks_per_child")
-
-
-def test_the_pool_is_no_input_of_a_fingerprint():
-    with tempfile.TemporaryDirectory() as tmp:
-        saved = os.environ.get(jobpool.POOL_ENV)
-        os.environ[jobpool.POOL_ENV] = tmp
-        try:
-            rec = fingerprint.Recorder().start()
-            _hold(Path(tmp), cpus=1)
-            jobpool.capacity()
-            slot = jobpool.try_acquire("fp")
-            slot.release()
-            fp = rec.finish({"media": "X"})
-        finally:
-            if saved is None:
-                os.environ.pop(jobpool.POOL_ENV, None)
-            else:
-                os.environ[jobpool.POOL_ENV] = saved
-        assert "dsfforza.build.jobpool" not in fp["code"]
-        assert not [p for p in [*fp["files"], *fp["dirs"]] if p.startswith(fingerprint.norm(tmp))]
 
 
 def test_powershell_sees_a_held_slot():

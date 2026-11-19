@@ -11,15 +11,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import tempfile
 import time
 from pathlib import Path
 from typing import ClassVar
 
-from dsfforza.build import fingerprint, pack_reuse, port_batch
+from dsfforza.build import pack_reuse, port_batch
 from dsfforza.game import gui_assets
 
+VERSION = "git test-version"  # a reusable builder version (builder_version)
 CARS = ["BMW_M3E30_91", "TOY_SupraRZ_98", "MAZ_RX7_97", "HON_S2000_03"]
 
 
@@ -67,7 +67,7 @@ class Stand:
         lines = archive.read_bytes().split(b"\n")[1:]
         return {d["media"]: d for d in (json.loads(line) for line in lines if line.strip())}
 
-    def lint(self, out, dsf, cars, parallel, log=print, facts=False, defined=(), records=None, record_dir=None):
+    def lint(self, out, dsf, cars, parallel, log=print, facts=False, defined=()):
         self.linted.append(sorted(c["media"] for c in cars))
         everyone = self.archive_cars(Path(out))
         found = {}
@@ -82,15 +82,9 @@ class Stand:
                 found[c["media"]] = {"refs_ext": sorted(refs), "near": near}
                 if c["spool_id"] in defined:
                     found[c["media"]]["defined"] = sorted(me["defines"])
-        if records is not None:
-            records.append({"complete": True, "tree": self.tree, "files": [], "dirs": [], "wanted": {}})
         return found
 
-    @property
-    def tree(self) -> str:
-        return fingerprint.tree_digest(fingerprint.package_hashes())
-
-    def gui(self, manifest, out_dir, log=print, archive=None, cache=None, record=None, **_):
+    def gui(self, manifest, out_dir, log=print, archive=None, cache=None, **_):
         data = json.loads(Path(manifest).read_text())
         if callable(archive):  # port_batch.Shards: the archives of the cars it renders
             where = archive(data["cars"])
@@ -130,8 +124,6 @@ class Stand:
         (out_dir / "gui.sp").write_bytes(b"".join(pictures))
         (out_dir / "hud.lua").write_text(f"return {len(pictures)}\n")
         (out_dir / "Fonts.fchunk").write_bytes(b"fonts")
-        if record is not None:
-            record.append({"complete": True, "tree": self.tree, "files": [], "dirs": [], "wanted": {}})
 
 
 def write_car(work: Path, media: str, spool_id: int, defines, refs, sound, version=0) -> dict:
@@ -166,8 +158,11 @@ def args_for(iso: Path) -> argparse.Namespace:
 PORT_ARGS = argparse.Namespace(host=None, sound_host=None, textures="dsf", share_host_uids=False, no_cockpit=False)
 
 
-def pack(root: Path, name: str, results: dict, sources=(), reuse=True, stand=None, *, no_archive=False):
-    """port_batch.finish of `results` into root/name (the cars' chunks in root/work)."""
+def pack(
+    root: Path, name: str, results: dict, sources=(), reuse=True, stand=None, *, no_archive=False, version=VERSION
+):
+    """port_batch.finish of `results` into root/name (the cars' chunks in root/work), by a
+    builder of `version`."""
     out = root / name
     out.mkdir(parents=True, exist_ok=True)
     args = args_for(root / "game.iso")
@@ -176,7 +171,7 @@ def pack(root: Path, name: str, results: dict, sources=(), reuse=True, stand=Non
     p = None
     if reuse:
         settings = pack_reuse.settings_of(args, dsf, 3003, [root / "game.iso"])
-        p = pack_reuse.PackReuse(out, [root / s for s in sources], settings, log=lambda *a: None)
+        p = pack_reuse.PackReuse(out, [root / s for s in sources], settings, log=lambda *a: None, version=version)
     ok = json.loads(json.dumps(list(results.values())))
     port_batch.finish(args, dsf, out, root / "work", ok, [], PORT_ARGS, [], {}, time.time(), {}, p)
     return p
@@ -325,7 +320,7 @@ def test_a_removed_car_relints_the_cars_whose_sound_it_shared():
         assert files_of(root / "b") == files_of(root / "full")
 
 
-def test_other_settings_inputs_or_a_changed_output_mean_a_full_pack():
+def test_other_settings_another_version_or_a_changed_output_mean_a_full_pack():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         results = setup(root)
@@ -341,38 +336,14 @@ def test_other_settings_inputs_or_a_changed_output_mean_a_full_pack():
             stand.rendered.clear()
             p = pack(root, "c", results, sources=["b"])
             assert stand.merged == 3 and stand.rendered == [] and p.stats["whole"] is None
-            # A recorded input changed: nothing is taken from that build.
-            record = json.loads((root / "c" / "pack" / "pack.json").read_text())
-            extra = root / "input.txt"
-            extra.write_text("1")
-            record["fingerprint"]["files"][fingerprint.norm(extra)] = fingerprint.file_digest(extra)
-            (root / "c" / "pack" / "pack.json").write_text(json.dumps(record))
-            extra.write_text("2")
+            # Another builder version (a new commit): nothing is taken from that build.
             stand.rendered.clear()
-            p = pack(root, "d", results, sources=["c"])
+            p = pack(root, "d", results, sources=["c"], version="git another-commit")
             assert len(stand.rendered) == 4 and p.earlier == []
-
-
-def test_the_fingerprint_counts_the_subprocesses_records():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "in.bin").write_bytes(bytes(64))
-        recorder = fingerprint.Recorder().start()
-        try:
-            from dsfforza.formats import xds
-
-            xds.parse_header((root / "in.bin").read_bytes())
-            drained = recorder.drain()
-        finally:
-            recorder.stop()
-        assert fingerprint.norm(root / "in.bin") in drained["files"]
-        assert "parse_header" in drained["wanted"]["dsfforza.formats.xds"]
-        parent = fingerprint.Recorder().start()
-        fp = parent.finish({}, [drained], skip=(fingerprint.norm(root) + os.sep,))
-        assert "parse_header" in fp["code"]["dsfforza.formats.xds"]
-        assert fingerprint.norm(root / "in.bin") not in fp["files"]  # skipped
-        assert fp["complete"]
-        assert not parent.finish({}, [{**drained, "tree": "other"}])["complete"]
+            # A dirty tree: no earlier pack is used, not even its own version's.
+            stand.rendered.clear()
+            p = pack(root, "e", results, sources=["d"], version="git another-commit+dirty")
+            assert len(stand.rendered) == 4 and p.earlier == []
 
 
 def test_images_keep_their_pixels_and_attributes():
@@ -381,28 +352,6 @@ def test_images_keep_their_pixels_and_attributes():
     back = pack_reuse.unpack_image(gui_assets.Image, pack_reuse.pack_image(image))
     assert (back.w, back.h, bytes(back.px), back.kind, back.text_badge) == (3, 2, bytes(range(24)), "plate", True)
     assert pack_reuse.unpack_image(gui_assets.Image, pack_reuse.pack_image(None)) is None
-
-
-def test_game_files_read_from_the_backup_after_an_install_are_the_same_inputs():
-    from dsfforza.game import game_paths
-
-    with tempfile.TemporaryDirectory() as tmp:
-        game = Path(tmp)
-        (game / "Install").mkdir()
-        (game / "Install" / "gui.sp").write_bytes(b"vanilla gui")
-        gui = game / "Install" / "gui.sp"
-        fp = {"files": {fingerprint.norm(gui): fingerprint.file_digest(gui)}}
-        # An install: the vanilla file moves to the backup, the game gets ours.
-        (game / game_paths.BACKUP / "Install").mkdir(parents=True)
-        (game / game_paths.BACKUP / "Install" / "gui.sp").write_bytes(b"vanilla gui")
-        gui.write_bytes(b"our gui")
-        checker = fingerprint.Checker()
-        assert pack_reuse.moved_inputs(fp, checker, None) == {}  # no game folder: nothing moved
-        moved = pack_reuse.moved_inputs(fp, checker, game)
-        assert list(moved.values()) == [fingerprint.norm(game / game_paths.BACKUP / "Install" / "gui.sp")]
-        fp = {"format": fingerprint.FORMAT, "complete": True, "env": fingerprint.environment(), **fp}
-        assert checker.check(fp, None).startswith("input ")
-        assert checker.check(fp, None, moved=moved) is None
 
 
 def test_without_the_archive_the_pack_lints_and_draws_the_same():

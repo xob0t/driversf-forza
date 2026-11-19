@@ -98,7 +98,7 @@ def _ids(picks, policy: str) -> dict[str, int | None]:
 def test_a_car_left_out_keeps_its_id_slot():
     """A listed car that can't be built (its disc not given, its DLC pack not there) uses up
     its ID: when the FM4 discs are added, the FH1 cars after it keep theirs, and with them
-    their converted copies (the ID is part of a car's fingerprint)."""
+    their converted copies (the build ID is part of the reuse rule)."""
     for policy in ("asi", "high"):
         fh1_only = [_pick("A_1"), _pick("B_2", notes=["not on the FM4 discs"]), _pick("C_3"), _pick("D_4")]
         both = [_pick("A_1"), _pick("B_2"), _pick("C_3"), _pick("D_4")]

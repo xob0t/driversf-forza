@@ -5,15 +5,14 @@ badges: port_batch.finish) redoes only what changed since an earlier build
 A build's pack record, <build>/pack/pack.json, holds:
 
 - "settings": what shapes the pack besides the cars: the ID policy, the root entry limit,
-  --gui, --wide-glyphs, the disc images and the vanilla archive's digest;
+  --gui, --wide-glyphs, the discs (by identity, not file name), the FM4 DLC packs (by
+  name) and the vanilla archive's digest;
+- "builder": the builder version that made it (src/dsfforza/build/builder_version.py): a
+  record is used only by a build of the same, reusable version;
 - "cars": [media, key] in the merge's input order. A car's key is the SHA-256 of its
   chunk (work/<media>.chnk) with its report's entry, host, game and spool IDs;
   "chunks" keeps each chunk's digest with its file's identity (file ID, size, mtime), so
   a hard-linked chunk (port_batch --reuse) isn't read again;
-- "fingerprint": what the pack read and which code it ran, in this process, the lint
-  processes and the render processes (src/dsfforza/build/fingerprint.py): the vanilla
-  archive, the game's gui.sp, Fonts.fchunk and locale files, the disc images, string
-  tables, and the package's code units;
 - "lint": per car its key, its upvh lint result and the facts that tie the result to
   other cars (upvh.lint_vehicle: UIDs it references but doesn't define, the cars whose
   engine sound banks share an ID with its own);
@@ -25,7 +24,7 @@ A build's pack record, <build>/pack/pack.json, holds:
 
 port_batch.finish, with this build's folder and its --reuse builds as the earlier ones:
 
-1. when an earlier record has the same settings and cars, its fingerprint holds and its
+1. when an earlier record has the same settings, builder version and cars and its
    outputs are unchanged, the pack is that build's: the archive is hard-linked, gui/ and
    the pictures copied, the manifest and Lua written again (`whole`);
 2. otherwise it merges (all cars, ~25 s), lints the cars whose key changed plus every
@@ -47,9 +46,9 @@ import shutil
 import zlib
 from pathlib import Path
 
-from dsfforza.build import fingerprint
+from dsfforza.build import builder_version
 
-FORMAT = 1
+FORMAT = 2  # 2: the builder version instead of a fingerprint (#634)
 FOLDER = "pack"
 RECORD = "pack.json"
 PICTURES = "pictures"
@@ -95,17 +94,66 @@ def car_key(result: dict, chunk_sha256: str) -> str:
     )
 
 
+BIG = 64 << 20  # files above this get a partial digest
+EDGE = 4 << 20
+
+
+def file_digest(path: Path) -> str:
+    """SHA-256 of a file up to BIG, else its size, time stamp and the SHA-256 of its first
+    and last EDGE bytes (the vanilla archive); "missing" when it can't be read."""
+    try:
+        st = Path(path).stat()
+        with Path(path).open("rb") as handle:
+            if st.st_size <= BIG:
+                return "sha256:" + hashlib.file_digest(handle, "sha256").hexdigest()
+            h = hashlib.sha256(handle.read(EDGE))
+            handle.seek(st.st_size - EDGE)
+            h.update(handle.read(EDGE))
+            return f"big:{st.st_size}:{st.st_mtime_ns}:{h.hexdigest()}"
+    except OSError:
+        return "missing"
+
+
+def norm(path) -> str:
+    """A path as compared: absolute, links resolved, case-folded on Windows."""
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def discs_of(isos: list[Path]) -> list[str]:
+    """The Forza discs among `isos` by identity ("FH1", "FM4 disc 1"), not by file name."""
+    from dsfforza.build import forza_roster
+
+    found, _ = forza_roster.disc_summary(forza_roster.identify_all(isos))
+    return sorted(found)
+
+
+def dlc_names() -> list[str]:
+    """The FM4 DLC packs the build uses, by name (fm4_dlc.packages)."""
+    from dsfforza.build import fm4_dlc
+
+    return sorted(p.where for p in fm4_dlc.packages())
+
+
 def settings_of(args, dsf: Path, root_limit: int, isos: list[Path]) -> dict:
-    """The options that shape a pack besides its cars (port_batch build's arguments).
-    --no-archive is named only when given, so the records of builds without it still hold."""
+    """The options that shape a pack besides its cars (port_batch build's arguments), and the
+    discs and DLC packs it reads names and logos from, by identity. --no-archive is named
+    only when given, so the records of builds without it still hold."""
     out = {
         "format": FORMAT,
         "id_policy": getattr(args, "id_policy", None),
         "root_limit": root_limit,
         "gui": bool(getattr(args, "gui", False)),
         "wide_glyphs": bool(getattr(args, "wide_glyphs", False)),
-        "isos": [fingerprint.norm(p) for p in isos],
-        "vanilla": fingerprint.file_digest(fingerprint.norm(dsf)),
+        "discs": discs_of(isos),
+        "dlc": dlc_names(),
+        "vanilla": file_digest(dsf),
     }
     if getattr(args, "no_archive", False):
         out["archive"] = False
@@ -130,49 +178,14 @@ def copy_fresh(src: Path, dst: Path) -> None:
 
 
 def same_folder(a: Path, b: Path) -> bool:
-    return fingerprint.norm(a) == fingerprint.norm(b)
-
-
-def moved_inputs(fp: dict, checker: fingerprint.Checker, game_dir: Path | None) -> dict[str, str]:
-    r"""{recorded path: where the same file is now} for the files a pack read in the game
-    folder `game_dir`: the game's own <game>\X before a dsfforza install, its backup
-    <game>\dsfcars-backup\X after (gui_assets.vanilla_file reads the backup while an
-    install is in place), and back after an uninstall. Without a game folder: none."""
-    from dsfforza.game import game_paths
-
-    if game_dir is None:
-        return {}
-    game = fingerprint.norm(game_dir) + os.sep
-    # The backup's name since the rename to dsfcars, and before it (an install that -Migrate moved).
-    backups = [game + os.path.normcase(name) + os.sep for name in game_paths.BACKUPS]
-    out = {}
-    for path, digest in fp.get("files", {}).items():
-        relative = next((path[len(b) :] for b in backups if path.startswith(b)), None)
-        if relative is None:
-            if not path.startswith(game):
-                continue
-            relative = path[len(game) :]
-        if checker.file(path) == digest:
-            continue
-        others = [p for p in (game + relative, *(b + relative for b in backups)) if p != path]
-        other = next((p for p in others if checker.file(p) == digest), None)
-        if other:
-            out[path] = other
-    return out
-
-
-def rename_inputs(fp: dict, moved: dict[str, str]) -> dict:
-    if not moved:
-        return fp
-    return {**fp, "files": dict(sorted((moved.get(p, p), d) for p, d in fp.get("files", {}).items()))}
+    return norm(a) == norm(b)
 
 
 class Earlier:
     """An earlier build's pack record."""
 
-    def __init__(self, folder: Path, record: dict, moved: dict | None = None):
+    def __init__(self, folder: Path, record: dict):
         self.folder, self.record = Path(folder), record
-        self.moved = moved or {}  # its recorded game files that are elsewhere now (moved_inputs)
 
     def outputs_unchanged(self, names=None) -> bool:
         """Every recorded output (or those in `names`) has its recorded size and mtime."""
@@ -197,20 +210,18 @@ class PackReuse:
         sources: list[Path],
         settings: dict,
         log=print,
-        game_dir: Path | None = None,
         store=None,
+        version: str | None = None,
     ):
-        """`game_dir`: the game folder the build reads its vanilla files from (moved_inputs).
-        `store`: the car store (carstore.Store), whose garage pictures and images are taken
-        after the earlier builds' and which gets this pack's."""
+        """`store`: the car store (carstore.Store), whose garage pictures and images are taken
+        after the earlier builds' and which gets this pack's. `version`: the builder version
+        (default builder_version.current())."""
         self.out_dir = Path(out_dir)
         self.store = store
-        self.store_fps: dict[str, dict] = {}  # the store's pack fingerprints of what was taken from it
-        self.game_dir = Path(game_dir) if game_dir is not None else None
+        self.version = builder_version.current() if version is None else version
         self.settings = settings
         self.log = log
-        self.checker = fingerprint.Checker()
-        self.earlier: list[Earlier] = []  # with this build's settings and a fingerprint that holds
+        self.earlier: list[Earlier] = []  # with this build's settings and builder version
         self.used: list[Earlier] = []  # the ones something was taken from
         self.keys: dict[str, str] = {}
         self.cars: list[list[str]] = []
@@ -218,37 +229,36 @@ class PackReuse:
         self.pictures: dict[str, dict] = {}
         self.images: dict[str, str] = {}  # image key -> its file in pack/images (ImageStore)
         self.lint_entries: dict[str, dict] = {}
-        self.records: list[dict] = []  # subprocesses' recordings (fingerprint.Recorder.drain)
         self.work: Path | None = None
-        self.recorder = None
         self.stats = {"whole": None, "linted": None, "pictures_reused": 0, "pictures_made": 0, "earlier": []}
         seen = set()
         for folder in [self.out_dir, *[Path(s) for s in sources]]:
-            key = fingerprint.norm(folder)
+            key = norm(folder)
             if key in seen:
                 continue
             seen.add(key)
-            record = fingerprint.read(folder / FOLDER / RECORD)
+            record = read_json(folder / FOLDER / RECORD)
             if record is None:
                 continue
-            why, moved = self._why_not(record)
+            why = self._why_not(record)
             if why:
                 log(f"pack reuse: not from {folder}: {why}")
                 continue
-            self.earlier.append(Earlier(folder, record, moved))
+            self.earlier.append(Earlier(folder, record))
         self.stats["earlier"] = [str(e.folder) for e in self.earlier]
 
-    def _why_not(self, record: dict) -> tuple[str | None, dict]:
-        """(why a record can't be used, None when it can; its moved game files)."""
+    def _why_not(self, record: dict) -> str | None:
+        """Why a record can't be used, None when it can."""
         if record.get("format") != FORMAT:
-            return "a pack record of another format", {}
+            return "a pack record of another format"
+        if not builder_version.reusable(self.version):
+            return f"builder version {self.version or 'unknown'} (no reuse)"
+        if record.get("builder") != self.version:
+            return "another builder version"
         if record.get("settings") != self.settings:
             old, new = record.get("settings") or {}, self.settings
-            return "settings: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k)), {}
-        fp = record.get("fingerprint") or {}
-        moved = moved_inputs(fp, self.checker, self.game_dir)
-        why = self.checker.check(fp, None, moved=moved)
-        return (why and f"its {why} changed"), moved
+            return "settings: " + ", ".join(k for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k))
+        return None
 
     # --- the cars ---------------------------------------------------------------------------
 
@@ -391,34 +401,15 @@ class PackReuse:
 
     # --- the record ------------------------------------------------------------------------------------
 
-    def start_recording(self) -> None:
-        self.recorder = fingerprint.Recorder().start()
-
-    def skip_prefixes(self) -> tuple[str, ...]:
-        """Not inputs: this build's folder (its outputs), the cars' chunks (their keys cover
-        them) and the earlier builds' folders (cache files)."""
-        folders = [self.out_dir, *([self.work] if self.work else []), *[e.folder for e in self.earlier]]
-        return tuple(fingerprint.norm(p) + os.sep for p in folders)
-
     def save(self, merge_failed: list[dict], outputs: list[str], gui_error: str | None = None) -> None:
         """Write this build's pack record. `outputs`: paths relative to the build folder
         (the manifest's stat is kept: a whole pack takes its cars from it)."""
-        if self.recorder is not None:
-            fp = self.recorder.finish({}, self.records, skip=self.skip_prefixes())
-            self.recorder = None
-        else:
-            fp = None
-        for e in self.used:
-            old = rename_inputs(e.record.get("fingerprint") or {}, e.moved)
-            fp = old if fp is None else fingerprint.combine(fp, old)
-        for old in self.store_fps.values():
-            fp = old if fp is None else fingerprint.combine(fp, old)
         record = {
             "format": FORMAT,
             "settings": self.settings,
+            "builder": self.version,
             "cars": self.cars,
             "chunks": self.chunks,
-            "fingerprint": fp or {},
             "lint": self.lint_entries,
             "pictures": self.pictures,
             "images": self.images,
@@ -434,24 +425,21 @@ class PackReuse:
         temp = path.with_name(RECORD + ".tmp")
         temp.write_text(json.dumps(record, default=str) + "\n", encoding="utf-8")
         temp.replace(path)
-        if self.store is not None and fp and fp.get("complete") and not gui_error:
-            self.keep_in_store(fp)
+        # Not when the code changed while the pack was made (its version isn't this one now).
+        if self.store is not None and not gui_error and builder_version.read() == self.version:
+            self.keep_in_store()
 
-    def moved_in(self, fp: dict) -> dict[str, str]:
-        return moved_inputs(fp, self.checker, self.game_dir)
-
-    def keep_in_store(self, fp: dict) -> None:
-        """This pack's garage pictures and images into the car store, under its fingerprint."""
-        digest = self.store.put_pack(fp)
+    def keep_in_store(self) -> None:
+        """This pack's garage pictures and images into the car store, under its builder version."""
         for media, entry in self.pictures.items():
             name = f"dsfforza_{media.lower()}"
             dds, png = self.out_dir / FOLDER / PICTURES / f"{name}.dds", self.out_dir / "gui" / f"{name}.png"
             if entry.get("key") and dds.is_file() and png.is_file():
-                self.store.put_picture(entry["key"], dds, png, entry.get("source", "render"), digest)
+                self.store.put_picture(entry["key"], dds, png, entry.get("source", "render"), self.version)
         for key, name in self.images.items():
             path = self.out_dir / FOLDER / IMAGES / name
             if path.is_file():
-                self.store.put_image(key, path, digest)
+                self.store.put_image(key, path, self.version)
 
     def forget(self) -> None:
         """No record (the pack failed or is not reusable): a later build makes a full pack."""
@@ -496,16 +484,15 @@ class PictureCache:
             self.pack.stats["pictures_reused"] += 1
             return dds, png, entry.get("source", "render")
         store = self.pack.store
-        hit = store.picture(key, self.pack.checker, self.pack.moved_in) if store is not None else None
+        hit = store.picture(key, self.pack.version) if store is not None else None
         if hit is None:
             return None
-        dds_path, png_path, source, fp = hit
+        dds_path, png_path, source = hit
         try:
             dds, png = dds_path.read_bytes(), png_path.read_bytes()
             link_or_copy(dds_path, self.pack.out_dir / dds_rel)
         except OSError:  # evicted meanwhile
             return None
-        self.pack.store_fps.setdefault(fingerprint.digest_of(fp), fp)
         self.pack.pictures[car["media"]] = {"key": key, "source": source}
         self.pack.stats["pictures_reused"] += 1
         return dds, png, source
@@ -547,7 +534,7 @@ class PictureCache:
                 if e not in self.pack.used:
                     self.pack.used.append(e)
         store = self.pack.store
-        for key, (path, fp) in (store.images(self.pack.checker, self.pack.moved_in) if store else {}).items():
+        for key, path in (store.images(self.pack.version) if store else {}).items():
             if key in out:
                 continue
             name = path.stem.rsplit("-", 1)[0] + ".bin"  # <name>-<pack> in the store
@@ -559,7 +546,6 @@ class PictureCache:
                 out.pop(key, None)
                 continue
             self.pack.images[key] = name
-            self.pack.store_fps.setdefault(fingerprint.digest_of(fp), fp)
             store.stats["images_hit"] += 1
         self.pack.stats["images_reused"] = len(out)
         return out
