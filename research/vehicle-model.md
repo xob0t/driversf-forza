@@ -699,7 +699,8 @@ test, so that test, not the donor, is most of what is still dropped (fixed:
 Every measure concentrates on a few windows of average shape: 193's doors
 take 86 and 75 ports' side glass, 143's windscreen 63 ports'. Side glass
 behind the eye keeps the smear surface only, where vanilla mostly draws its
-own with the exterior side-rear slot. (#627; the outside test: #626.)
+own with the exterior slots (fixed: "Side glass behind the driver's eye"
+below, #627; the outside test: #626.)
 
 Built (5 cars only, the rest of the roster not built: AST_V8Vantage_77,
 CHE_CorvetteZ06_02, PLY_Barracuda_68, MAS_GranTurismoMC_10, BEN_7_Speed8_03 as
@@ -791,6 +792,46 @@ car store, master's donors), triangles dropped:
 corner lie up to two cells out diagonally). The kept triangles reach past the
 converted glass as vanilla's past theirs: p99 10 to 12 mm, p99.9 15 to 31 mm,
 at most 114 mm (old test: p99 8 mm, at most 20 mm).
+
+**Side glass behind the driver's eye** (#627, confirmed-static, 2026-11-19;
+`out/i627/behind.py`, `survey.py` in the fix worktree). Vanilla draws most
+interior side glass behind the driver's eye with the exterior glass texture's
+slots, not the smear rows. Of the 111 interior side windows wholly behind the eye
+(147 interiors with a head camera; front edge behind the eye's z), 74 hold one
+pane:
+
+| texture region | one pane | a record with both sides' panes |
+| --- | --- | --- |
+| exterior side_rear slot | 31 | 8 |
+| exterior side_front slot | 27 | 10 |
+| exterior windscreen slot | 8 | 2 |
+| two exterior slots | | 9 |
+| smear only | 4 | 8 |
+| a crack and shard set (130's rear sides) | 2 | |
+| other | 2 | |
+
+The slot is the window's own exterior one. On 48 of the 95 windows on the
+slots, every triangle's UV triple is one of the exterior entry's glass on the
+same panel record (on 20 more, some are): the interior pane copies its
+window's exterior mapping, so its crack bands (1 and 2) and its band-3 hole are
+the exterior window's. Each one-pane window on the slots has its own record, the same as its
+exterior glass (147's rear doors (19, 22) and (21, 24); 266, 267, 268 the same
+set). The records holding both quarter lights are the chassis' (0, 0), and 29 of
+those 37 are on the slots too (172, the Barracuda's host: side_rear).
+
+Converted (`InteriorGlass._window`, `_behind_eye`): side glass whose front edge
+is behind the driver's eye (`Donors.eye_z`) takes the exterior mapping of its
+window (`SlotMapper.uv` over the interior pane: its slot by section and
+position, u along -z, v down, the pane filling the slot's band-0 rectangle,
+which covers the band-3 hole with a rim), instead of the smear rows. It still
+takes no crack and shard set. Its panel binding is the one the full entry's
+glass of that section has (`interior_glass_skin`, `damage.section_rule`: its
+door, else the chassis), as vanilla binds its interior glass like the exterior.
+
+Roster, no conversion (#628's survey of 3,955 windows rebuilt from the car
+store): 1,160 side windows behind the eye on 494 cars change from smear rows to
+a slot, 1,146 to side_rear and 14 to side_front; 824 of them are on the chassis
+record (0, 0) (quarter lights, as on vanilla 172) and 336 on their own door's.
 
 
 Survey (293 of the 721 roster cars, the rest not built; `out/i459/survey.txt`
