@@ -133,6 +133,32 @@ def test_paths_of_another_checkout_are_relocated():
         assert fp_b["repo"] == rb and carstore.entry_id(fp, None, ra) == carstore.entry_id(fp_b, None, rb)
 
 
+def test_relocate_moves_the_dlc_answer_paths():
+    """The "dlc" discovery answer is pack paths: they move with the checkout, disc answers
+    (tokens) stay (CodeRabbit on #636)."""
+    old, new = fingerprint.norm(Path("/wt-a")), fingerprint.norm(Path("/wt-b"))
+    pack = old + os.sep + "assets" + os.sep + "pack"
+    fp = {"repo": old, "job": {}, "files": {}, "dirs": {}, "queries": {"dlc": [pack], "discs FH1": ["disc:FH1:1"]}}
+    moved = fingerprint.relocate(fp, old, new)
+    assert moved["queries"]["dlc"] == [fingerprint._resolve(new, "assets") + os.sep + "pack"]
+    assert moved["queries"]["discs FH1"] == ["disc:FH1:1"]
+
+
+def test_a_nested_root_that_did_not_move_keeps_its_paths():
+    """With the cache inside the game folder unchanged and the game folder moved, a cache
+    input stays at the cache's path; it doesn't take the parent's move (CodeRabbit on #636)."""
+    g1, g2 = fingerprint.norm(Path("/game1")), fingerprint.norm(Path("/game2"))
+    cache = g1 + os.sep + "cache"
+    fp = {
+        "job": {"cache": cache, "game_dir": g1, "dsf": None},
+        "files": {cache + os.sep + "x.bin": "d", g1 + os.sep + "y.bin": "e"},
+        "dirs": {},
+    }
+    moved = fingerprint.move_roots(fp, {"cache": cache, "game_dir": g2})
+    assert set(moved["files"]) == {cache + os.sep + "x.bin", g2 + os.sep + "y.bin"}
+    assert fingerprint.move_roots(fp, {"cache": cache, "game_dir": g1}) is fp
+
+
 def test_a_dlc_pack_path_is_recorded_through_its_junction():
     """A DLC car's job names its pack file under the worktree's assets\\ (a junction to the
     main checkout's): recorded resolved, so another worktree's build matches (#501)."""

@@ -634,12 +634,20 @@ def _map_paths(fp: dict, move) -> dict:
     if source.get("iso") and not source["iso"].startswith(DISC):
         source["iso"] = move(source["iso"])
     job["source"] = source
-    return {
+    # The "dlc" answer is pack paths (answer); disc answers are tokens, not paths.
+    queries = {
+        name: sorted(move(p) for p in ans) if name == query_name("dlc", "") else ans
+        for name, ans in (fp.get("queries") or {}).items()
+    }
+    out = {
         **fp,
         "job": job,
         "files": {move(p): d for p, d in fp.get("files", {}).items()},
         "dirs": {move(p): d for p, d in fp.get("dirs", {}).items()},
     }
+    if "queries" in fp:
+        out["queries"] = queries
+    return out
 
 
 _RESOLVED: dict[tuple[str, str], str] = {}
@@ -685,8 +693,9 @@ def move_roots(fp: dict, job: dict) -> dict:
         ((old_job.get(k), new_job.get(k)) for k in ROOTS if old_job.get(k) and new_job.get(k)),
         key=lambda pair: -len(pair[0]),
     )
-    pairs = [(old, new) for old, new in pairs if old != new]
-    if not pairs:
+    # Unchanged pairs stay in: a nested root that didn't move (a cache in a game folder
+    # that did) must keep its own paths, not take its parent's move.
+    if all(old == new for old, new in pairs):
         return fp
 
     def move(path):

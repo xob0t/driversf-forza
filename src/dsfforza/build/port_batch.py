@@ -1872,6 +1872,7 @@ class Reuse:
                 self.rebuilt[media] = "store: the entry went meanwhile"
                 return None
             report = refresh_entry(report, job)
+            self._keep_report(media, report)
             self.taken[media] = report
             self.taken_from[media] = STORE
             return {**report, "reused_from": STORE}
@@ -1889,9 +1890,19 @@ class Reuse:
                 shutil.rmtree(dst)
             shutil.copytree(sound_src, dst, copy_function=_link_or_copy)
         report = refresh_entry(report, job)
+        self._keep_report(media, report)
         self.taken[media] = report
         self.taken_from[media] = str(source)
         return {**report, "reused_from": str(source)}
+
+    def _keep_report(self, media: str, report: dict) -> None:
+        """Write the refreshed report to work/<media>.json, which remerge reads. The file
+        taken is a hard link to the earlier build's (or the store's): a new file replaces
+        the link rather than writing through it."""
+        path = self.work / f"{media}.json"
+        temp = path.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(report, indent=1, default=str) + "\n", encoding="utf-8")
+        temp.replace(path)
 
     def summary(self) -> None:
         """Print how many cars are reused and from where, and why the others are built again
