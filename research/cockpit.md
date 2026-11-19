@@ -3687,6 +3687,12 @@ lacks that gauge.
 - The F458 (no virtual dial) renders alike, so dropping the two atlas cells changes no
   drawing.
 
+In game (VM, confirmed-runtime; `run-series.ps1 -Vm -HoldMph '40,90'`, IDs 1, 2 and 5;
+runs `vm1-20261119-140127` master and `vm1-20261119-140636` this change): the ForTwo's pod
+on its A-pillar and the Camry's on its dash are gone at 90 mph, and the ForTwo's own
+speed needle stays. The Omni GLHS has no needle in its cluster without the dash-texture fix.
+All three cars spooled and drove without a crash.
+
 ## Fitted-rule audit (2026-11-05)
 
 Every rule, constant, threshold, offset, scale, clamp and placement heuristic of
